@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "RotoraxisMatch",
+    "slug": "rotoraxis-match",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "rotoraxismatch",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rotoraxis.match"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0A1628"
+      },
+      "package": "com.rotoraxis.match"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

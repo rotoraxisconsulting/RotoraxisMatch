@@ -1,0 +1,25 @@
+export const AIRCRAFT_TYPES = [
+  'Boeing 737',
+  'Boeing 747',
+  'Boeing 767',
+  'Boeing 777',
+  'Boeing 787',
+  'Airbus A220',
+  'Airbus A320',
+  'Airbus A330',
+  'Airbus A340',
+  'Airbus A350',
+  'Airbus A380',
+  'Bombardier CRJ-200',
+  'Bombardier CRJ-900',
+  'Bombardier Q400',
+  'Embraer E175',
+  'Embraer E195',
+  'Bell 407',
+  'Bell 412',
+  'Sikorsky S-76',
+  'Sikorsky S-92',
+  'Robinson R44',
+] as const;
+
+export type AircraftType = (typeof AIRCRAFT_TYPES)[number];
