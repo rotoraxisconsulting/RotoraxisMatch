@@ -44,8 +44,8 @@ function filterCompanies(
   if (status !== 'all') result = result.filter((c) => c.verificationStatus === status);
   if (type !== 'all') result = result.filter((c) => c.companyType === type);
   return [...result].sort((a, b) => {
-    const order = { pending: 0, unverified: 1, verified: 2 };
-    return order[a.verificationStatus] - order[b.verificationStatus];
+    const order = { pending: 0, unverified: 1, rejected: 2, verified: 3 };
+    return (order[a.verificationStatus] ?? 0) - (order[b.verificationStatus] ?? 0);
   });
 }
 

@@ -1,0 +1,17 @@
+[
+  { "id": "cm-001", "companyId": "comp-001", "userId": "prof-c001a", "role": "admin",     "createdAt": "2024-01-01T08:00:00.000Z" },
+  { "id": "cm-002", "companyId": "comp-001", "userId": "prof-c001r", "role": "recruiter", "createdAt": "2024-01-01T08:05:00.000Z" },
+  { "id": "cm-003", "companyId": "comp-002", "userId": "prof-c002a", "role": "admin",     "createdAt": "2024-01-02T08:00:00.000Z" },
+  { "id": "cm-004", "companyId": "comp-003", "userId": "prof-c003a", "role": "admin",     "createdAt": "2024-01-03T08:00:00.000Z" },
+  { "id": "cm-005", "companyId": "comp-003", "userId": "prof-c003r", "role": "recruiter", "createdAt": "2024-01-03T08:05:00.000Z" },
+  { "id": "cm-006", "companyId": "comp-004", "userId": "prof-c004a", "role": "admin",     "createdAt": "2024-01-04T08:00:00.000Z" },
+  { "id": "cm-007", "companyId": "comp-004", "userId": "prof-c004r", "role": "recruiter", "createdAt": "2024-01-04T08:05:00.000Z" },
+  { "id": "cm-008", "companyId": "comp-004", "userId": "prof-c004v", "role": "viewer",    "createdAt": "2024-01-04T08:10:00.000Z" },
+  { "id": "cm-009", "companyId": "comp-005", "userId": "prof-c005a", "role": "admin",     "createdAt": "2024-01-05T08:00:00.000Z" },
+  { "id": "cm-010", "companyId": "comp-006", "userId": "prof-c006a", "role": "admin",     "createdAt": "2024-01-06T08:00:00.000Z" },
+  { "id": "cm-011", "companyId": "comp-006", "userId": "prof-c006r", "role": "recruiter", "createdAt": "2024-01-06T08:05:00.000Z" },
+  { "id": "cm-012", "companyId": "comp-007", "userId": "prof-c007a", "role": "admin",     "createdAt": "2024-01-07T08:00:00.000Z" },
+  { "id": "cm-013", "companyId": "comp-007", "userId": "prof-c007r", "role": "recruiter", "createdAt": "2024-01-07T08:05:00.000Z" },
+  { "id": "cm-014", "companyId": "comp-008", "userId": "prof-c008a", "role": "admin",     "createdAt": "2024-02-01T08:00:00.000Z" },
+  { "id": "cm-015", "companyId": "comp-009", "userId": "prof-c009a", "role": "admin",     "createdAt": "2024-02-15T08:00:00.000Z" }
+]

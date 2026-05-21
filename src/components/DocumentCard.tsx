@@ -31,12 +31,14 @@ const STATUS_VARIANTS: Record<DocumentStatus, BadgeVariant> = {
   verified: 'success',
   pending: 'warning',
   rejected: 'error',
+  expired: 'error',
 };
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   verified: 'Verified',
   pending: 'Under review',
   rejected: 'Rejected',
+  expired: 'Expired',
 };
 
 function formatDate(iso: string): string {

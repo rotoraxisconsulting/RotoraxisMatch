@@ -1,3 +1,4 @@
+// @deprecated V2 removes specialties — technician type is now modeled via TechnicianTypeCode in catalog.ts
 export const SPECIALTIES = [
   'Airframe',
   'Powerplant',

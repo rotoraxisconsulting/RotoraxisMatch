@@ -15,7 +15,8 @@
       "Bash(Select-Object -Property FullName)",
       "Bash(Sort-Object FullName)",
       "Bash(git stash *)",
-      "Bash(findstr \"webview\")"
+      "Bash(findstr \"webview\")",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }

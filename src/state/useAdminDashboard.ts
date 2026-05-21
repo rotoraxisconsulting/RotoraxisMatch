@@ -7,10 +7,18 @@ import {
   VerificationStatus,
   DocumentStatus,
 } from '../types';
-import { technicianRepository } from '../repositories/technicianRepository';
-import { companyRepository } from '../repositories/companyRepository';
-import { documentRepository } from '../repositories/documentRepository';
-import { matchRequestRepository } from '../repositories/matchRequestRepository';
+import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
+import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
+import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
+import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
+import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
+import { offerRepository } from '../repositories/v2/offerRepository';
+import {
+  v2TechnicianToV1,
+  v2CompanyToV1,
+  v2DocumentToV1,
+  v2OfferRequestToMatchRequest,
+} from '../utils/v2CompatAdapters';
 
 export interface AdminMetrics {
   totalTechnicians: number;
@@ -23,6 +31,10 @@ export interface AdminMetrics {
   pendingDocuments: number;
   totalRequests: number;
   acceptedRequests: number;
+  // V2-specific metrics
+  pendingOfferRequests: number;
+  pendingApplications: number;
+  activeOffers: number;
 }
 
 interface UseAdminDashboardReturn {
@@ -49,16 +61,27 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [techs, comps, docs, reqs] = await Promise.all([
-      technicianRepository.getAll(),
-      companyRepository.getAll(),
-      documentRepository.getAll(),
-      matchRequestRepository.getAll(),
+
+    const [profiles, companyProfiles, v2Docs, v2Requests] = await Promise.all([
+      technicianRepositoryV2.getAll(),
+      companyRepositoryV2.getAll(),
+      documentRepositoryV2.getAll(),
+      offerRequestRepository.getAll(),
     ]);
-    setTechnicians(techs);
-    setCompanies(comps);
-    setDocuments(docs);
-    setRequests(reqs);
+
+    // Load relations for each technician so admin can see licenseCategories, etc.
+    const withRelationsAll = await Promise.all(
+      profiles.map((p) => technicianRepositoryV2.getWithRelations(p.id)),
+    );
+    setTechnicians(
+      withRelationsAll
+        .filter((t): t is NonNullable<typeof t> => t !== null)
+        .map(v2TechnicianToV1),
+    );
+
+    setCompanies(companyProfiles.map(v2CompanyToV1));
+    setDocuments(v2Docs.map(v2DocumentToV1));
+    setRequests(v2Requests.map(v2OfferRequestToMatchRequest));
     setLoading(false);
   }, []);
 
@@ -68,7 +91,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
 
   const updateTechnicianVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
-      await technicianRepository.update(id, { verificationStatus: status });
+      await technicianRepositoryV2.update(id, { verificationStatus: status });
       setTechnicians((prev) =>
         prev.map((t) => (t.id === id ? { ...t, verificationStatus: status } : t)),
       );
@@ -78,7 +101,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
 
   const updateCompanyVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
-      await companyRepository.update(id, { verificationStatus: status });
+      await companyRepositoryV2.update(id, { verificationStatus: status });
       setCompanies((prev) =>
         prev.map((c) => (c.id === id ? { ...c, verificationStatus: status } : c)),
       );
@@ -87,9 +110,27 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   );
 
   const updateDocumentStatus = useCallback(async (id: string, status: DocumentStatus) => {
-    await documentRepository.updateStatus(id, status);
+    await documentRepositoryV2.updateStatus(id, status);
     setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, status } : d)));
   }, []);
+
+  // V2-specific metric helpers — computed lazily from repo on demand
+  const [pendingOfferRequests, setPendingOfferRequests] = useState(0);
+  const [pendingApplications, setPendingApplications] = useState(0);
+  const [activeOffers, setActiveOffers] = useState(0);
+
+  useEffect(() => {
+    if (loading) return;
+    Promise.all([
+      offerRequestRepository.getAll(),
+      offerApplicationRepository.getAll(),
+      offerRepository.getAll(),
+    ]).then(([reqs, apps, offers]) => {
+      setPendingOfferRequests(reqs.filter((r) => r.status === 'pending').length);
+      setPendingApplications(apps.filter((a) => a.status === 'pending').length);
+      setActiveOffers(offers.filter((o) => o.status === 'published').length);
+    });
+  }, [loading]);
 
   const metrics: AdminMetrics = {
     totalTechnicians: technicians.length,
@@ -102,6 +143,9 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     pendingDocuments: documents.filter((d) => d.status === 'pending').length,
     totalRequests: requests.length,
     acceptedRequests: requests.filter((r) => r.status === 'accepted').length,
+    pendingOfferRequests,
+    pendingApplications,
+    activeOffers,
   };
 
   const technicianMap: Record<string, Technician> = {};

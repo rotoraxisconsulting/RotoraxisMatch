@@ -1,0 +1,72 @@
+[
+  { "id": "exp-001", "technicianId": "tech-001", "aircraftTypeCode": "B737", "value": 10, "unit": "years", "createdAt": "2024-01-15T10:00:00.000Z" },
+  { "id": "exp-002", "technicianId": "tech-001", "aircraftTypeCode": "B757", "value": 8,  "unit": "years", "createdAt": "2024-01-15T10:00:00.000Z" },
+  { "id": "exp-003", "technicianId": "tech-001", "aircraftTypeCode": "B767", "value": 4,  "unit": "years", "createdAt": "2024-01-15T10:00:00.000Z" },
+
+  { "id": "exp-004", "technicianId": "tech-002", "aircraftTypeCode": "A320", "value": 6,  "unit": "years", "createdAt": "2024-02-10T11:00:00.000Z" },
+  { "id": "exp-005", "technicianId": "tech-002", "aircraftTypeCode": "B737", "value": 4,  "unit": "years", "createdAt": "2024-02-10T11:00:00.000Z" },
+  { "id": "exp-006", "technicianId": "tech-002", "aircraftTypeCode": "B787", "value": 2,  "unit": "years", "createdAt": "2024-02-10T11:00:00.000Z" },
+
+  { "id": "exp-007", "technicianId": "tech-003", "aircraftTypeCode": "B737", "value": 12, "unit": "years", "createdAt": "2023-11-05T09:00:00.000Z" },
+  { "id": "exp-008", "technicianId": "tech-003", "aircraftTypeCode": "B767", "value": 8,  "unit": "years", "createdAt": "2023-11-05T09:00:00.000Z" },
+  { "id": "exp-009", "technicianId": "tech-003", "aircraftTypeCode": "B777", "value": 5,  "unit": "years", "createdAt": "2023-11-05T09:00:00.000Z" },
+
+  { "id": "exp-010", "technicianId": "tech-004", "aircraftTypeCode": "A320", "value": 4,  "unit": "years", "createdAt": "2026-02-20T15:00:00.000Z" },
+  { "id": "exp-011", "technicianId": "tech-004", "aircraftTypeCode": "A330", "value": 2,  "unit": "years", "createdAt": "2026-02-20T15:00:00.000Z" },
+
+  { "id": "exp-012", "technicianId": "tech-005", "aircraftTypeCode": "B777", "value": 15, "unit": "years", "createdAt": "2023-06-10T08:00:00.000Z" },
+  { "id": "exp-013", "technicianId": "tech-005", "aircraftTypeCode": "B787", "value": 8,  "unit": "years", "createdAt": "2023-06-10T08:00:00.000Z" },
+  { "id": "exp-014", "technicianId": "tech-005", "aircraftTypeCode": "A380", "value": 6,  "unit": "years", "createdAt": "2023-06-10T08:00:00.000Z" },
+
+  { "id": "exp-015", "technicianId": "tech-006", "aircraftTypeCode": "A320", "value": 8,  "unit": "years", "createdAt": "2024-04-15T13:00:00.000Z" },
+  { "id": "exp-016", "technicianId": "tech-006", "aircraftTypeCode": "A380", "value": 5,  "unit": "years", "createdAt": "2024-04-15T13:00:00.000Z" },
+  { "id": "exp-017", "technicianId": "tech-006", "aircraftTypeCode": "A350", "value": 3,  "unit": "years", "createdAt": "2024-04-15T13:00:00.000Z" },
+
+  { "id": "exp-018", "technicianId": "tech-007", "aircraftTypeCode": "B787", "value": 10, "unit": "years", "createdAt": "2023-12-01T10:00:00.000Z" },
+  { "id": "exp-019", "technicianId": "tech-007", "aircraftTypeCode": "B737", "value": 6,  "unit": "years", "createdAt": "2023-12-01T10:00:00.000Z" },
+  { "id": "exp-020", "technicianId": "tech-007", "aircraftTypeCode": "B777", "value": 4,  "unit": "years", "createdAt": "2023-12-01T10:00:00.000Z" },
+
+  { "id": "exp-021", "technicianId": "tech-008", "aircraftTypeCode": "A320", "value": 3,  "unit": "years", "createdAt": "2026-03-10T16:00:00.000Z" },
+  { "id": "exp-022", "technicianId": "tech-008", "aircraftTypeCode": "B737", "value": 2,  "unit": "years", "createdAt": "2026-03-10T16:00:00.000Z" },
+
+  { "id": "exp-023", "technicianId": "tech-009", "aircraftTypeCode": "B747", "value": 15, "unit": "years", "createdAt": "2023-08-20T09:00:00.000Z" },
+  { "id": "exp-024", "technicianId": "tech-009", "aircraftTypeCode": "A380", "value": 10, "unit": "years", "createdAt": "2023-08-20T09:00:00.000Z" },
+  { "id": "exp-025", "technicianId": "tech-009", "aircraftTypeCode": "B777", "value": 8,  "unit": "years", "createdAt": "2023-08-20T09:00:00.000Z" },
+  { "id": "exp-026", "technicianId": "tech-009", "aircraftTypeCode": "S76",  "value": 5,  "unit": "years", "createdAt": "2023-08-20T09:00:00.000Z" },
+
+  { "id": "exp-027", "technicianId": "tech-010", "aircraftTypeCode": "A350", "value": 7,  "unit": "years", "createdAt": "2024-01-30T11:00:00.000Z" },
+  { "id": "exp-028", "technicianId": "tech-010", "aircraftTypeCode": "B787", "value": 5,  "unit": "years", "createdAt": "2024-01-30T11:00:00.000Z" },
+  { "id": "exp-029", "technicianId": "tech-010", "aircraftTypeCode": "A320", "value": 3,  "unit": "years", "createdAt": "2024-01-30T11:00:00.000Z" },
+
+  { "id": "exp-030", "technicianId": "tech-011", "aircraftTypeCode": "R44",  "value": 8,  "unit": "years", "createdAt": "2023-09-15T08:30:00.000Z" },
+  { "id": "exp-031", "technicianId": "tech-011", "aircraftTypeCode": "B407", "value": 5,  "unit": "years", "createdAt": "2023-09-15T08:30:00.000Z" },
+  { "id": "exp-032", "technicianId": "tech-011", "aircraftTypeCode": "B412", "value": 3,  "unit": "years", "createdAt": "2023-09-15T08:30:00.000Z" },
+
+  { "id": "exp-033", "technicianId": "tech-012", "aircraftTypeCode": "A320", "value": 12, "unit": "years", "createdAt": "2023-07-12T08:30:00.000Z" },
+  { "id": "exp-034", "technicianId": "tech-012", "aircraftTypeCode": "A330", "value": 8,  "unit": "years", "createdAt": "2023-07-12T08:30:00.000Z" },
+  { "id": "exp-035", "technicianId": "tech-012", "aircraftTypeCode": "A350", "value": 5,  "unit": "years", "createdAt": "2023-07-12T08:30:00.000Z" },
+
+  { "id": "exp-036", "technicianId": "tech-013", "aircraftTypeCode": "A320", "value": 5,  "unit": "years", "createdAt": "2026-01-20T14:00:00.000Z" },
+  { "id": "exp-037", "technicianId": "tech-013", "aircraftTypeCode": "B737", "value": 3,  "unit": "years", "createdAt": "2026-01-20T14:00:00.000Z" },
+  { "id": "exp-038", "technicianId": "tech-013", "aircraftTypeCode": "A330", "value": 2,  "unit": "years", "createdAt": "2026-01-20T14:00:00.000Z" },
+
+  { "id": "exp-039", "technicianId": "tech-014", "aircraftTypeCode": "S76",  "value": 10, "unit": "years", "createdAt": "2024-01-08T10:00:00.000Z" },
+  { "id": "exp-040", "technicianId": "tech-014", "aircraftTypeCode": "B412", "value": 8,  "unit": "years", "createdAt": "2024-01-08T10:00:00.000Z" },
+  { "id": "exp-041", "technicianId": "tech-014", "aircraftTypeCode": "B407", "value": 5,  "unit": "years", "createdAt": "2024-01-08T10:00:00.000Z" },
+
+  { "id": "exp-042", "technicianId": "tech-015", "aircraftTypeCode": "B737", "value": 7,  "unit": "years", "createdAt": "2026-02-05T12:00:00.000Z" },
+  { "id": "exp-043", "technicianId": "tech-015", "aircraftTypeCode": "B767", "value": 5,  "unit": "years", "createdAt": "2026-02-05T12:00:00.000Z" },
+  { "id": "exp-044", "technicianId": "tech-015", "aircraftTypeCode": "A320", "value": 3,  "unit": "years", "createdAt": "2026-02-05T12:00:00.000Z" },
+
+  { "id": "exp-045", "technicianId": "tech-016", "aircraftTypeCode": "A220",  "value": 8,  "unit": "years", "createdAt": "2023-10-22T09:00:00.000Z" },
+  { "id": "exp-046", "technicianId": "tech-016", "aircraftTypeCode": "CRJ900","value": 6,  "unit": "years", "createdAt": "2023-10-22T09:00:00.000Z" },
+  { "id": "exp-047", "technicianId": "tech-016", "aircraftTypeCode": "Q400",  "value": 4,  "unit": "years", "createdAt": "2023-10-22T09:00:00.000Z" },
+
+  { "id": "exp-048", "technicianId": "tech-017", "aircraftTypeCode": "S92",  "value": 10, "unit": "years", "createdAt": "2023-05-18T10:00:00.000Z" },
+  { "id": "exp-049", "technicianId": "tech-017", "aircraftTypeCode": "B412", "value": 8,  "unit": "years", "createdAt": "2023-05-18T10:00:00.000Z" },
+  { "id": "exp-050", "technicianId": "tech-017", "aircraftTypeCode": "S76",  "value": 6,  "unit": "years", "createdAt": "2023-05-18T10:00:00.000Z" },
+
+  { "id": "exp-051", "technicianId": "tech-018", "aircraftTypeCode": "B777", "value": 14, "unit": "years", "createdAt": "2023-04-02T08:00:00.000Z" },
+  { "id": "exp-052", "technicianId": "tech-018", "aircraftTypeCode": "A350", "value": 8,  "unit": "years", "createdAt": "2023-04-02T08:00:00.000Z" },
+  { "id": "exp-053", "technicianId": "tech-018", "aircraftTypeCode": "B747", "value": 6,  "unit": "years", "createdAt": "2023-04-02T08:00:00.000Z" }
+]

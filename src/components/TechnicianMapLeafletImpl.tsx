@@ -175,7 +175,7 @@ export default function TechnicianMapLeafletImpl({
             center={[t.latitude, t.longitude]}
             radius={9}
             pathOptions={{
-              fillColor: markerColor(t.availability.status),
+              fillColor: markerColor(t.availability.status ?? 'unavailable'),
               color: '#ffffff',
               fillOpacity: 0.92,
               weight: 2,
@@ -194,8 +194,8 @@ export default function TechnicianMapLeafletImpl({
                 </div>
 
                 <div style={{ marginBottom: 8 }}>
-                  <span style={statusChipStyle(availColor(t.availability.status))}>
-                    {availLabel(t.availability.status)}
+                  <span style={statusChipStyle(availColor(t.availability.status ?? 'unavailable'))}>
+                    {availLabel(t.availability.status ?? 'unavailable')}
                   </span>
                   <span style={statusChipStyle(verifColor(t.verificationStatus))}>
                     {t.verificationStatus}

@@ -1,5 +1,10 @@
 # RotoraxisMatch — Claude Context
 
+> **V2 is the source of truth.** RotoraxisMatch V2 is now the active product definition.
+> Read `docs/PRODUCT_CONTEXT_V2.md`, `docs/DATA_MODEL_V2.md`, `docs/USER_FLOWS_V2.md`,
+> `docs/SUPABASE_PLAN_V2.md`, and `docs/IMPLEMENTATION_PHASES_V2.md` before any major work.
+> V1 docs remain for reference only.
+
 RotoraxisMatch is a cross-platform aviation technician matching app.
 
 ## Product
@@ -103,7 +108,20 @@ Avoid generic UI.
 
 ## Important docs
 
-Read these only when needed:
+V2 docs (source of truth):
+- docs/PRODUCT_CONTEXT_V2.md
+- docs/DATA_MODEL_V2.md
+- docs/USER_FLOWS_V2.md
+- docs/SUPABASE_PLAN_V2.md
+- docs/IMPLEMENTATION_PHASES_V2.md
+
+V2 technical model (read before any implementation):
+- docs/TYPESCRIPT_TYPES_V2.md — canonical TypeScript types
+- docs/SUPABASE_SCHEMA_V2.sql — Postgres schema with seeds
+- docs/RLS_PLAN_V2.md — security / RLS policies
+- docs/MIGRATION_FROM_DEMO_TO_V2.md — V1→V2 field mapping and migration guide
+
+V1 docs (reference only):
 - docs/PRODUCT_CONTEXT.md
 - docs/ARCHITECTURE.md
 - docs/UI_UX_GUIDELINES.md

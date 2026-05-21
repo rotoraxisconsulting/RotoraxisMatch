@@ -1,9 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Technician, MatchRequest, TechnicianDocument, Company } from '../types';
-import { technicianRepository } from '../repositories/technicianRepository';
-import { matchRequestRepository } from '../repositories/matchRequestRepository';
-import { documentRepository } from '../repositories/documentRepository';
-import { companyRepository } from '../repositories/companyRepository';
+import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
+import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
+import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
+import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
+import {
+  v2TechnicianToV1,
+  v2OfferRequestToMatchRequest,
+  v2DocumentToV1,
+  v2CompanyToV1,
+  applyV1PatchToV2Profile,
+} from '../utils/v2CompatAdapters';
 
 export const DEMO_TECHNICIAN_ID = 'tech-001';
 
@@ -44,22 +51,28 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [tech, reqs, docs, companies] = await Promise.all([
-      technicianRepository.getById(DEMO_TECHNICIAN_ID),
-      matchRequestRepository.getByTechnician(DEMO_TECHNICIAN_ID),
-      documentRepository.getByTechnician(DEMO_TECHNICIAN_ID),
-      companyRepository.getAll(),
+    const [withRelations, v2Requests, v2Docs, companies] = await Promise.all([
+      technicianRepositoryV2.getWithRelations(DEMO_TECHNICIAN_ID),
+      offerRequestRepository.getForTechnician(DEMO_TECHNICIAN_ID),
+      documentRepositoryV2.getForTechnician(DEMO_TECHNICIAN_ID),
+      companyRepositoryV2.getAll(),
     ]);
-    setTechnician(tech);
-    setRequests(
-      [...reqs].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      ),
-    );
-    setDocuments(docs);
+
+    if (withRelations) setTechnician(v2TechnicianToV1(withRelations));
+
+    // Technician sees their direct offer requests as MatchRequest[] (V1 compat)
+    // Maps V2 'pending' → V1 'sent'; 'expired'/'withdrawn' → 'rejected'
+    // TODO: remove mapping once technician screens are migrated to V2 OfferRequest type
+    const compatRequests = [...v2Requests]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map(v2OfferRequestToMatchRequest);
+    setRequests(compatRequests);
+
+    setDocuments(v2Docs.map(v2DocumentToV1));
+
     const map: Record<string, Company> = {};
     companies.forEach((c) => {
-      map[c.id] = c;
+      map[c.id] = v2CompanyToV1(c);
     });
     setCompanyMap(map);
     setLoading(false);
@@ -71,7 +84,7 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
 
   const acceptRequest = useCallback(
     async (requestId: string) => {
-      await matchRequestRepository.updateStatus(requestId, 'accepted', true);
+      await offerRequestRepository.updateStatus(requestId, 'accepted');
       await loadData();
     },
     [loadData],
@@ -79,7 +92,7 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
 
   const rejectRequest = useCallback(
     async (requestId: string) => {
-      await matchRequestRepository.updateStatus(requestId, 'rejected', false);
+      await offerRequestRepository.updateStatus(requestId, 'rejected');
       await loadData();
     },
     [loadData],
@@ -88,9 +101,20 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
   const updateProfile = useCallback(
     async (patch: Partial<Technician>) => {
       if (!technician) return;
-      const updated: Technician = { ...technician, ...patch };
-      updated.profileCompleteness = computeProfileCompleteness(updated);
-      await technicianRepository.update(DEMO_TECHNICIAN_ID, updated);
+
+      // Apply patch to V1 compat object to compute profileCompleteness
+      const updatedV1: Technician = { ...technician, ...patch };
+      updatedV1.profileCompleteness = computeProfileCompleteness(updatedV1);
+
+      // Load the V2 profile to get reference fields (needed for firstName/lastName split)
+      const existingProfile = await technicianRepositoryV2.getById(DEMO_TECHNICIAN_ID);
+      if (!existingProfile) return;
+
+      const v2Patch = applyV1PatchToV2Profile(
+        { ...patch, profileCompleteness: updatedV1.profileCompleteness },
+        existingProfile,
+      );
+      await technicianRepositoryV2.update(DEMO_TECHNICIAN_ID, v2Patch);
       await loadData();
     },
     [technician, loadData],

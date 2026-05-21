@@ -1,0 +1,14 @@
+[
+  { "id": "orl-001", "offerId": "offer-001", "licenseCode": "B1.1" },
+  { "id": "orl-002", "offerId": "offer-002", "licenseCode": "B1.1" },
+  { "id": "orl-003", "offerId": "offer-002", "licenseCode": "C" },
+  { "id": "orl-004", "offerId": "offer-004", "licenseCode": "B2" },
+  { "id": "orl-005", "offerId": "offer-005", "licenseCode": "B1.1" },
+  { "id": "orl-006", "offerId": "offer-005", "licenseCode": "B2" },
+  { "id": "orl-007", "offerId": "offer-007", "licenseCode": "B1.3" },
+  { "id": "orl-008", "offerId": "offer-008", "licenseCode": "B1.3" },
+  { "id": "orl-009", "offerId": "offer-009", "licenseCode": "B1.3" },
+  { "id": "orl-010", "offerId": "offer-011", "licenseCode": "B1.1" },
+  { "id": "orl-011", "offerId": "offer-011", "licenseCode": "C" },
+  { "id": "orl-012", "offerId": "offer-012", "licenseCode": "B2" }
+]

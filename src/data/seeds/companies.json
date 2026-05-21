@@ -1,0 +1,110 @@
+[
+  {
+    "id": "comp-001",
+    "name": "Delta Air Lines",
+    "country": "USA",
+    "city": "Atlanta",
+    "phone": "+1-404-715-2600",
+    "email": "mro.talent@delta.com",
+    "companyType": "airline",
+    "verificationStatus": "verified",
+    "createdAt": "2024-01-01T08:00:00.000Z",
+    "updatedAt": "2024-01-01T08:00:00.000Z"
+  },
+  {
+    "id": "comp-002",
+    "name": "Boeing Global Services",
+    "country": "USA",
+    "city": "Everett",
+    "phone": "+1-425-965-2121",
+    "email": "services.talent@boeing.com",
+    "companyType": "MRO",
+    "verificationStatus": "verified",
+    "createdAt": "2024-01-02T08:00:00.000Z",
+    "updatedAt": "2024-01-02T08:00:00.000Z"
+  },
+  {
+    "id": "comp-003",
+    "name": "AAR Corp",
+    "country": "USA",
+    "city": "Wood Dale",
+    "phone": "+1-630-227-2000",
+    "email": "talent@aarcorp.com",
+    "companyType": "MRO",
+    "verificationStatus": "verified",
+    "createdAt": "2024-01-03T08:00:00.000Z",
+    "updatedAt": "2024-01-03T08:00:00.000Z"
+  },
+  {
+    "id": "comp-004",
+    "name": "Lufthansa Technik",
+    "country": "Germany",
+    "city": "Hamburg",
+    "phone": "+49-40-5070-0",
+    "email": "recruiting@lufthansa-technik.de",
+    "companyType": "MRO",
+    "verificationStatus": "verified",
+    "createdAt": "2024-01-04T08:00:00.000Z",
+    "updatedAt": "2024-01-04T08:00:00.000Z"
+  },
+  {
+    "id": "comp-005",
+    "name": "StandardAero",
+    "country": "USA",
+    "city": "Scottsdale",
+    "phone": "+1-480-483-5600",
+    "email": "hr@standardaero.com",
+    "companyType": "MRO",
+    "verificationStatus": "verified",
+    "createdAt": "2024-01-05T08:00:00.000Z",
+    "updatedAt": "2024-01-05T08:00:00.000Z"
+  },
+  {
+    "id": "comp-006",
+    "name": "HelicopAero International",
+    "country": "USA",
+    "city": "Dallas",
+    "phone": "+1-972-555-0160",
+    "email": "ops@helicopaero.com",
+    "companyType": "helicopter_operator",
+    "verificationStatus": "pending",
+    "createdAt": "2024-01-06T08:00:00.000Z",
+    "updatedAt": "2024-01-06T08:00:00.000Z"
+  },
+  {
+    "id": "comp-007",
+    "name": "AviationStaff Pro",
+    "country": "UK",
+    "city": "London",
+    "phone": "+44-20-7946-0555",
+    "email": "placements@aviationstaffpro.com",
+    "companyType": "recruitment_agency",
+    "verificationStatus": "verified",
+    "createdAt": "2024-01-07T08:00:00.000Z",
+    "updatedAt": "2024-01-07T08:00:00.000Z"
+  },
+  {
+    "id": "comp-008",
+    "name": "Emirates Engineering",
+    "country": "UAE",
+    "city": "Dubai",
+    "phone": "+971-4-299-5000",
+    "email": "talent@emirates-engineering.ae",
+    "companyType": "MRO",
+    "verificationStatus": "verified",
+    "createdAt": "2024-02-01T08:00:00.000Z",
+    "updatedAt": "2024-02-01T08:00:00.000Z"
+  },
+  {
+    "id": "comp-009",
+    "name": "Nordic Aviation Partners",
+    "country": "Denmark",
+    "city": "Copenhagen",
+    "phone": "+45-33-55-0100",
+    "email": "hr@nordicaviationpartners.dk",
+    "companyType": "other",
+    "verificationStatus": "verified",
+    "createdAt": "2024-02-15T08:00:00.000Z",
+    "updatedAt": "2024-02-15T08:00:00.000Z"
+  }
+]

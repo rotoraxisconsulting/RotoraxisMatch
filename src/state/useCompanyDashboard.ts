@@ -1,8 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Company, MatchRequest, SafeTechnicianView } from '../types';
-import { companyRepository } from '../repositories/companyRepository';
-import { matchRequestRepository } from '../repositories/matchRequestRepository';
-import { technicianRepository } from '../repositories/technicianRepository';
+import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
+import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
+import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
+import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
+import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
+import { OfferRequest } from '../types/offerRequest';
+import { canRevealIdentity } from '../utils/privacyV2';
+import { getUnlockedTechnicianView } from '../utils/privacyV2';
+import {
+  v2CompanyToV1,
+  v2OfferRequestToMatchRequest,
+  v2SafePreviewToSafeView,
+  v2UnlockedViewToSafeView,
+} from '../utils/v2CompatAdapters';
 
 // Demo: Delta Air Lines is the active company for the company role
 export const DEMO_COMPANY_ID = 'comp-001';
@@ -18,20 +29,46 @@ interface CompanyDashboardState {
   refresh: () => Promise<void>;
 }
 
-async function buildTechnicianMap(
-  reqs: MatchRequest[],
+/**
+ * Build a technicianId → SafeTechnicianView map for the company's offer requests.
+ * Applies the privacy gate: pending → anonymous view, accepted → unlocked view.
+ */
+async function buildTechnicianMapV2(
+  offerRequests: OfferRequest[],
+  allOfferRequests: OfferRequest[],
 ): Promise<Record<string, SafeTechnicianView>> {
   const map: Record<string, SafeTechnicianView> = {};
+  const allApplications = await offerApplicationRepository.getForCompany(DEMO_COMPANY_ID);
+
   await Promise.all(
-    reqs.map(async (req) => {
-      const view = await technicianRepository.getSafeViewForCompany(
-        req.technicianId,
-        DEMO_COMPANY_ID,
-        reqs,
-      );
-      if (view) map[req.technicianId] = view;
+    offerRequests.map(async (req) => {
+      const techId = req.technicianId;
+
+      const accepted = canRevealIdentity({
+        companyId: DEMO_COMPANY_ID,
+        technicianId: techId,
+        offerRequests: allOfferRequests,
+        offerApplications: allApplications,
+      });
+
+      if (!accepted) {
+        const preview = await technicianRepositoryV2.getSafeView(techId);
+        if (preview) map[techId] = v2SafePreviewToSafeView(preview);
+        return;
+      }
+
+      const [withRelations, documents] = await Promise.all([
+        technicianRepositoryV2.getWithRelations(techId),
+        documentRepositoryV2.getVerifiedForTechnician(techId),
+      ]);
+      if (withRelations) {
+        map[techId] = v2UnlockedViewToSafeView(
+          getUnlockedTechnicianView(withRelations, documents),
+        );
+      }
     }),
   );
+
   return map;
 }
 
@@ -43,13 +80,19 @@ export function useCompanyDashboard(): CompanyDashboardState {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [comp, reqs] = await Promise.all([
-      companyRepository.getById(DEMO_COMPANY_ID),
-      matchRequestRepository.getByCompany(DEMO_COMPANY_ID),
+    const [companyProfile, v2Requests] = await Promise.all([
+      companyRepositoryV2.getById(DEMO_COMPANY_ID),
+      offerRequestRepository.getForCompany(DEMO_COMPANY_ID),
     ]);
-    setCompany(comp);
-    setRequests(reqs);
-    setTechnicianMap(await buildTechnicianMap(reqs));
+
+    setCompany(companyProfile ? v2CompanyToV1(companyProfile) : null);
+
+    // Build V1 compat MatchRequest[] — maps V2 'pending' → V1 'sent'
+    // TODO: remove status mapping once screens are migrated to V2 OfferRequest type
+    const compatRequests = v2Requests.map(v2OfferRequestToMatchRequest);
+    setRequests(compatRequests);
+
+    setTechnicianMap(await buildTechnicianMapV2(v2Requests, v2Requests));
     setLoading(false);
   }, []);
 
@@ -59,17 +102,16 @@ export function useCompanyDashboard(): CompanyDashboardState {
 
   const sendRequest = useCallback(
     async (technicianId: string, message: string): Promise<MatchRequest[]> => {
-      await matchRequestRepository.create({
+      await offerRequestRepository.create({
         companyId: DEMO_COMPANY_ID,
         technicianId,
-        status: 'sent',
-        identityRevealed: false,
         message,
       });
-      const reqs = await matchRequestRepository.getByCompany(DEMO_COMPANY_ID);
-      setRequests(reqs);
-      setTechnicianMap(await buildTechnicianMap(reqs));
-      return reqs;
+      const v2Requests = await offerRequestRepository.getForCompany(DEMO_COMPANY_ID);
+      const compatRequests = v2Requests.map(v2OfferRequestToMatchRequest);
+      setRequests(compatRequests);
+      setTechnicianMap(await buildTechnicianMapV2(v2Requests, v2Requests));
+      return compatRequests;
     },
     [],
   );

@@ -27,8 +27,8 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
 function filterDocuments(docs: TechnicianDocument[], status: StatusFilter): TechnicianDocument[] {
   const result = status === 'all' ? docs : docs.filter((d) => d.status === status);
   return [...result].sort((a, b) => {
-    const order = { pending: 0, rejected: 1, verified: 2 };
-    if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+    const order = { pending: 0, rejected: 1, expired: 2, verified: 3 };
+    if ((order[a.status] ?? 0) !== (order[b.status] ?? 0)) return (order[a.status] ?? 0) - (order[b.status] ?? 0);
     // Within same status: newest first
     return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
   });

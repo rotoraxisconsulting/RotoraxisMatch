@@ -63,8 +63,8 @@ export function TechnicianCard({ technician: t, onRequestContact, requestStatus 
         <View style={styles.headerLeft}>
           <Text style={styles.code}>{t.anonymousCode}</Text>
           <Badge
-            label={availabilityLabel(t.availability.status)}
-            variant={availabilityVariant(t.availability.status)}
+            label={availabilityLabel(t.availability.status ?? 'unavailable')}
+            variant={availabilityVariant(t.availability.status ?? 'unavailable')}
             small
           />
         </View>
