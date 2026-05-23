@@ -21,6 +21,9 @@ import v2OfferRequiredAircraftTypes from '../data/seeds/offerRequiredAircraftTyp
 import v2OfferRequests from '../data/seeds/offerRequests.json';
 import v2OfferApplications from '../data/seeds/offerApplications.json';
 import v2Documents from '../data/seeds/documents.json';
+import v2ChatRooms from '../data/seeds/chatRooms.json';
+import v2ChatMessages from '../data/seeds/chatMessages.json';
+import v2Activities from '../data/seeds/activities.json';
 
 export const DB_KEYS = {
   // V1 — keep for backward compat with existing repositories
@@ -48,6 +51,7 @@ export const DB_KEYS = {
   v2Documents: 'db:v2:documents',
   v2ChatRooms: 'db:v2:chatRooms',
   v2ChatMessages: 'db:v2:chatMessages',
+  v2Activities: 'db:v2:activities',
 } as const;
 
 export const localDatabase = {
@@ -99,8 +103,9 @@ export const localDatabase = {
     await storageAdapter.set(DB_KEYS.v2OfferRequests, v2OfferRequests);
     await storageAdapter.set(DB_KEYS.v2OfferApplications, v2OfferApplications);
     await storageAdapter.set(DB_KEYS.v2Documents, v2Documents);
-    await storageAdapter.set(DB_KEYS.v2ChatRooms, []);
-    await storageAdapter.set(DB_KEYS.v2ChatMessages, []);
+    await storageAdapter.set(DB_KEYS.v2ChatRooms, v2ChatRooms);
+    await storageAdapter.set(DB_KEYS.v2ChatMessages, v2ChatMessages);
+    await storageAdapter.set(DB_KEYS.v2Activities, v2Activities);
     await storageAdapter.set(DB_KEYS.v2Initialized, true);
   },
 

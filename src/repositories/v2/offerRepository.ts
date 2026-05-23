@@ -65,7 +65,7 @@ export const offerRepository = {
     const idx = offers.findIndex((o) => o.id === id);
     if (idx === -1) return null;
 
-    const updated: Offer = { ...offers[idx], status, updatedAt: new Date().toISOString() };
+    const updated: Offer = { ...offers[idx], status, visible: status === 'published', updatedAt: new Date().toISOString() };
     const next = [...offers];
     next[idx] = updated;
     await storageAdapter.set(DB_KEYS.v2Offers, next);

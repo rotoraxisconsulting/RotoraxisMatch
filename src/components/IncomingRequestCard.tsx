@@ -72,7 +72,7 @@ export function IncomingRequestCard({
   function confirmReject() {
     Alert.alert(
       'Decline Request',
-      `Decline the contact request from ${company?.companyName ?? 'this company'}?`,
+      `Decline the direct offer from ${company?.companyName ?? 'this company'}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {

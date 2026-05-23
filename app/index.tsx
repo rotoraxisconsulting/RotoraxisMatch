@@ -16,6 +16,7 @@ import { useDemoSession } from '../src/state/useDemoSession';
 import { colors, spacing } from '../src/theme';
 import { UserRole } from '../src/repositories/demoSessionRepository';
 import { hasSeenIntro } from '../src/storage/introStorage';
+import { localDatabase } from '../src/storage/localDatabase';
 
 const ROLE_LABELS: Record<UserRole, string> = {
   technician: 'Technician',
@@ -53,6 +54,8 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const [introChecked, setIntroChecked] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
 
   useEffect(() => {
     hasSeenIntro().then(seen => {
@@ -72,6 +75,18 @@ export default function HomeScreen() {
         </View>
       </SafeAreaView>
     );
+  }
+
+  async function handleResetDemoData() {
+    setResetting(true);
+    setResetDone(false);
+    try {
+      await localDatabase.resetV2Data();
+      setResetDone(true);
+      setTimeout(() => setResetDone(false), 4000);
+    } finally {
+      setResetting(false);
+    }
   }
 
   function goToOnboarding() {
@@ -162,6 +177,21 @@ export default function HomeScreen() {
           style={styles.settingsLink}
         >
           <Text style={styles.settingsLinkText}>⚙ Settings</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handleResetDemoData}
+          style={styles.resetBtn}
+          disabled={resetting}
+          activeOpacity={0.7}
+        >
+          {resetting ? (
+            <ActivityIndicator size="small" color={colors.warning} />
+          ) : (
+            <Text style={[styles.resetBtnText, resetDone && styles.resetBtnTextDone]}>
+              {resetDone ? '✓ Demo data reset — navigate to your role to see fresh data' : '⟳ Reset demo data'}
+            </Text>
+          )}
         </TouchableOpacity>
 
         <Text style={styles.footerNote}>
@@ -342,6 +372,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     fontWeight: '500',
+  },
+  resetBtn: {
+    alignSelf: 'center',
+    paddingVertical: spacing.xs + 2,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,165,0,0.3)',
+    borderRadius: 8,
+    minWidth: 160,
+    alignItems: 'center',
+  },
+  resetBtnText: {
+    fontSize: 11,
+    color: colors.warning,
+    fontWeight: '500',
+    opacity: 0.75,
+  },
+  resetBtnTextDone: {
+    opacity: 1,
+    color: colors.success,
   },
   footerNote: {
     textAlign: 'center',

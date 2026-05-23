@@ -22,7 +22,9 @@ import { offerRequestRepository } from '../../../src/repositories/v2/offerReques
 import { getTechnicianMatchesForOffer, TechnicianMatchResult } from '../../../src/utils/matchingV2';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { OfferRequest } from '../../../src/types/offerRequest';
-import { DEMO_COMPANY_ID } from '../../../src/state/useCompanyDashboard';
+import { DEMO_COMPANY_ID, DEMO_COMPANY_MEMBER_ROLE } from '../../../src/state/useCompanyDashboard';
+import { canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
+// TODO: apply canManageOffers(DEMO_COMPANY_MEMBER_ROLE) to edit/publish/close buttons in V2-9
 
 type BadgeVariant = 'success' | 'warning' | 'navy' | 'error';
 
@@ -350,7 +352,8 @@ export default function OfferDetailScreen() {
                 <View style={[styles.ctaBtn, styles.ctaPending]}>
                   <Text style={styles.ctaPendingText}>Direct offer sent — pending</Text>
                 </View>
-              ) : (
+              ) : canSendDirectOffers(DEMO_COMPANY_MEMBER_ROLE) ? (
+                // TODO: enforce canSendDirectOffers via Supabase RLS in V2-9
                 <TouchableOpacity
                   style={[styles.ctaBtn, styles.ctaSend]}
                   onPress={() => { setSelectedTechId(technician.id); setMessage(''); }}
@@ -358,6 +361,10 @@ export default function OfferDetailScreen() {
                 >
                   <Text style={styles.ctaSendText}>Send direct offer</Text>
                 </TouchableOpacity>
+              ) : (
+                <View style={[styles.ctaBtn, styles.ctaPending]}>
+                  <Text style={styles.ctaPendingText}>Viewer — cannot send offers</Text>
+                </View>
               )}
             </View>
           );

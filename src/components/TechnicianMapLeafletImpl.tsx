@@ -230,7 +230,7 @@ export default function TechnicianMapLeafletImpl({
                 )}
 
                 <div style={{ marginTop: 8, fontSize: 11, color: colors.textMuted, fontStyle: 'italic' }}>
-                  Use Search to send a contact request.
+                  Use Search to send a direct offer.
                 </div>
               </div>
             </Popup>

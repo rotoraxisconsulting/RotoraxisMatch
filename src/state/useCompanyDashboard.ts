@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Company, MatchRequest, SafeTechnicianView } from '../types';
+import { CompanyMemberRole } from '../types/enums';
 import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
@@ -17,6 +18,13 @@ import {
 
 // Demo: Delta Air Lines is the active company for the company role
 export const DEMO_COMPANY_ID = 'comp-001';
+// Demo: first admin member of comp-001 (userId=prof-c001a, role=admin, memberId=cm-001)
+// TODO: replace with real auth context in V2-9 Supabase phase
+export const DEMO_COMPANY_USER_ID = 'prof-c001a';
+export const DEMO_COMPANY_MEMBER_ID = 'cm-001';
+// Static role constant for demo-mode permission checks in company screens.
+// TODO: replace with dynamic role loaded from auth context in V2-9 Supabase phase.
+export const DEMO_COMPANY_MEMBER_ROLE: CompanyMemberRole = 'admin';
 
 interface CompanyDashboardState {
   company: Company | null;

@@ -13,11 +13,11 @@ import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { AdminCompanyCard } from '../../src/components/AdminCompanyCard';
 import { EmptyState } from '../../src/components/EmptyState';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import { Company, VerificationStatus, CompanyType } from '../../src/types';
+import { Company, VerificationStatus } from '../../src/types';
 import { colors, spacing } from '../../src/theme';
 
 type StatusFilter = 'all' | VerificationStatus;
-type TypeFilter = 'all' | CompanyType;
+type TypeFilter = 'all' | 'MRO' | 'airline' | 'recruitment_agency' | 'helicopter_operator' | 'other';
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -29,10 +29,10 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
 const TYPE_OPTIONS: { key: TypeFilter; label: string }[] = [
   { key: 'all', label: 'All types' },
   { key: 'airline', label: 'Airline' },
-  { key: 'mro', label: 'MRO' },
-  { key: 'operator', label: 'Operator' },
-  { key: 'contractor', label: 'Contractor' },
-  { key: 'recruiter', label: 'Recruiter' },
+  { key: 'MRO', label: 'MRO' },
+  { key: 'recruitment_agency', label: 'Recruitment Agency' },
+  { key: 'helicopter_operator', label: 'Helicopter Operator' },
+  { key: 'other', label: 'Other' },
 ];
 
 function filterCompanies(
@@ -42,7 +42,7 @@ function filterCompanies(
 ): Company[] {
   let result = companies;
   if (status !== 'all') result = result.filter((c) => c.verificationStatus === status);
-  if (type !== 'all') result = result.filter((c) => c.companyType === type);
+  if (type !== 'all') result = result.filter((c) => (c.companyType as string) === type);
   return [...result].sort((a, b) => {
     const order = { pending: 0, unverified: 1, rejected: 2, verified: 3 };
     return (order[a.verificationStatus] ?? 0) - (order[b.verificationStatus] ?? 0);

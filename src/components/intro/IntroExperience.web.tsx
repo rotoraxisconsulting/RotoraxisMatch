@@ -35,7 +35,7 @@ const SLIDES = [
     title: 'Private by default',
     subtitle: null,
     description:
-      'Companies see anonymous technical profiles first. Identity is revealed only after the technician accepts a contact request.',
+      'Companies see anonymous technical profiles first. Identity is revealed only after the technician accepts a direct offer.',
   },
   {
     id: 'search' as const,

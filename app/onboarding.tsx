@@ -30,7 +30,7 @@ const ROLE_OPTIONS: RoleOption[] = [
     subtitle: 'Mechanic, engineer or inspector seeking opportunities',
     icon: '🔧',
     accent: colors.technician,
-    bullets: ['Create a verified profile', 'Receive contact requests', 'Control your privacy'],
+    bullets: ['Create a verified profile', 'Receive direct offers & apply to jobs', 'Control your privacy'],
   },
   {
     role: 'company',
@@ -38,7 +38,7 @@ const ROLE_OPTIONS: RoleOption[] = [
     subtitle: 'MRO, airline, operator or recruiter searching for talent',
     icon: '🏢',
     accent: colors.company,
-    bullets: ['Search by license & specialty', 'Send contact requests', 'Map-based search'],
+    bullets: ['Search by license & specialty', 'Post offers & send direct offers', 'Map-based search'],
   },
   {
     role: 'admin',

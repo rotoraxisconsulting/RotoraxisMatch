@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,24 +14,40 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Card } from '../../src/components/Card';
 import { Badge } from '../../src/components/Badge';
 import { MetricCard } from '../../src/components/MetricCard';
-import { SectionHeader } from '../../src/components/SectionHeader';
-import { IncomingRequestCard } from '../../src/components/IncomingRequestCard';
 import { Button } from '../../src/components/Button';
 import { useDemoSession } from '../../src/state/useDemoSession';
-import { useTechnicianDashboard } from '../../src/state/useTechnicianDashboard';
+import { useTechnicianDashboard, DEMO_TECHNICIAN_ID } from '../../src/state/useTechnicianDashboard';
+import { chatRepository } from '../../src/repositories/v2/chatRepository';
+import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
+import { offerApplicationRepository } from '../../src/repositories/v2/offerApplicationRepository';
+import { activityRepository } from '../../src/repositories/v2/activityRepository';
 import { colors, spacing, typography } from '../../src/theme';
 
 export default function TechnicianDashboard() {
   const router = useRouter();
   const { clearSession } = useDemoSession();
-  const { technician, requests, documents, companyMap, loading, acceptRequest, rejectRequest } =
-    useTechnicianDashboard();
+  const { technician, documents, loading } = useTechnicianDashboard();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const [chatCount, setChatCount] = useState(0);
+  const [pendingDirectOffers, setPendingDirectOffers] = useState(0);
+  const [pendingApplications, setPendingApplications] = useState(0);
+  const [unreadDirectOffers, setUnreadDirectOffers] = useState(0);
+  const [unreadBrowseOffers, setUnreadBrowseOffers] = useState(0);
 
-  const pendingCount = requests.filter((r) => r.status === 'sent').length;
-  const acceptedCount = requests.filter((r) => r.status === 'accepted').length;
-  const recentRequests = requests.slice(0, 3);
+  useEffect(() => {
+    chatRepository.getRoomsForTechnician(DEMO_TECHNICIAN_ID).then((rooms) => {
+      setChatCount(rooms.length);
+    });
+    offerRequestRepository.getForTechnician(DEMO_TECHNICIAN_ID).then((reqs) => {
+      setPendingDirectOffers(reqs.filter((r) => r.status === 'pending').length);
+    });
+    offerApplicationRepository.getForTechnician(DEMO_TECHNICIAN_ID).then((apps) => {
+      setPendingApplications(apps.filter((a) => a.status === 'pending').length);
+    });
+    activityRepository.getUnreadCount('technician', DEMO_TECHNICIAN_ID, ['direct_offer_received']).then(setUnreadDirectOffers);
+    activityRepository.getUnreadCount('technician', DEMO_TECHNICIAN_ID, ['application_accepted', 'application_rejected']).then(setUnreadBrowseOffers);
+  }, []);
 
   async function handleSwitchRole() {
     await clearSession();
@@ -105,9 +121,9 @@ export default function TechnicianDashboard() {
 
         {/* Metrics */}
         <View style={styles.metricsRow}>
-          <MetricCard value={pendingCount} label="Pending" color={colors.warning} />
+          <MetricCard value={pendingDirectOffers} label="Direct Offers" color={colors.warning} />
           <View style={styles.metricGap} />
-          <MetricCard value={acceptedCount} label="Accepted" color={colors.success} />
+          <MetricCard value={pendingApplications} label="Applications" color={colors.success} />
           <View style={styles.metricGap} />
           <MetricCard value={documents.length} label="Documents" color={colors.technician} />
         </View>
@@ -123,12 +139,25 @@ export default function TechnicianDashboard() {
             style={styles.navCardHalf}
           />
           <NavCard
-            icon="📨"
-            label="Contact Requests"
-            subtitle={pendingCount > 0 ? `${pendingCount} pending` : `${requests.length} total`}
-            accentColor={pendingCount > 0 ? colors.warning : colors.blue}
-            badge={pendingCount > 0 ? pendingCount : undefined}
-            onPress={() => router.push('/technician/requests' as any)}
+            icon="📩"
+            label="Direct Offers"
+            subtitle={
+              pendingDirectOffers > 0
+                ? `${pendingDirectOffers} pending`
+                : 'Offers sent directly to you'
+            }
+            accentColor={unreadDirectOffers > 0 ? colors.error : pendingDirectOffers > 0 ? colors.warning : colors.blue}
+            badge={unreadDirectOffers > 0 ? unreadDirectOffers : undefined}
+            onPress={() => router.push('/technician/direct-offers' as any)}
+            style={styles.navCardHalf}
+          />
+          <NavCard
+            icon="🔭"
+            label="Browse Offers"
+            subtitle="Discover matching job offers"
+            accentColor={unreadBrowseOffers > 0 ? colors.error : colors.success}
+            badge={unreadBrowseOffers > 0 ? unreadBrowseOffers : undefined}
+            onPress={() => router.push('/technician/offers' as any)}
             style={styles.navCardHalf}
           />
           <NavCard
@@ -137,33 +166,17 @@ export default function TechnicianDashboard() {
             subtitle={`${documents.length} document${documents.length !== 1 ? 's' : ''} on file`}
             accentColor={colors.navy}
             onPress={() => router.push('/technician/documents' as any)}
+            style={styles.navCardHalf}
+          />
+          <NavCard
+            icon="💬"
+            label="Chats"
+            subtitle={chatCount > 0 ? `${chatCount} open conversation${chatCount !== 1 ? 's' : ''}` : 'Accepted contacts only'}
+            accentColor={colors.cyan}
+            onPress={() => router.push('/technician/chats' as any)}
             style={styles.navCardFull}
           />
         </View>
-
-        {/* Recent requests */}
-        {recentRequests.length > 0 && (
-          <>
-            <SectionHeader
-              title="Recent Requests"
-              subtitle="Latest contact requests from companies"
-              action={
-                requests.length > 3
-                  ? { label: 'View all', onPress: () => router.push('/technician/requests' as any) }
-                  : undefined
-              }
-            />
-            {recentRequests.map((req) => (
-              <IncomingRequestCard
-                key={req.id}
-                request={req}
-                company={companyMap[req.companyId]}
-                onAccept={() => acceptRequest(req.id)}
-                onReject={() => rejectRequest(req.id)}
-              />
-            ))}
-          </>
-        )}
 
         <Button
           label="Switch role"

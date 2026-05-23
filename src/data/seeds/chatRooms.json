@@ -1,0 +1,37 @@
+[
+  {
+    "id": "room-seed-001",
+    "offerRequestId": "oreq-002",
+    "technicianId": "tech-003",
+    "companyId": "comp-001",
+    "createdAt": "2026-04-20T14:30:00.000Z"
+  },
+  {
+    "id": "room-seed-002",
+    "offerApplicationId": "oapp-003",
+    "technicianId": "tech-001",
+    "companyId": "comp-001",
+    "createdAt": "2026-05-03T12:00:00.000Z"
+  },
+  {
+    "id": "room-seed-003",
+    "offerRequestId": "oreq-003",
+    "technicianId": "tech-007",
+    "companyId": "comp-002",
+    "createdAt": "2026-04-25T10:30:00.000Z"
+  },
+  {
+    "id": "room-seed-004",
+    "offerRequestId": "oreq-011",
+    "technicianId": "tech-010",
+    "companyId": "comp-007",
+    "createdAt": "2026-04-26T14:30:00.000Z"
+  },
+  {
+    "id": "room-seed-005",
+    "offerApplicationId": "oapp-008",
+    "technicianId": "tech-012",
+    "companyId": "comp-002",
+    "createdAt": "2026-04-25T16:00:00.000Z"
+  }
+]

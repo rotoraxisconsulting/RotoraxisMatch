@@ -1,0 +1,99 @@
+[
+  {
+    "id": "msg-seed-001",
+    "chatRoomId": "room-seed-001",
+    "senderId": "comp-001",
+    "senderRole": "company",
+    "body": "Welcome aboard! Could you confirm your availability for the ORD base maintenance role starting 15 May?",
+    "sentAt": "2026-04-20T15:00:00.000Z"
+  },
+  {
+    "id": "msg-seed-002",
+    "chatRoomId": "room-seed-001",
+    "senderId": "tech-003",
+    "senderRole": "technician",
+    "body": "Hi, great to hear from you. Yes, 15 May works well. I can have my EASA documents ready for review before then.",
+    "sentAt": "2026-04-20T16:30:00.000Z"
+  },
+  {
+    "id": "msg-seed-003",
+    "chatRoomId": "room-seed-001",
+    "senderId": "comp-001",
+    "senderRole": "company",
+    "body": "Excellent. Our HR team will reach out with the onboarding paperwork shortly. Look forward to working with you.",
+    "sentAt": "2026-04-21T09:00:00.000Z"
+  },
+  {
+    "id": "msg-seed-004",
+    "chatRoomId": "room-seed-002",
+    "senderId": "comp-001",
+    "senderRole": "company",
+    "body": "Congratulations on your acceptance! We are very pleased to have you join the MIA line maintenance team.",
+    "sentAt": "2026-05-03T12:15:00.000Z"
+  },
+  {
+    "id": "msg-seed-005",
+    "chatRoomId": "room-seed-002",
+    "senderId": "tech-001",
+    "senderRole": "technician",
+    "body": "Thank you! Really looking forward to it. What documentation do you need from me before the start date?",
+    "sentAt": "2026-05-03T13:00:00.000Z"
+  },
+  {
+    "id": "msg-seed-006",
+    "chatRoomId": "room-seed-002",
+    "senderId": "comp-001",
+    "senderRole": "company",
+    "body": "We will need your current EASA licence, medical certificate, and passport copy. Please send scans to our HR email.",
+    "sentAt": "2026-05-03T14:30:00.000Z"
+  }
+  ,
+  {
+    "id": "msg-seed-007",
+    "chatRoomId": "room-seed-003",
+    "senderId": "comp-002",
+    "senderRole": "company",
+    "body": "Welcome to the Boeing 787 composites programme. We are delighted to have you on board. Could you confirm your earliest available start date for the Everett facility?",
+    "sentAt": "2026-04-25T11:00:00.000Z"
+  },
+  {
+    "id": "msg-seed-008",
+    "chatRoomId": "room-seed-003",
+    "senderId": "tech-007",
+    "senderRole": "technician",
+    "body": "Thank you, I am very excited to join. I can be available from 12 May. I will have all my composites certifications and NDT qualifications ready for your HR team before then.",
+    "sentAt": "2026-04-25T13:45:00.000Z"
+  },
+  {
+    "id": "msg-seed-009",
+    "chatRoomId": "room-seed-004",
+    "senderId": "comp-007",
+    "senderRole": "company",
+    "body": "Great news — our client in Singapore has confirmed your placement. We will coordinate the relocation package and work visa paperwork this week. Please send us a copy of your current passport.",
+    "sentAt": "2026-04-26T15:00:00.000Z"
+  },
+  {
+    "id": "msg-seed-010",
+    "chatRoomId": "room-seed-004",
+    "senderId": "tech-010",
+    "senderRole": "technician",
+    "body": "Excellent, thank you for moving quickly. I will email my passport scan shortly. Should I also provide my A350 and B787 habilitation certificates at this stage?",
+    "sentAt": "2026-04-26T16:30:00.000Z"
+  },
+  {
+    "id": "msg-seed-011",
+    "chatRoomId": "room-seed-005",
+    "senderId": "comp-002",
+    "senderRole": "company",
+    "body": "Congratulations on your acceptance for the 787 structural repair role. Your composites background is exactly what our Everett team needs. HR will be in touch within 48 hours regarding the contract.",
+    "sentAt": "2026-04-25T16:15:00.000Z"
+  },
+  {
+    "id": "msg-seed-012",
+    "chatRoomId": "room-seed-005",
+    "senderId": "tech-012",
+    "senderRole": "technician",
+    "body": "Thank you! Looking forward to joining the team. I have my B1.1 license, composite repair approvals and NDT Level 2 certificate ready. Please let me know what else is needed.",
+    "sentAt": "2026-04-25T17:00:00.000Z"
+  }
+]

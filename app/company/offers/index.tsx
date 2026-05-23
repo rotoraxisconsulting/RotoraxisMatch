@@ -10,7 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
-import { colors, spacing, typography } from '../../../src/theme';
+import { colors, spacing } from '../../../src/theme';
 import { Badge } from '../../../src/components/Badge';
 import { Button } from '../../../src/components/Button';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
@@ -93,7 +93,7 @@ export default function OffersListScreen() {
       >
         <View style={styles.headerRow}>
           <View>
-            <Text style={[typography.h4, styles.pageTitle]}>Job Offers</Text>
+            <Text style={styles.pageTitle}>Job Offers</Text>
             <Text style={styles.pageSub}>
               {published.length} published · {drafts.length} draft
             </Text>
@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.lg,
   },
-  pageTitle: { marginBottom: 2 },
+  pageTitle: { fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 2 },
   pageSub: { fontSize: 12, color: colors.textSecondary },
   newBtn: {
     backgroundColor: colors.blue,

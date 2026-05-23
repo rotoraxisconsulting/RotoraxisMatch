@@ -12,7 +12,6 @@ import { useRouter } from 'expo-router';
 import { Stack } from 'expo-router';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { Card } from '../../src/components/Card';
 import { Button } from '../../src/components/Button';
 import { useDemoSession } from '../../src/state/useDemoSession';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
@@ -49,18 +48,11 @@ export default function AdminDashboard() {
         contentContainerStyle={[styles.content, isWide && styles.contentWide]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header card */}
-        <Card style={styles.headerCard} elevated>
-          <View style={[styles.headerIcon, { backgroundColor: colors.admin + '18' }]}>
-            <Text style={styles.headerEmoji}>⚙️</Text>
-          </View>
-          <View style={styles.headerTextBlock}>
-            <Text style={styles.headerTitle}>Platform Admin</Text>
-            <Text style={styles.headerSub}>
-              Verify technicians, companies and documents
-            </Text>
-          </View>
-        </Card>
+        {/* Header */}
+        <View style={styles.headerBlock}>
+          <Text style={styles.headerTitle}>Platform Admin</Text>
+          <Text style={styles.headerSub}>Verify technicians, companies and documents</Text>
+        </View>
 
         {/* Metrics grid */}
         <View style={styles.metricsGrid}>
@@ -76,7 +68,7 @@ export default function AdminDashboard() {
           />
           <MetricCell
             value={metrics.pendingTechnicians}
-            label="Pending techs"
+            label="Tech pending"
             color={metrics.pendingTechnicians > 0 ? colors.warning : colors.textMuted}
             highlight={metrics.pendingTechnicians > 0}
           />
@@ -92,9 +84,26 @@ export default function AdminDashboard() {
             highlight={metrics.pendingDocuments > 0}
           />
           <MetricCell
-            value={metrics.totalRequests}
-            label="Requests"
-            color={colors.admin}
+            value={metrics.totalOffers}
+            label="Offers"
+            color={colors.navy}
+          />
+          <MetricCell
+            value={metrics.activeOffers}
+            label="Published"
+            color={colors.success}
+          />
+          <MetricCell
+            value={metrics.pendingOfferRequests}
+            label="Direct pend."
+            color={metrics.pendingOfferRequests > 0 ? colors.warning : colors.textMuted}
+            highlight={metrics.pendingOfferRequests > 0}
+          />
+          <MetricCell
+            value={metrics.pendingApplications}
+            label="Apps pend."
+            color={metrics.pendingApplications > 0 ? colors.warning : colors.textMuted}
+            highlight={metrics.pendingApplications > 0}
           />
         </View>
 
@@ -126,8 +135,21 @@ export default function AdminDashboard() {
           />
           <AdminNavCard
             icon="📋"
+            label="Offers"
+            subtitle={`${metrics.totalOffers} total · ${metrics.activeOffers} published`}
+            badge={undefined}
+            accentColor={colors.navy}
+            onPress={() => router.push('/admin/offers' as any)}
+          />
+          <AdminNavCard
+            icon="🔀"
             label="Requests"
-            subtitle={`${metrics.acceptedRequests}/${metrics.totalRequests} accepted`}
+            subtitle={`${metrics.totalDirectOffers} direct · ${metrics.totalApplicationsV2} applications`}
+            badge={
+              metrics.pendingOfferRequests + metrics.pendingApplications > 0
+                ? metrics.pendingOfferRequests + metrics.pendingApplications
+                : undefined
+            }
             accentColor={colors.admin}
             onPress={() => router.push('/admin/requests' as any)}
           />
@@ -216,28 +238,14 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
   },
-  headerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    padding: spacing.md,
+  headerBlock: {
     marginBottom: spacing.md,
   },
-  headerIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  headerEmoji: { fontSize: 26 },
-  headerTextBlock: { flex: 1 },
   headerTitle: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '700',
     color: colors.text,
-    marginBottom: 2,
+    marginBottom: 3,
   },
   headerSub: {
     fontSize: 13,

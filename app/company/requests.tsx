@@ -1,174 +1,60 @@
-import React, { useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  FlatList,
-  TouchableOpacity,
-} from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+// Legacy route kept for backward navigation only.
+// TODO: Remove this screen once all deep links to /company/requests are gone.
+import React from 'react';
+import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
+import { useRouter, Stack } from 'expo-router';
+import { Button } from '../../src/components/Button';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
-import { MatchRequestCard } from '../../src/components/MatchRequestCard';
-import { EmptyState } from '../../src/components/EmptyState';
-import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
-import { MatchRequest } from '../../src/types';
-import { colors, spacing } from '../../src/theme';
+import { colors, spacing, typography } from '../../src/theme';
 
-type StatusFilter = 'all' | 'sent' | 'accepted' | 'rejected';
-
-const STATUS_TABS: { key: StatusFilter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'sent', label: 'Sent' },
-  { key: 'accepted', label: 'Accepted' },
-  { key: 'rejected', label: 'Rejected' },
-];
-
-function filterRequests(reqs: MatchRequest[], status: StatusFilter): MatchRequest[] {
-  if (status === 'all') return reqs;
-  return reqs.filter((r) => r.status === status);
-}
-
-export default function RequestsScreen() {
-  const { requests, technicianMap, refresh } = useCompanyDashboard();
-  const [activeTab, setActiveTab] = useState<StatusFilter>('all');
-
-  useFocusEffect(
-    useCallback(() => {
-      refresh();
-    }, [refresh]),
-  );
-
-  const sortedRequests = [...requests].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-  const filtered = filterRequests(sortedRequests, activeTab);
-
-  const tabCounts: Record<StatusFilter, number> = {
-    all: requests.length,
-    sent: requests.filter((r) => r.status === 'sent').length,
-    accepted: requests.filter((r) => r.status === 'accepted').length,
-    rejected: requests.filter((r) => r.status === 'rejected').length,
-  };
-
-  const emptyIcons: Record<StatusFilter, string> = {
-    all: '📋',
-    sent: '📤',
-    accepted: '✅',
-    rejected: '✕',
-  };
-
+export default function CompanyRequestsLegacy() {
+  const router = useRouter();
   return (
     <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Sent Requests' }} />
+      <Stack.Screen options={{ title: 'Requests' }} />
       <DemoModeBanner role="company" />
-
-      {/* Status tab bar */}
-      <View style={styles.tabBar}>
-        {STATUS_TABS.map((tab) => {
-          const isActive = activeTab === tab.key;
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tab, isActive && styles.tabActive]}
-              onPress={() => setActiveTab(tab.key)}
-              activeOpacity={0.75}
-            >
-              <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
-                {tab.label}
-              </Text>
-              {tabCounts[tab.key] > 0 && (
-                <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
-                  <Text style={[styles.tabBadgeText, isActive && styles.tabBadgeTextActive]}>
-                    {tabCounts[tab.key]}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          );
-        })}
+      <View style={styles.content}>
+        <Text style={styles.icon}>📦</Text>
+        <Text style={[typography.h3, styles.title]}>Moved to new screens</Text>
+        <Text style={styles.body}>
+          Incoming applications and direct offer responses are now managed in separate dedicated screens.
+        </Text>
+        <Button
+          label="View Applications"
+          onPress={() => router.replace('/company/applications' as any)}
+          variant="primary"
+          fullWidth
+          style={styles.btn}
+        />
+        <Button
+          label="View Job Offers"
+          onPress={() => router.replace('/company/offers' as any)}
+          variant="outline"
+          fullWidth
+          style={styles.btn}
+        />
       </View>
-
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <EmptyState
-            title={activeTab === 'all' ? 'No requests yet' : `No ${activeTab} requests`}
-            subtitle={
-              activeTab === 'all'
-                ? 'Search for technicians and send your first contact request.'
-                : `You have no ${activeTab} requests at this time.`
-            }
-            icon={emptyIcons[activeTab]}
-          />
-        }
-        renderItem={({ item }) => (
-          <MatchRequestCard
-            request={item}
-            technician={technicianMap[item.technicianId]}
-          />
-        )}
-      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.md,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 13,
-    gap: 5,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: {
-    borderBottomColor: colors.blue,
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.textMuted,
-  },
-  tabTextActive: {
-    color: colors.blue,
-    fontWeight: '700',
-  },
-  tabBadge: {
-    backgroundColor: colors.borderLight,
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  tabBadgeActive: {
-    backgroundColor: colors.blue + '1A',
-  },
-  tabBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.textMuted,
-  },
-  tabBadgeTextActive: {
-    color: colors.blue,
-  },
   content: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+    gap: spacing.md,
   },
+  icon: { fontSize: 48, marginBottom: spacing.sm },
+  title: { textAlign: 'center' },
+  body: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: spacing.sm,
+  },
+  btn: { marginTop: spacing.xs },
 });

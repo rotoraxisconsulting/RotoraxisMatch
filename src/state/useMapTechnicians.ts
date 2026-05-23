@@ -1,3 +1,6 @@
+// TODO: Migrate map screen to V2 repos (technicianRepositoryV2 + offerRequestRepository).
+// matchRequestRepository and technicianRepository are V1 only; kept here because the
+// map screen has not yet been migrated to the V2 data layer.
 import { useState, useEffect, useCallback } from 'react';
 import { SafeTechnicianView } from '../types';
 import { MapFilters } from '../types/filters';

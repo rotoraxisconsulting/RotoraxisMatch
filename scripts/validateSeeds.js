@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const seedsPath = path.join(__dirname, '..', 'src', 'data', 'seeds');
 const read = (f) => JSON.parse(fs.readFileSync(path.join(seedsPath, f), 'utf8'));
+const activities = read('activities.json');
 
 const techProfiles = read('technicianProfiles.json');
 const companies = read('companies.json');
@@ -14,6 +15,7 @@ const experience = read('technicianAircraftExperience.json');
 const documents = read('documents.json');
 const companyMembers = read('companyMembers.json');
 const profiles = read('profiles.json');
+const chatRooms = read('chatRooms.json');
 
 const techIds = new Set(techProfiles.map((t) => t.id));
 const companyIds = new Set(companies.map((c) => c.id));
@@ -124,8 +126,38 @@ for (const c of companies) {
     errors.push('company ' + c.id + ': invalid verificationStatus ' + c.verificationStatus);
 }
 
-// Chat rooms: seed is empty (correct — chatRooms only created on acceptance at runtime)
-// The seed file is not in seeds dir — chatRooms start empty, created dynamically.
+// chat room invariant: every accepted offerRequest/offerApplication must have a corresponding room
+const roomByRequestId = new Map(chatRooms.filter((r) => r.offerRequestId).map((r) => [r.offerRequestId, r]));
+const roomByApplicationId = new Map(chatRooms.filter((r) => r.offerApplicationId).map((r) => [r.offerApplicationId, r]));
+for (const r of offerRequests) {
+  if (r.status === 'accepted' && !roomByRequestId.has(r.id))
+    errors.push('oreq ' + r.id + ': accepted but no chat room found in chatRooms.json');
+}
+for (const a of offerApplications) {
+  if (a.status === 'accepted' && !roomByApplicationId.has(a.id))
+    errors.push('oapp ' + a.id + ': accepted but no chat room found in chatRooms.json');
+}
+
+// activities
+const VALID_ACTIVITY_TYPES = new Set([
+  'application_received','application_accepted','application_rejected',
+  'direct_offer_received','direct_offer_accepted','direct_offer_rejected',
+]);
+const offerRequestIds = new Set(offerRequests.map((r) => r.id));
+const offerApplicationIds = new Set(offerApplications.map((a) => a.id));
+for (const act of activities) {
+  if (!VALID_ACTIVITY_TYPES.has(act.type)) errors.push('act ' + act.id + ': invalid type ' + act.type);
+  if (act.recipientRole !== 'technician' && act.recipientRole !== 'company')
+    errors.push('act ' + act.id + ': invalid recipientRole ' + act.recipientRole);
+  if (act.recipientRole === 'technician' && !techIds.has(act.recipientId))
+    errors.push('act ' + act.id + ': recipientId ' + act.recipientId + ' not found in technicianProfiles');
+  if (act.recipientRole === 'company' && !companyIds.has(act.recipientId))
+    errors.push('act ' + act.id + ': recipientId ' + act.recipientId + ' not found in companies');
+  if (act.type.startsWith('direct_offer') && !offerRequestIds.has(act.entityId))
+    errors.push('act ' + act.id + ': entityId ' + act.entityId + ' not found in offerRequests');
+  if (act.type.startsWith('application') && !offerApplicationIds.has(act.entityId))
+    errors.push('act ' + act.id + ': entityId ' + act.entityId + ' not found in offerApplications');
+}
 
 // Summary
 console.log('=== SEED VALIDATION REPORT ===');
@@ -140,6 +172,8 @@ console.log('Licenses: ' + licenses.length);
 console.log('Habilitations: ' + habilitations.length);
 console.log('AircraftExperience: ' + experience.length);
 console.log('CompanyMembers: ' + companyMembers.length);
+console.log('ChatRooms: ' + chatRooms.length);
+console.log('Activities: ' + activities.length + ' (unread:' + activities.filter((a) => !a.read).length + ')');
 
 const acceptedReqs = offerRequests.filter((r) => r.status === 'accepted');
 const acceptedApps = offerApplications.filter((a) => a.status === 'accepted');

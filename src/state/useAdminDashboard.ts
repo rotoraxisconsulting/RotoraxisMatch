@@ -7,6 +7,9 @@ import {
   VerificationStatus,
   DocumentStatus,
 } from '../types';
+import { Offer } from '../types/offer';
+import { OfferRequest, OfferApplication } from '../types/offerRequest';
+import { OfferStatus } from '../types/enums';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
 import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
@@ -35,6 +38,9 @@ export interface AdminMetrics {
   pendingOfferRequests: number;
   pendingApplications: number;
   activeOffers: number;
+  totalOffers: number;
+  totalDirectOffers: number;
+  totalApplicationsV2: number;
 }
 
 interface UseAdminDashboardReturn {
@@ -42,14 +48,19 @@ interface UseAdminDashboardReturn {
   companies: Company[];
   documents: TechnicianDocument[];
   requests: MatchRequest[];
+  offers: Offer[];
+  offerRequestsV2: OfferRequest[];
+  offerApplicationsV2: OfferApplication[];
   metrics: AdminMetrics;
   loading: boolean;
   refresh: () => Promise<void>;
   updateTechnicianVerification: (id: string, status: VerificationStatus) => Promise<void>;
   updateCompanyVerification: (id: string, status: VerificationStatus) => Promise<void>;
   updateDocumentStatus: (id: string, status: DocumentStatus) => Promise<void>;
+  updateOfferStatus: (id: string, status: OfferStatus) => Promise<void>;
   technicianMap: Record<string, Technician>;
   companyMap: Record<string, Company>;
+  offerTitleMap: Record<string, string>;
 }
 
 export function useAdminDashboard(): UseAdminDashboardReturn {
@@ -57,17 +68,23 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [documents, setDocuments] = useState<TechnicianDocument[]>([]);
   const [requests, setRequests] = useState<MatchRequest[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [offerRequestsV2, setOfferRequestsV2] = useState<OfferRequest[]>([]);
+  const [offerApplicationsV2, setOfferApplicationsV2] = useState<OfferApplication[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
 
-    const [profiles, companyProfiles, v2Docs, v2Requests] = await Promise.all([
-      technicianRepositoryV2.getAll(),
-      companyRepositoryV2.getAll(),
-      documentRepositoryV2.getAll(),
-      offerRequestRepository.getAll(),
-    ]);
+    const [profiles, companyProfiles, v2Docs, v2Requests, v2Offers, v2Applications] =
+      await Promise.all([
+        technicianRepositoryV2.getAll(),
+        companyRepositoryV2.getAll(),
+        documentRepositoryV2.getAll(),
+        offerRequestRepository.getAll(),
+        offerRepository.getAll(),
+        offerApplicationRepository.getAll(),
+      ]);
 
     // Load relations for each technician so admin can see licenseCategories, etc.
     const withRelationsAll = await Promise.all(
@@ -82,6 +99,9 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     setCompanies(companyProfiles.map(v2CompanyToV1));
     setDocuments(v2Docs.map(v2DocumentToV1));
     setRequests(v2Requests.map(v2OfferRequestToMatchRequest));
+    setOffers(v2Offers);
+    setOfferRequestsV2(v2Requests);
+    setOfferApplicationsV2(v2Applications);
     setLoading(false);
   }, []);
 
@@ -114,23 +134,10 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, status } : d)));
   }, []);
 
-  // V2-specific metric helpers — computed lazily from repo on demand
-  const [pendingOfferRequests, setPendingOfferRequests] = useState(0);
-  const [pendingApplications, setPendingApplications] = useState(0);
-  const [activeOffers, setActiveOffers] = useState(0);
-
-  useEffect(() => {
-    if (loading) return;
-    Promise.all([
-      offerRequestRepository.getAll(),
-      offerApplicationRepository.getAll(),
-      offerRepository.getAll(),
-    ]).then(([reqs, apps, offers]) => {
-      setPendingOfferRequests(reqs.filter((r) => r.status === 'pending').length);
-      setPendingApplications(apps.filter((a) => a.status === 'pending').length);
-      setActiveOffers(offers.filter((o) => o.status === 'published').length);
-    });
-  }, [loading]);
+  const updateOfferStatus = useCallback(async (id: string, status: OfferStatus) => {
+    await offerRepository.updateStatus(id, status);
+    setOffers((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
+  }, []);
 
   const metrics: AdminMetrics = {
     totalTechnicians: technicians.length,
@@ -143,9 +150,12 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     pendingDocuments: documents.filter((d) => d.status === 'pending').length,
     totalRequests: requests.length,
     acceptedRequests: requests.filter((r) => r.status === 'accepted').length,
-    pendingOfferRequests,
-    pendingApplications,
-    activeOffers,
+    pendingOfferRequests: offerRequestsV2.filter((r) => r.status === 'pending').length,
+    pendingApplications: offerApplicationsV2.filter((a) => a.status === 'pending').length,
+    activeOffers: offers.filter((o) => o.status === 'published').length,
+    totalOffers: offers.length,
+    totalDirectOffers: offerRequestsV2.length,
+    totalApplicationsV2: offerApplicationsV2.length,
   };
 
   const technicianMap: Record<string, Technician> = {};
@@ -154,18 +164,26 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const companyMap: Record<string, Company> = {};
   for (const c of companies) companyMap[c.id] = c;
 
+  const offerTitleMap: Record<string, string> = {};
+  for (const o of offers) offerTitleMap[o.id] = o.title;
+
   return {
     technicians,
     companies,
     documents,
     requests,
+    offers,
+    offerRequestsV2,
+    offerApplicationsV2,
     metrics,
     loading,
     refresh: load,
     updateTechnicianVerification,
     updateCompanyVerification,
     updateDocumentStatus,
+    updateOfferStatus,
     technicianMap,
     companyMap,
+    offerTitleMap,
   };
 }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,25 +14,40 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Card } from '../../src/components/Card';
 import { Badge } from '../../src/components/Badge';
 import { MetricCard } from '../../src/components/MetricCard';
-import { SectionHeader } from '../../src/components/SectionHeader';
-import { MatchRequestCard } from '../../src/components/MatchRequestCard';
 import { Button } from '../../src/components/Button';
 import { useDemoSession } from '../../src/state/useDemoSession';
-import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
+import { useCompanyDashboard, DEMO_COMPANY_ID } from '../../src/state/useCompanyDashboard';
+import { offerApplicationRepository } from '../../src/repositories/v2/offerApplicationRepository';
+import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
+import { chatRepository } from '../../src/repositories/v2/chatRepository';
+import { activityRepository } from '../../src/repositories/v2/activityRepository';
 import { colors, spacing, typography } from '../../src/theme';
 
 export default function CompanyDashboard() {
   const router = useRouter();
   const { clearSession } = useDemoSession();
-  const { company, requests, technicianMap, loading } = useCompanyDashboard();
+  const { company, loading } = useCompanyDashboard();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const [pendingApplications, setPendingApplications] = useState(0);
+  const [chatCount, setChatCount] = useState(0);
+  const [pendingDirectOffers, setPendingDirectOffers] = useState(0);
+  const [unreadApplications, setUnreadApplications] = useState(0);
+  const [unreadJobOffers, setUnreadJobOffers] = useState(0);
 
-  const sentCount = requests.filter((r) => r.status === 'sent').length;
-  const acceptedCount = requests.filter((r) => r.status === 'accepted').length;
-  const recentRequests = [...requests]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 3);
+  useEffect(() => {
+    offerApplicationRepository.getForCompany(DEMO_COMPANY_ID).then((apps) => {
+      setPendingApplications(apps.filter((a) => a.status === 'pending').length);
+    });
+    chatRepository.getRoomsForCompany(DEMO_COMPANY_ID).then((rooms) => {
+      setChatCount(rooms.length);
+    });
+    offerRequestRepository.getForCompany(DEMO_COMPANY_ID).then((reqs) => {
+      setPendingDirectOffers(reqs.filter((r) => r.status === 'pending').length);
+    });
+    activityRepository.getUnreadCount('company', DEMO_COMPANY_ID, ['application_received']).then(setUnreadApplications);
+    activityRepository.getUnreadCount('company', DEMO_COMPANY_ID, ['direct_offer_accepted', 'direct_offer_rejected']).then(setUnreadJobOffers);
+  }, []);
 
   async function handleSwitchRole() {
     await clearSession();
@@ -86,11 +101,11 @@ export default function CompanyDashboard() {
 
         {/* Metrics */}
         <View style={styles.metricsRow}>
-          <MetricCard value={requests.length} label="Total sent" color={colors.blue} />
+          <MetricCard value={pendingApplications} label="Pending apps" color={colors.warning} />
           <View style={styles.metricGap} />
-          <MetricCard value={sentCount} label="Awaiting reply" color={colors.warning} />
+          <MetricCard value={pendingDirectOffers} label="Direct offers" color={colors.blue} />
           <View style={styles.metricGap} />
-          <MetricCard value={acceptedCount} label="Accepted" color={colors.success} />
+          <MetricCard value={chatCount} label="Active chats" color={colors.success} />
         </View>
 
         {/* Navigation cards */}
@@ -101,14 +116,6 @@ export default function CompanyDashboard() {
             subtitle="Filter by license, aircraft & more"
             accentColor={colors.blue}
             onPress={() => router.push('/company/search' as any)}
-            style={styles.navCardHalf}
-          />
-          <NavCard
-            icon="📋"
-            label="Sent Requests"
-            subtitle={`${requests.length} request${requests.length !== 1 ? 's' : ''} total`}
-            accentColor={colors.warning}
-            onPress={() => router.push('/company/requests' as any)}
             style={styles.navCardHalf}
           />
           <NavCard
@@ -123,8 +130,34 @@ export default function CompanyDashboard() {
             icon="📋"
             label="Job Offers"
             subtitle="Manage your offers & matches"
-            accentColor={colors.success}
+            accentColor={unreadJobOffers > 0 ? colors.error : colors.success}
+            badge={unreadJobOffers > 0 ? unreadJobOffers : undefined}
             onPress={() => router.push('/company/offers' as any)}
+            style={styles.navCardHalf}
+          />
+          <NavCard
+            icon="📥"
+            label="Applications"
+            subtitle={pendingApplications > 0 ? `${pendingApplications} pending review` : 'Review incoming applications'}
+            accentColor={unreadApplications > 0 ? colors.error : pendingApplications > 0 ? colors.warning : colors.blue}
+            badge={unreadApplications > 0 ? unreadApplications : undefined}
+            onPress={() => router.push('/company/applications' as any)}
+            style={styles.navCardHalf}
+          />
+          <NavCard
+            icon="💬"
+            label="Chats"
+            subtitle={chatCount > 0 ? `${chatCount} open conversation${chatCount !== 1 ? 's' : ''}` : 'Accepted contacts only'}
+            accentColor={colors.cyan}
+            onPress={() => router.push('/company/chats' as any)}
+            style={styles.navCardHalf}
+          />
+          <NavCard
+            icon="👥"
+            label="Team"
+            subtitle="Manage company members & roles"
+            accentColor={colors.navy}
+            onPress={() => router.push('/company/team' as any)}
             style={styles.navCardHalf}
           />
           <NavCard
@@ -136,27 +169,6 @@ export default function CompanyDashboard() {
             style={styles.navCardHalf}
           />
         </View>
-
-        {/* Recent requests */}
-        {recentRequests.length > 0 && (
-          <>
-            <SectionHeader
-              title="Recent Requests"
-              subtitle="Your latest contact requests"
-              action={{
-                label: 'View all',
-                onPress: () => router.push('/company/requests' as any),
-              }}
-            />
-            {recentRequests.map((req) => (
-              <MatchRequestCard
-                key={req.id}
-                request={req}
-                technician={technicianMap[req.technicianId]}
-              />
-            ))}
-          </>
-        )}
 
         <Button
           label="Switch role"
@@ -175,6 +187,7 @@ function NavCard({
   label,
   subtitle,
   accentColor,
+  badge,
   onPress,
   style,
 }: {
@@ -182,6 +195,7 @@ function NavCard({
   label: string;
   subtitle: string;
   accentColor: string;
+  badge?: number;
   onPress: () => void;
   style?: object;
 }) {
@@ -198,7 +212,13 @@ function NavCard({
         <Text style={navStyles.label}>{label}</Text>
         <Text style={navStyles.subtitle}>{subtitle}</Text>
       </View>
-      <Text style={navStyles.arrow}>›</Text>
+      {badge !== undefined && badge > 0 ? (
+        <View style={[navStyles.badge, { backgroundColor: accentColor }]}>
+          <Text style={navStyles.badgeText}>{badge}</Text>
+        </View>
+      ) : (
+        <Text style={navStyles.arrow}>›</Text>
+      )}
     </TouchableOpacity>
   );
 }
@@ -238,6 +258,19 @@ const navStyles = StyleSheet.create({
     fontSize: 20,
     color: colors.textMuted,
     fontWeight: '300',
+  },
+  badge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.white,
   },
 });
 

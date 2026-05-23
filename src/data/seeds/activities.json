@@ -1,0 +1,20 @@
+[
+  {
+    "id": "act-001",
+    "type": "direct_offer_received",
+    "recipientRole": "technician",
+    "recipientId": "tech-001",
+    "entityId": "oreq-001",
+    "read": false,
+    "createdAt": "2026-05-20T08:00:00.000Z"
+  },
+  {
+    "id": "act-002",
+    "type": "application_received",
+    "recipientRole": "company",
+    "recipientId": "comp-001",
+    "entityId": "oapp-009",
+    "read": false,
+    "createdAt": "2026-05-20T10:00:00.000Z"
+  }
+]

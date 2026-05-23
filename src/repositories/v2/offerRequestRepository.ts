@@ -3,6 +3,7 @@ import { DB_KEYS } from '../../storage/localDatabase';
 import { OfferRequest } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
 import { chatRepository } from './chatRepository';
+import { activityRepository } from './activityRepository';
 
 function uuid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -61,6 +62,12 @@ export const offerRequestRepository = {
     };
 
     await storageAdapter.set(DB_KEYS.v2OfferRequests, [...all, request]);
+    await activityRepository.create({
+      type: 'direct_offer_received',
+      recipientRole: 'technician',
+      recipientId: data.technicianId,
+      entityId: request.id,
+    });
     return request;
   },
 
@@ -93,6 +100,13 @@ export const offerRequestRepository = {
         companyId: prev.companyId,
       });
     }
+
+    await activityRepository.create({
+      type: isAccepted ? 'direct_offer_accepted' : 'direct_offer_rejected',
+      recipientRole: 'company',
+      recipientId: prev.companyId,
+      entityId: id,
+    });
 
     return updated;
   },

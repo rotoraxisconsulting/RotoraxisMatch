@@ -152,7 +152,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         (licenses ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Licenses</div><div style="margin-bottom:8px;">'+licenses+'</div>' : '') +
         (aircraft ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Aircraft</div><div style="font-size:12px;color:#475569;margin-bottom:6px;">'+aircraft+'</div>' : '') +
         scoreHtml +
-        '<div style="margin-top:8px;font-size:11px;color:#94A3B8;font-style:italic;">Use Search to send a contact request.</div>' +
+        '<div style="margin-top:8px;font-size:11px;color:#94A3B8;font-style:italic;">Use Search to send a direct offer.</div>' +
       '</div>';
     }
 

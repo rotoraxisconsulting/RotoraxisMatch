@@ -3,6 +3,7 @@ import { DB_KEYS } from '../../storage/localDatabase';
 import { OfferApplication } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
 import { chatRepository } from './chatRepository';
+import { activityRepository } from './activityRepository';
 
 function uuid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -65,6 +66,12 @@ export const offerApplicationRepository = {
     };
 
     await storageAdapter.set(DB_KEYS.v2OfferApplications, [...all, application]);
+    await activityRepository.create({
+      type: 'application_received',
+      recipientRole: 'company',
+      recipientId: data.companyId,
+      entityId: application.id,
+    });
     return application;
   },
 
@@ -97,6 +104,13 @@ export const offerApplicationRepository = {
         companyId: prev.companyId,
       });
     }
+
+    await activityRepository.create({
+      type: isAccepted ? 'application_accepted' : 'application_rejected',
+      recipientRole: 'technician',
+      recipientId: prev.technicianId,
+      entityId: id,
+    });
 
     return updated;
   },
