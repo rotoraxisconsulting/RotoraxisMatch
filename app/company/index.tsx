@@ -120,6 +120,14 @@ export default function CompanyDashboard() {
             style={styles.navCardHalf}
           />
           <NavCard
+            icon="📋"
+            label="Job Offers"
+            subtitle="Manage your offers & matches"
+            accentColor={colors.success}
+            onPress={() => router.push('/company/offers' as any)}
+            style={styles.navCardHalf}
+          />
+          <NavCard
             icon="🗺️"
             label="Technician Map"
             subtitle="Browse technicians by location"
