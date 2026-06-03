@@ -1,5 +1,7 @@
 import React from 'react';
-import { View, ActivityIndicator, StyleSheet, SafeAreaView } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { DemoModeBanner } from './DemoModeBanner';
 import { UserRole } from '../repositories/demoSessionRepository';
 import { colors } from '../theme';
@@ -12,6 +14,7 @@ interface LoadingScreenProps {
 export function LoadingScreen({ color = colors.blue, role }: LoadingScreenProps) {
   return (
     <SafeAreaView style={styles.safe}>
+      <StatusBar style="dark" />
       {role && <DemoModeBanner role={role} />}
       <View style={styles.container}>
         <ActivityIndicator color={color} size="large" />

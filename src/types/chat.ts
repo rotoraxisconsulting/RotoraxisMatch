@@ -12,7 +12,8 @@ export interface ChatRoom {
 export interface ChatMessage {
   id: string;
   chatRoomId: string;
-  senderId: string;
+  senderUserId: string;
+  senderCompanyMemberId?: string;
   senderRole: SenderRole;
   body: string;
   sentAt: string;

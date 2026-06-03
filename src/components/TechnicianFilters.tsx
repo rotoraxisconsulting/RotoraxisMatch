@@ -58,7 +58,7 @@ function FilterRow({ label, children }: { label: string; children: ReactNode }) 
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
-const VERIFICATION_OPTIONS = ['verified', 'pending', 'unverified'] as const;
+const VERIFICATION_OPTIONS = ['verified', 'pending', 'rejected'] as const;
 const AVAILABILITY_OPTIONS = [
   { value: 'available', label: 'Available' },
   { value: 'open_to_offers', label: 'Open to offers' },

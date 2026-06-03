@@ -19,6 +19,9 @@ export type UserStatus =
   | 'suspended';
 
 export type VerificationStatus = 'pending' | 'verified' | 'rejected';
+// NOTE: 'unverified' was a V1 legacy value and is NOT part of V2 VerificationStatus.
+// If old persisted data contains 'unverified', use mapLegacyVerificationStatusToV2()
+// (also exported from enums.ts) which maps it to 'pending'.
 
 export type DocumentStatus = 'pending' | 'verified' | 'rejected' | 'expired';
 
@@ -82,11 +85,14 @@ export interface LicenseCategoryCatalog {
   sortOrder: number;
 }
 
+export type AircraftCategory = 'airplane' | 'helicopter';
+
 export interface AircraftTypeCatalog {
   code: string;
   label: string;
   manufacturer?: string;
   aircraftFamily?: string;
+  aircraftCategory: AircraftCategory;  // 'airplane' | 'helicopter'
   isActive: boolean;
 }
 
@@ -158,6 +164,8 @@ export interface TechnicianHabilitation {
 export interface TechnicianAircraftExperience {
   id: string;
   technicianId: string;
+  // Must reference a valid aircraft_types.code. Generic codes such as 'GENERAL' are not valid.
+  // If no aircraft type is known, do not create a row — no fallback/generic code is allowed.
   aircraftTypeCode: string;
   value: number;
   unit: 'hours' | 'years';
@@ -185,11 +193,10 @@ export interface TechnicianProfile {
 
   // Public
   technicianType: TechnicianTypeCode;
-  country: string;
-  city: string;
-  baseAirport?: string;
-  latitude?: number;
-  longitude?: number;
+  // Location FK only. Country, city, base airport and coordinates are derived
+  // from the canonical location catalog when building views.
+  // Required: every persisted technician profile must reference a valid location_airports entry.
+  locationCityId: string;
 
   availability: Availability;
   verificationStatus: VerificationStatus;
@@ -240,9 +247,12 @@ export interface SafeTechnicianPreview {
   anonymousCode: string;
   age: number;                          // derived from birthDate
   technicianType: TechnicianTypeCode;
+  locationCityId: string;               // required — derived from persisted TechnicianProfile.locationCityId
   country: string;
   city: string;
   baseAirport?: string;
+  latitude?: number;
+  longitude?: number;
   licenses: LicenseCode[];
   habilitations: TechnicianHabilitation[];
   aircraftExperience: TechnicianAircraftExperience[];
@@ -279,11 +289,10 @@ export function isUnlocked(view: TechnicianView): view is UnlockedTechnicianView
 import { CompanyTypeCode } from './catalog';
 import { VerificationStatus, CompanyMemberRole } from './enums';
 
-export interface Company {
+export interface CompanyProfile {
   id: string;
   name: string;
-  country: string;
-  city: string;
+  locationCityId: string;               // required — every persisted company must reference a valid location_airports entry
   phone?: string;
   email: string;
   companyType: CompanyTypeCode;
@@ -292,10 +301,19 @@ export interface Company {
   updatedAt: string;
 }
 
+// Read model enriched from location_airports.
+export interface CompanyProfileView extends CompanyProfile {
+  country: string;
+  city: string;
+  baseAirport?: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface CompanyMember {
   id: string;
   companyId: string;
-  userId: string;
+  userId: string; // MVP: one company membership per company user.
   role: CompanyMemberRole;
   createdAt: string;
 }
@@ -317,6 +335,8 @@ export interface Offer {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  locationCityId: string;
+  // Controlled snapshot copied from the canonical location catalog.
   locationCountry: string;
   locationCity: string;
   locationBaseAirport?: string;
@@ -413,7 +433,8 @@ export interface ChatRoom {
 export interface ChatMessage {
   id: string;
   chatRoomId: string;
-  senderId: string;
+  senderUserId: string;
+  senderCompanyMemberId?: string;
   senderRole: SenderRole;
   body: string;
   sentAt: string;
@@ -445,9 +466,65 @@ export interface Document {
   storagePath: string;    // local path in demo; Supabase Storage path later
   status: DocumentStatus;
   uploadedAt: string;
-  verifiedAt?: string;
-  verifiedBy?: string;    // admin profile id
+  reviewedAt?: string;      // set when admin changes status (verified / rejected / expired); cleared on reset to pending
+  rejectionReason?: string; // set when status becomes rejected; cleared on all other transitions
   expiresAt?: string;
+}
+```
+
+---
+
+## Activity
+
+```ts
+// src/types/activity.ts
+
+export type ActivityType =
+  | 'application_received'
+  | 'application_accepted'
+  | 'application_rejected'
+  | 'direct_offer_received'
+  | 'direct_offer_accepted'
+  | 'direct_offer_rejected'
+  | 'chat_message_received';
+
+export type ActivityRecipientScope = 'technician' | 'company';
+
+export type ActivityEntityType =
+  | 'offer_request'
+  | 'offer_application'
+  | 'chat_message';
+
+export interface ActivityEvent {
+  id: string;
+  type: ActivityType;
+  recipientScope: ActivityRecipientScope;
+  recipientTechnicianId?: string;
+  recipientCompanyId?: string;
+  actorProfileId?: string;
+  entityType: ActivityEntityType;
+  entityId: string;
+  offerId?: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ActivityRead {
+  activityEventId: string;
+  profileId: string;
+  readAt: string;
+}
+
+// Local demo compatibility model.
+// Supabase should use ActivityEvent + ActivityRead instead.
+export interface ActivityItem {
+  id: string;
+  type: ActivityType;
+  recipientRole: 'technician' | 'company';
+  recipientId: string;
+  entityId: string;
+  read: boolean;
+  createdAt: string;
 }
 ```
 
@@ -529,6 +606,7 @@ export * from './offer';
 export * from './offerRequest';
 export * from './chat';
 export * from './document';
+export * from './activity';
 export * from './filters';
 export * from './matching';
 ```

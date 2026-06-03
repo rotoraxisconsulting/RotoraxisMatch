@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
@@ -12,20 +11,32 @@ import {
   Modal,
 } from 'react-native';
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { colors, spacing, typography } from '../../../src/theme';
+import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
-import { Badge } from '../../../src/components/Badge';
+import { InlineScore } from '../../../src/components/InlineScore';
+import { Button } from '../../../src/components/Button';
+import {
+  EmptyPanel,
+  InitialAvatar,
+  TechnicianBadge,
+  TechnicianCard,
+  TechnicianChip,
+  TechnicianPageHeader,
+  TechnicianScreen,
+  techStyles,
+  techUi,
+} from '../../../src/components/technician/TechnicianUI';
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
-import { offerRepository } from '../../../src/repositories/v2/offerRepository';
+import { isOfferOpenForTechnicians, offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { companyRepositoryV2 } from '../../../src/repositories/v2/companyRepositoryV2';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
-import { DEMO_TECHNICIAN_ID } from '../../../src/state/useTechnicianDashboard';
+import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { OfferRequest } from '../../../src/types/offerRequest';
 import { OfferWithRequirements } from '../../../src/types/offer';
-import { CompanyProfile } from '../../../src/types/company';
+import { CompanyProfileView } from '../../../src/types/company';
 import { MatchScore } from '../../../src/types/matching';
 import { ChatRoom } from '../../../src/types/chat';
 
@@ -58,14 +69,31 @@ function formatDate(iso: string): string {
   });
 }
 
+function statusTone(status: string): 'success' | 'warning' | 'error' | 'muted' {
+  if (status === 'accepted') return 'success';
+  if (status === 'pending') return 'warning';
+  if (status === 'rejected') return 'error';
+  return 'muted';
+}
+
+function statusLabel(status: string): string {
+  if (status === 'pending') return 'Pending';
+  if (status === 'accepted') return 'Accepted';
+  if (status === 'rejected') return 'Declined';
+  if (status === 'expired') return 'Expired';
+  if (status === 'withdrawn') return 'Withdrawn';
+  return status;
+}
+
 export default function DirectOfferDetailScreen() {
+  const { technicianId } = useTechnicianSession();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
   const [request, setRequest] = useState<OfferRequest | null>(null);
-  const [company, setCompany] = useState<CompanyProfile | null>(null);
+  const [company, setCompany] = useState<CompanyProfileView | null>(null);
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
   const [score, setScore] = useState<MatchScore | null>(null);
   const [chatRoom, setChatRoom] = useState<ChatRoom | null>(null);
@@ -84,27 +112,29 @@ export default function DirectOfferDetailScreen() {
     const [co, off, techWithRelations] = await Promise.all([
       companyRepositoryV2.getById(req.companyId),
       req.offerId ? offerRepository.getWithRequirements(req.offerId) : Promise.resolve(null),
-      technicianRepositoryV2.getWithRelations(DEMO_TECHNICIAN_ID),
+      technicianRepositoryV2.getWithRelations(technicianId),
     ]);
 
     setCompany(co);
     setOffer(off);
 
-    if (off && techWithRelations) {
+    // Compute score when offer is active, or when the direct offer is accepted (historical context).
+    const offerActive = isOfferOpenForTechnicians(off);
+    if (off && (offerActive || req.status === 'accepted') && techWithRelations) {
       setScore(calculateOfferTechnicianMatch(off, techWithRelations));
     } else {
       setScore(null);
     }
 
     if (req.status === 'accepted') {
-      const rooms = await chatRepository.getRoomsForTechnician(DEMO_TECHNICIAN_ID);
+      const rooms = await chatRepository.getRoomsForTechnician(technicianId);
       setChatRoom(rooms.find((r) => r.offerRequestId === id) ?? null);
     } else {
       setChatRoom(null);
     }
 
-    await activityRepository.markRead('technician', DEMO_TECHNICIAN_ID, id);
-  }, [id]);
+    await activityRepository.markRead('technician', technicianId, id);
+  }, [id, technicianId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -163,7 +193,7 @@ export default function DirectOfferDetailScreen() {
   if (loading) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Direct Offer' }} />
+        <Stack.Screen options={{ headerShown: false }} />
         <LoadingScreen color={colors.technician} role="technician" />
       </>
     );
@@ -171,109 +201,87 @@ export default function DirectOfferDetailScreen() {
 
   if (!request || !company) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <Stack.Screen options={{ title: 'Direct Offer' }} />
+      <TechnicianScreen>
+        <Stack.Screen options={{ headerShown: false }} />
         <View style={styles.notFound}>
-          <Text style={styles.notFoundText}>Offer not found.</Text>
+          <EmptyPanel title="Offer not found" subtitle="This direct offer is no longer available." />
         </View>
-      </SafeAreaView>
+      </TechnicianScreen>
     );
   }
 
   const accent = score ? scoreColor(score.total) : colors.technician;
   const isPending = request.status === 'pending';
   const isAccepted = request.status === 'accepted';
+  // Only relevant for pending: shows "Offer closed" banner and disables Accept.
+  // Accepted/rejected/historical records are not affected by the linked offer's status.
+  const linkedOfferUnavailable = isPending && Boolean(request.offerId && !isOfferOpenForTechnicians(offer));
+  // Show offer details when active, or when accepted (historical context after offer closes).
+  const visibleOffer = offer && (isOfferOpenForTechnicians(offer) || isAccepted) ? offer : null;
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: offer?.title ?? 'Direct Offer' }} />
+    <TechnicianScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, isWide && styles.contentWide]}
+        contentContainerStyle={[techStyles.content, isWide && techStyles.contentWide]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* Match score hero — only if linked offer */}
-        {score && (
-          <View style={[styles.scoreCard, { borderColor: accent }]}>
-            <Text style={[styles.scoreValue, { color: accent }]}>{score.total}%</Text>
-            <Text style={styles.scoreLabel}>match with your profile</Text>
-            <Text style={[styles.scoreMatchLabel, { color: accent }]}>{score.label}</Text>
-          </View>
-        )}
+        <TechnicianPageHeader
+          eyebrow="Direct offer"
+          title={visibleOffer?.title ?? 'Direct offer'}
+          subtitle={`${company.name} - received ${formatDate(request.createdAt)}`}
+          onBack={() => router.back()}
+          right={<TechnicianBadge label={statusLabel(request.status)} tone={statusTone(request.status)} />}
+        />
 
-        {/* Company section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Company</Text>
+        <TechnicianCard style={styles.section}>
           <View style={styles.companyRow}>
-            <View style={styles.companyAvatar}>
-              <Text style={styles.companyAvatarText}>
-                {company.name.charAt(0).toUpperCase()}
-              </Text>
-            </View>
+            <InitialAvatar label={company.name} size={46} />
             <View style={styles.companyInfo}>
               <Text style={styles.companyName}>{company.name}</Text>
-              {company.companyType && (
-                <Text style={styles.companyType}>
-                  {COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType}
-                </Text>
-              )}
-              <Text style={styles.companyLocation}>
-                {company.city}, {company.country}
+              <Text style={styles.companyType}>
+                {company.companyType ? COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType : 'Company'}
               </Text>
+              <Text style={styles.companyLocation}>{company.city}, {company.country}</Text>
             </View>
-            <Badge
+            <TechnicianBadge
               label={company.verificationStatus}
-              variant={company.verificationStatus === 'verified' ? 'success' : 'warning'}
+              tone={company.verificationStatus === 'verified' ? 'success' : 'warning'}
               small
             />
           </View>
-        </View>
+        </TechnicianCard>
 
-        {/* Offer section — only if linked */}
-        {offer && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Linked Offer</Text>
-            <Text style={styles.offerTitle}>{offer.title}</Text>
+        {visibleOffer && (
+          <TechnicianCard style={styles.section}>
+            {score && <InlineScore score={score.total} quality={score.label} context="match with your profile" />}
+            <Text style={styles.offerTitle}>{visibleOffer.title}</Text>
             <Text style={styles.offerLocation}>
-              {offer.locationCity}, {offer.locationCountry}
-              {offer.locationBaseAirport ? ` · ${offer.locationBaseAirport}` : ''}
+              {visibleOffer.locationCity}, {visibleOffer.locationCountry}
+              {visibleOffer.locationBaseAirport ? ` - ${visibleOffer.locationBaseAirport}` : ''}
             </Text>
-            <Text style={styles.offerDescription}>{offer.description}</Text>
-            <View style={styles.offerMeta}>
-              <View style={styles.offerMetaChip}>
-                <Text style={styles.offerMetaLabel}>Contract</Text>
-                <Text style={styles.offerMetaValue}>
-                  {CONTRACT_LABELS[offer.contractType] ?? offer.contractType}
-                </Text>
-              </View>
-              <View style={styles.offerMetaChip}>
-                <Text style={styles.offerMetaLabel}>Min. experience</Text>
-                <Text style={styles.offerMetaValue}>{offer.minYearsExperience} yrs</Text>
-              </View>
+            <Text style={styles.offerDescription}>{visibleOffer.description}</Text>
+
+            <View style={styles.badgeRow}>
+              <TechnicianBadge label={CONTRACT_LABELS[visibleOffer.contractType] ?? visibleOffer.contractType} tone="muted" />
+              <TechnicianBadge label={`${visibleOffer.minYearsExperience} yrs min`} tone="muted" />
             </View>
 
-            {/* Requirements */}
-            {(offer.requiredTechnicianTypes.length > 0 ||
-              offer.requiredLicenses.length > 0 ||
-              offer.requiredAircraftTypes.length > 0) && (
+            {(visibleOffer.requiredTechnicianTypes.length > 0 ||
+              visibleOffer.requiredLicenses.length > 0 ||
+              visibleOffer.requiredAircraftTypes.length > 0) && (
               <View style={styles.reqBlock}>
-                {offer.requiredTechnicianTypes.length > 0 && (
-                  <ReqRow label="Types" items={offer.requiredTechnicianTypes} />
-                )}
-                {offer.requiredLicenses.length > 0 && (
-                  <ReqRow label="Licenses" items={offer.requiredLicenses} />
-                )}
-                {offer.requiredAircraftTypes.length > 0 && (
-                  <ReqRow label="Aircraft" items={offer.requiredAircraftTypes} />
-                )}
+                {visibleOffer.requiredTechnicianTypes.length > 0 && <ReqRow label="Types" items={visibleOffer.requiredTechnicianTypes} />}
+                {visibleOffer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={visibleOffer.requiredLicenses} />}
+                {visibleOffer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft" items={visibleOffer.requiredAircraftTypes} />}
               </View>
             )}
 
-            {/* Score breakdown */}
             {score && (
               <View style={styles.breakdownBlock}>
-                <Text style={styles.breakdownTitle}>Match breakdown</Text>
+                <Text style={styles.sectionTitle}>Match breakdown</Text>
                 <BreakdownRow label="Verified" value={score.breakdown.verified} max={25} accent={accent} />
                 <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={25} accent={accent} />
                 <BreakdownRow label="License" value={score.breakdown.license} max={20} accent={accent} />
@@ -282,38 +290,41 @@ export default function DirectOfferDetailScreen() {
                 <BreakdownRow label="Location" value={score.breakdown.location} max={5} accent={accent} />
               </View>
             )}
-          </View>
+          </TechnicianCard>
         )}
 
-        {/* Company message */}
+        {linkedOfferUnavailable && (
+          <TechnicianCard style={styles.inactiveNote}>
+            <Text style={styles.noteTitle}>Offer closed</Text>
+            <Text style={styles.noteSub}>
+              This offer is no longer active and cannot be accepted.
+            </Text>
+          </TechnicianCard>
+        )}
+
         {request.message && (
-          <View style={styles.section}>
+          <TechnicianCard style={styles.section}>
             <Text style={styles.sectionTitle}>Message from company</Text>
             <Text style={styles.messageText}>"{request.message}"</Text>
-          </View>
+          </TechnicianCard>
         )}
 
-        {/* Status + dates */}
-        <View style={styles.section}>
-          <View style={styles.statusRow}>
-            <Text style={styles.sectionTitle}>Status</Text>
-            <StatusBadge status={request.status} />
-          </View>
+        <TechnicianCard style={styles.section}>
+          <Text style={styles.sectionTitle}>Status</Text>
+          <TechnicianBadge label={statusLabel(request.status)} tone={statusTone(request.status)} />
           <Text style={styles.dateText}>Received {formatDate(request.createdAt)}</Text>
           {request.updatedAt !== request.createdAt && (
             <Text style={styles.dateText}>Updated {formatDate(request.updatedAt)}</Text>
           )}
-        </View>
+        </TechnicianCard>
 
-        {/* Inline error */}
         {actionError && (
           <View style={styles.errorNote}>
             <Text style={styles.errorNoteText}>{actionError}</Text>
           </View>
         )}
 
-        {/* Actions — pending */}
-        {isPending && (
+        {isPending && !linkedOfferUnavailable && (
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={[styles.actionBtn, styles.rejectBtn, actioning && styles.btnDisabled]}
@@ -321,11 +332,7 @@ export default function DirectOfferDetailScreen() {
               disabled={actioning}
               activeOpacity={0.75}
             >
-              {actioning ? (
-                <ActivityIndicator color={colors.error} size="small" />
-              ) : (
-                <Text style={styles.rejectBtnText}>Decline</Text>
-              )}
+              {actioning ? <ActivityIndicator color={techUi.red} size="small" /> : <Text style={styles.rejectBtnText}>Decline</Text>}
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionBtn, styles.acceptBtn, actioning && styles.btnDisabled]}
@@ -333,80 +340,54 @@ export default function DirectOfferDetailScreen() {
               disabled={actioning}
               activeOpacity={0.75}
             >
-              {actioning ? (
-                <ActivityIndicator color={colors.white} size="small" />
-              ) : (
-                <Text style={styles.acceptBtnText}>Accept offer</Text>
-              )}
+              {actioning ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.acceptBtnText}>Accept offer</Text>}
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Accepted state */}
         {isAccepted && (
-          <View style={styles.acceptedNote}>
-            <Text style={styles.acceptedNoteTitle}>Offer accepted</Text>
-            <Text style={styles.acceptedNoteSub}>
-              The company can now see your full identity and documents. A chat room is available for direct communication.
+          <TechnicianCard style={styles.acceptedNote}>
+            <Text style={styles.noteTitle}>Offer accepted</Text>
+            <Text style={styles.noteSub}>
+              The company can now see your full identity and admin-verified documents. A chat room is available for direct communication.
             </Text>
             {chatRoom && (
-              <TouchableOpacity
-                style={styles.chatBtn}
-                onPress={() =>
-                  router.push(`/technician/chats/${chatRoom.id}` as any)
-                }
-                activeOpacity={0.75}
-              >
-                <Text style={styles.chatBtnText}>Open chat →</Text>
-              </TouchableOpacity>
+              <Button label="Open chat" onPress={() => router.push(`/technician/chats/${chatRoom.id}` as any)} fullWidth />
             )}
-          </View>
+          </TechnicianCard>
         )}
 
-        {/* Rejected state */}
         {request.status === 'rejected' && (
-          <View style={styles.rejectedNote}>
-            <Text style={styles.rejectedNoteTitle}>Offer declined</Text>
-            <Text style={styles.rejectedNoteSub}>
-              You declined this offer. Your identity and documents remain private.
-            </Text>
-          </View>
+          <TechnicianCard style={styles.rejectedNote}>
+            <Text style={styles.noteTitle}>Offer declined</Text>
+            <Text style={styles.noteSub}>Your identity and documents remain private.</Text>
+          </TechnicianCard>
         )}
 
-        {/* Expired / withdrawn states */}
         {(request.status === 'expired' || request.status === 'withdrawn') && (
-          <View style={styles.inactiveNote}>
-            <Text style={styles.inactiveNoteText}>
+          <TechnicianCard style={styles.inactiveNote}>
+            <Text style={styles.noteSub}>
               {request.status === 'expired'
                 ? 'This offer has expired and is no longer active.'
                 : 'This offer was withdrawn by the company.'}
             </Text>
-          </View>
+          </TechnicianCard>
         )}
       </ScrollView>
 
-      {/* Confirmation modal */}
-      <Modal
-        visible={confirmAction !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setConfirmAction(null)}
-      >
+      <Modal visible={confirmAction !== null} transparent animationType="fade" onRequestClose={() => setConfirmAction(null)}>
         <View style={modalStyles.overlay}>
-          <View style={modalStyles.card}>
+          <TechnicianCard style={modalStyles.card}>
             <Text style={modalStyles.title}>
               {confirmAction === 'accept' ? 'Accept direct offer?' : 'Reject direct offer?'}
             </Text>
             <Text style={modalStyles.body}>
               {confirmAction === 'accept'
-                ? 'This will unlock your identity and documents for the company and open a chat.'
+                ? 'This will unlock your identity and admin-verified documents for the company and open a chat.'
                 : 'The company will be notified. Your identity and documents will remain locked.'}
             </Text>
             <TouchableOpacity
-              style={[
-                modalStyles.confirmBtn,
-                confirmAction === 'reject' && modalStyles.confirmBtnDestructive,
-              ]}
+              style={[modalStyles.confirmBtn, confirmAction === 'reject' && modalStyles.confirmBtnDestructive]}
               onPress={doConfirmAction}
               activeOpacity={0.75}
             >
@@ -414,375 +395,102 @@ export default function DirectOfferDetailScreen() {
                 {confirmAction === 'accept' ? 'Confirm accept' : 'Confirm reject'}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={modalStyles.cancelBtn}
-              onPress={() => setConfirmAction(null)}
-              activeOpacity={0.75}
-            >
+            <TouchableOpacity style={modalStyles.cancelBtn} onPress={() => setConfirmAction(null)} activeOpacity={0.75}>
               <Text style={modalStyles.cancelBtnText}>Cancel</Text>
             </TouchableOpacity>
-          </View>
+          </TechnicianCard>
         </View>
       </Modal>
-    </SafeAreaView>
+    </TechnicianScreen>
   );
 }
 
 function ReqRow({ label, items }: { label: string; items: string[] }) {
   return (
-    <View style={reqStyles.row}>
-      <Text style={reqStyles.label}>{label}:</Text>
-      <View style={reqStyles.pills}>
-        {items.map((item, i) => (
-          <View key={i} style={reqStyles.pill}>
-            <Text style={reqStyles.pillText}>{item}</Text>
-          </View>
-        ))}
+    <View style={styles.reqRow}>
+      <Text style={styles.reqLabel}>{label}</Text>
+      <View style={styles.reqPills}>
+        {items.map((item, i) => <TechnicianChip key={`${item}-${i}`} label={item} />)}
       </View>
     </View>
   );
 }
 
-function BreakdownRow({
-  label,
-  value,
-  max,
-  accent,
-}: {
-  label: string;
-  value: number;
-  max: number;
-  accent: string;
-}) {
+function BreakdownRow({ label, value, max, accent }: { label: string; value: number; max: number; accent: string }) {
   const pct = max > 0 ? value / max : 0;
   return (
-    <View style={bdStyles.row}>
-      <Text style={bdStyles.label}>{label}</Text>
-      <View style={bdStyles.barBg}>
-        <View
-          style={[
-            bdStyles.barFill,
-            {
-              width: `${pct * 100}%` as any,
-              backgroundColor: value > 0 ? accent : colors.borderLight,
-            },
-          ]}
-        />
+    <View style={styles.breakdownRow}>
+      <Text style={styles.breakdownLabel}>{label}</Text>
+      <View style={styles.breakdownBarBg}>
+        <View style={[styles.breakdownBarFill, { width: `${pct * 100}%` as any, backgroundColor: value > 0 ? accent : techUi.borderSoft }]} />
       </View>
-      <Text style={[bdStyles.score, { color: value > 0 ? accent : colors.textMuted }]}>
-        {value}/{max}
-      </Text>
+      <Text style={[styles.breakdownScore, { color: value > 0 ? accent : techUi.textMuted }]}>{value}/{max}</Text>
     </View>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  type V = 'success' | 'warning' | 'error' | 'navy';
-  const map: Record<string, { label: string; variant: V }> = {
-    pending: { label: 'Pending', variant: 'warning' },
-    accepted: { label: 'Accepted', variant: 'success' },
-    rejected: { label: 'Declined', variant: 'error' },
-    expired: { label: 'Expired', variant: 'navy' },
-    withdrawn: { label: 'Withdrawn', variant: 'navy' },
-  };
-  const info = map[status] ?? { label: status, variant: 'navy' as V };
-  return <Badge label={info.label} variant={info.variant} />;
-}
-
-const reqStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  label: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    fontWeight: '600',
-    paddingTop: 3,
-    minWidth: 60,
-  },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, flex: 1 },
-  pill: {
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-  },
-  pillText: { fontSize: 10, color: colors.text },
-});
-
-const bdStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  label: { fontSize: 11, color: colors.textSecondary, width: 80 },
-  barBg: {
-    flex: 1,
-    height: 5,
-    backgroundColor: colors.borderLight,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  barFill: { height: '100%', borderRadius: 3 },
-  score: { fontSize: 10, fontWeight: '700', width: 32, textAlign: 'right' },
-});
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  contentWide: { maxWidth: 720, alignSelf: 'center', width: '100%' },
-  notFound: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  notFoundText: { fontSize: 16, color: colors.textSecondary },
-
-  scoreCard: {
-    borderWidth: 2,
-    borderRadius: 16,
-    padding: spacing.lg,
-    alignItems: 'center',
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  scoreValue: { fontSize: 52, fontWeight: '800', lineHeight: 60 },
-  scoreLabel: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: 2,
-  },
-  scoreMatchLabel: { fontSize: 14, fontWeight: '700', marginTop: spacing.xs },
-
-  section: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.navy,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: spacing.sm,
-  },
-
-  companyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  companyAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.navy,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  companyAvatarText: { fontSize: 18, fontWeight: '700', color: colors.white },
-  companyInfo: { flex: 1 },
-  companyName: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 1 },
-  companyType: { fontSize: 12, color: colors.textSecondary, marginBottom: 1 },
-  companyLocation: { fontSize: 12, color: colors.textMuted },
-
-  offerTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: 2,
-  },
-  offerLocation: { fontSize: 12, color: colors.textMuted, marginBottom: spacing.xs },
-  offerDescription: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.sm,
-  },
-  offerMeta: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.sm },
-  offerMetaChip: {},
-  offerMetaLabel: {
-    fontSize: 10,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-  },
-  offerMetaValue: { fontSize: 13, fontWeight: '600', color: colors.text },
-
-  reqBlock: { marginTop: spacing.xs },
-  breakdownBlock: { marginTop: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.borderLight },
-  breakdownTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: spacing.sm,
-  },
-
-  messageText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-    lineHeight: 20,
-  },
-
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  dateText: { fontSize: 12, color: colors.textMuted },
-
-  actionRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  actionBtn: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  acceptBtn: { backgroundColor: colors.success },
-  rejectBtn: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.error,
-  },
+  notFound: { flex: 1, padding: spacing.lg, justifyContent: 'center' },
+  section: { marginBottom: spacing.md },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: techUi.text, marginBottom: spacing.sm },
+  companyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  companyInfo: { flex: 1, minWidth: 0 },
+  companyName: { fontSize: 16, fontWeight: '700', color: techUi.text, marginBottom: 2 },
+  companyType: { fontSize: 12, color: techUi.textSoft, marginBottom: 2 },
+  companyLocation: { fontSize: 12, color: techUi.textMuted },
+  offerTitle: { fontSize: 16, fontWeight: '700', color: techUi.text, marginBottom: 4 },
+  offerLocation: { fontSize: 12, color: techUi.textMuted, marginBottom: spacing.sm },
+  offerDescription: { fontSize: 13, color: techUi.textSoft, lineHeight: 20, marginBottom: spacing.md },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  reqBlock: { marginTop: spacing.md },
+  reqRow: { marginBottom: spacing.sm },
+  reqLabel: { fontSize: 12, color: techUi.textSoft, fontWeight: '600', marginBottom: spacing.xs },
+  reqPills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  breakdownBlock: { marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: techUi.borderSoft },
+  breakdownRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
+  breakdownLabel: { fontSize: 12, color: techUi.textSoft, width: 90 },
+  breakdownBarBg: { flex: 1, height: 7, backgroundColor: techUi.borderSoft, borderRadius: 4, overflow: 'hidden' },
+  breakdownBarFill: { height: '100%', borderRadius: 4 },
+  breakdownScore: { fontSize: 11, fontWeight: '700', width: 38, textAlign: 'right' },
+  messageText: { fontSize: 13, color: techUi.textSoft, lineHeight: 20 },
+  dateText: { fontSize: 12, color: techUi.textMuted, marginTop: spacing.sm },
+  actionRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  actionBtn: { flex: 1, paddingVertical: spacing.md, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  acceptBtn: { backgroundColor: techUi.green },
+  rejectBtn: { backgroundColor: techUi.surface, borderWidth: 1, borderColor: techUi.red },
   btnDisabled: { opacity: 0.6 },
   acceptBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
-  rejectBtnText: { fontSize: 14, fontWeight: '700', color: colors.error },
-
-  acceptedNote: {
-    backgroundColor: colors.success + '10',
-    borderRadius: 12,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.success + '30',
-    marginBottom: spacing.md,
-  },
-  acceptedNoteTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.success,
-    marginBottom: 4,
-  },
-  acceptedNoteSub: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.sm,
-  },
-  chatBtn: {
-    backgroundColor: colors.technician,
-    borderRadius: 10,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
-  },
-  chatBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
-
-  rejectedNote: {
-    backgroundColor: colors.error + '08',
-    borderRadius: 12,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.error + '25',
-    marginBottom: spacing.md,
-  },
-  rejectedNoteTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.error,
-    marginBottom: 4,
-  },
-  rejectedNoteSub: { fontSize: 13, color: colors.textSecondary, lineHeight: 20 },
-
-  inactiveNote: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
-    alignItems: 'center',
-  },
-  inactiveNoteText: {
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  errorNote: {
-    backgroundColor: colors.error + '10',
-    borderRadius: 10,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.error + '30',
-    marginBottom: spacing.md,
-  },
-  errorNoteText: { fontSize: 13, color: colors.error, lineHeight: 18 },
+  rejectBtnText: { fontSize: 14, fontWeight: '700', color: techUi.red },
+  acceptedNote: { marginBottom: spacing.md, borderColor: '#BBF7D0' },
+  rejectedNote: { marginBottom: spacing.md, borderColor: '#FECACA' },
+  inactiveNote: { marginBottom: spacing.md },
+  noteTitle: { fontSize: 15, fontWeight: '700', color: techUi.text, marginBottom: 5 },
+  noteSub: { fontSize: 13, lineHeight: 20, color: techUi.textSoft, marginBottom: spacing.sm },
+  errorNote: { backgroundColor: techUi.redSoft, borderRadius: 14, padding: spacing.md, borderWidth: 1, borderColor: '#FECACA', marginBottom: spacing.md },
+  errorNoteText: { fontSize: 13, color: techUi.red, lineHeight: 18 },
 });
 
 const modalStyles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(15,23,42,0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.lg,
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: spacing.lg,
-    width: '100%',
-    maxWidth: 340,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 10,
-  },
-  title: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  body: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.lg,
-  },
+  card: { width: '100%', maxWidth: 360 },
+  title: { fontSize: 18, fontWeight: '700', color: techUi.text, marginBottom: spacing.sm },
+  body: { fontSize: 13, color: techUi.textSoft, lineHeight: 20, marginBottom: spacing.lg },
   confirmBtn: {
-    backgroundColor: colors.success,
-    borderRadius: 10,
-    paddingVertical: spacing.sm + 2,
+    backgroundColor: techUi.green,
+    borderRadius: 14,
+    paddingVertical: spacing.md,
     alignItems: 'center',
     marginBottom: spacing.xs,
   },
-  confirmBtnDestructive: { backgroundColor: colors.error },
+  confirmBtnDestructive: { backgroundColor: techUi.red },
   confirmBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
-  cancelBtn: {
-    paddingVertical: spacing.sm,
-    alignItems: 'center',
-    marginTop: spacing.xs,
-  },
-  cancelBtnText: { fontSize: 14, color: colors.textMuted, fontWeight: '500' },
+  cancelBtn: { paddingVertical: spacing.sm, alignItems: 'center', marginTop: spacing.xs },
+  cancelBtnText: { fontSize: 14, color: techUi.textMuted, fontWeight: '600' },
 });

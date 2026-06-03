@@ -36,11 +36,8 @@ V1 entities:
 | `phone` | `phone` | unchanged (now private) |
 | — | `birth_date` | **new required field** |
 | — | `technician_type` | **new required field** (replaces implicit specialties) |
-| `country` | `country` | unchanged |
-| `city` | `city` | unchanged |
-| `baseAirport` | `base_airport` | snake_case |
-| `latitude` | `latitude` | unchanged |
-| `longitude` | `longitude` | unchanged |
+| `country` + `city` + `baseAirport` | `location_city_id` | resolve against `location_airports` catalog |
+| `latitude` / `longitude` | derived | coordinates come from `location_airports` |
 | `licenseCategories[]` | `technician_licenses` (relation table) | **normalized** |
 | `aircraftTypes[]` | `technician_habilitations` (relation table) | **split from experience** |
 | `specialties[]` | **removed** | replaced by `technician_type` + `habilitations` |
@@ -92,8 +89,7 @@ A1, A2, A3, A4, B1.1, B1.2, B1.3, B1.4, B2, B2L, B3, L, C
 |----------|----------|--------|
 | `id` | `id` | unchanged |
 | `companyName` | `name` | **renamed** |
-| `country` | `country` | unchanged |
-| `city` | `city` | unchanged |
+| `country` + `city` | `location_city_id` | company stores only the catalog FK |
 | `website` | **removed** | not in V2 model (can be added later) |
 | `companyType` | `company_type` | type values updated (see below) |
 | `verificationStatus` | `verification_status` | unchanged values |
@@ -141,8 +137,8 @@ V1 `MatchRequest` maps directly to V2 `offer_requests` (company → technician f
 | `status` | `status` | adds `expired` |
 | `uploadedAt` | `uploaded_at` | snake_case |
 | — | `storage_path` | **new** (local path for demo) |
-| — | `verified_at` | **new optional** |
-| — | `verified_by` | **new optional** (admin id) |
+| — | `reviewed_at` | **new optional** — set when admin changes document status |
+| — | `rejection_reason` | **new optional** — set when rejected; cleared on all other transitions |
 | — | `expires_at` | **new optional** |
 
 ---
@@ -156,9 +152,9 @@ V1 `MatchRequest` maps directly to V2 `offer_requests` (company → technician f
 | `license_categories` catalog | Catalog table replacing hardcoded list |
 | `aircraft_types` catalog | Catalog table replacing `aircraftTypes[]` constant |
 | `company_types` / `contract_types` | Catalog tables |
-| `company_members` | Multi-user company support |
+| `company_members` | Multi-user company support; MVP keeps one company membership per company user |
 | `offers` | Job offers published by companies (new entity) |
-| `offer_required_*` tables | Requirements for offers |
+| `offer_required_*` tables | Requirements for offers — composite PKs `(offer_id, code)`; local demo rows include a human-readable `id` field that is not in the Supabase schema |
 | `offer_applications` | Technician applies to an offer (new flow) |
 | `chat_rooms` | Opened on acceptance (new feature) |
 | `chat_messages` | Messages in chat room (new feature) |
@@ -220,6 +216,8 @@ V1 `MatchRequest` maps directly to V2 `offer_requests` (company → technician f
 ---
 
 ## Seed data migration guide
+
+> **Important:** Local demo seeds (`src/data/seeds/*.json`) are for local AsyncStorage/demo mode only. They use human-readable IDs (`tech-001`, `comp-001`, `prof-t001`, etc.) that are NOT valid Supabase UUIDs. **Do not insert local demo seeds directly into Supabase.** Supabase starts clean — catalog tables only. Real users register via Supabase Auth and get UUID-based IDs from Postgres.
 
 When regenerating JSON seed data for V2:
 

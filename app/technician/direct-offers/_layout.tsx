@@ -1,13 +1,12 @@
 import { Stack } from 'expo-router';
-import { colors } from '../../../src/theme';
+import { techUi } from '../../../src/components/technician/TechnicianUI';
 
 export default function DirectOffersLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: colors.navy },
-        headerTintColor: colors.white,
-        headerTitleStyle: { fontWeight: '700' },
+        headerShown: false,
+        contentStyle: { backgroundColor: techUi.page },
       }}
     />
   );

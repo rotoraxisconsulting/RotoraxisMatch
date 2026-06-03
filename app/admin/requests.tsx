@@ -1,20 +1,44 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
   FlatList,
-  TouchableOpacity,
   ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
 } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import {
+  BriefcaseBusiness,
+  Building2,
+  CheckCircle,
+  ClipboardCheck,
+  FileCheck,
+  Inbox,
+  Lock,
+  MessageCircle,
+  UserRound,
+  XCircle,
+} from 'lucide-react-native';
+import type { LucideProps } from 'lucide-react-native';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
-import { EmptyState } from '../../src/components/EmptyState';
+import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import { OfferRequest, OfferApplication, OfferInboxRecord } from '../../src/types/offerRequest';
-import { OfferRequestStatus } from '../../src/types/enums';
-import { colors, spacing } from '../../src/theme';
+import { chatRepository } from '../../src/repositories/v2/chatRepository';
+import type { OfferApplication, OfferInboxRecord, OfferRequest } from '../../src/types/offerRequest';
+import type { OfferRequestStatus } from '../../src/types/enums';
+import {
+  AdminBadge,
+  AdminCard,
+  AdminChip,
+  AdminEmptyPanel,
+  AdminIconBox,
+  AdminPageHeader,
+  AdminScreen,
+  adminUi,
+} from '../../src/components/admin/AdminUI';
+import type { AdminTone } from '../../src/components/admin/AdminUI';
+import { spacing } from '../../src/theme';
 
 type StatusFilter = 'all' | OfferRequestStatus;
 type KindFilter = 'all' | 'direct_offer' | 'application';
@@ -24,21 +48,26 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'pending', label: 'Pending' },
   { key: 'accepted', label: 'Accepted' },
   { key: 'rejected', label: 'Rejected' },
+  { key: 'expired', label: 'Expired' },
+  { key: 'withdrawn', label: 'Withdrawn' },
 ];
 
 const KIND_CHIPS: { key: KindFilter; label: string }[] = [
-  { key: 'all', label: 'All types' },
-  { key: 'direct_offer', label: '📩 Direct offers' },
-  { key: 'application', label: '📝 Applications' },
+  { key: 'all', label: 'All records' },
+  { key: 'direct_offer', label: 'Direct offers' },
+  { key: 'application', label: 'Applications' },
 ];
 
-const STATUS_COLORS: Record<OfferRequestStatus, string> = {
-  pending: colors.warning,
-  accepted: colors.success,
-  rejected: colors.error,
-  expired: colors.textMuted,
-  withdrawn: colors.textMuted,
-};
+function statusTone(status: OfferRequestStatus): AdminTone {
+  if (status === 'accepted') return 'success';
+  if (status === 'pending') return 'warning';
+  if (status === 'rejected') return 'error';
+  return 'muted';
+}
+
+function statusLabel(status: OfferRequestStatus): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
 
 function filterRecords(
   records: OfferInboxRecord[],
@@ -46,10 +75,14 @@ function filterRecords(
   kind: KindFilter,
 ): OfferInboxRecord[] {
   let result = records;
-  if (status !== 'all') result = result.filter((r) => r.status === status);
-  if (kind !== 'all') result = result.filter((r) => r.kind === kind);
+  if (status !== 'all') result = result.filter((record) => record.status === status);
+  if (kind !== 'all') result = result.filter((record) => record.kind === kind);
   const order: Record<OfferRequestStatus, number> = {
-    pending: 0, accepted: 1, rejected: 2, expired: 3, withdrawn: 4,
+    pending: 0,
+    accepted: 1,
+    rejected: 2,
+    expired: 3,
+    withdrawn: 4,
   };
   return [...result].sort(
     (a, b) =>
@@ -58,7 +91,14 @@ function filterRecords(
   );
 }
 
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date pending';
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 export default function AdminRequestsScreen() {
+  const router = useRouter();
   const {
     offerRequestsV2,
     offerApplicationsV2,
@@ -71,6 +111,9 @@ export default function AdminRequestsScreen() {
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [chatRecordIds, setChatRecordIds] = useState<Set<string>>(new Set());
+  const { width } = useWindowDimensions();
+  const isWide = width >= 900;
 
   useFocusEffect(
     useCallback(() => {
@@ -83,103 +126,126 @@ export default function AdminRequestsScreen() {
     [offerRequestsV2, offerApplicationsV2],
   );
 
+  useEffect(() => {
+    let cancelled = false;
+    const companyIds = [...new Set(allRecords.map((record) => record.companyId))];
+
+    if (companyIds.length === 0) {
+      setChatRecordIds(new Set());
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    Promise.all(companyIds.map((companyId) => chatRepository.getRoomsForCompany(companyId))).then((groups) => {
+      if (cancelled) return;
+      const next = new Set<string>();
+      groups.flat().forEach((room) => {
+        if (room.offerRequestId) next.add(room.offerRequestId);
+        if (room.offerApplicationId) next.add(room.offerApplicationId);
+      });
+      setChatRecordIds(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allRecords]);
+
   const filtered = useMemo(
     () => filterRecords(allRecords, statusFilter, kindFilter),
     [allRecords, statusFilter, kindFilter],
   );
 
-  const pendingCount = allRecords.filter((r) => r.status === 'pending').length;
-  const acceptedCount = allRecords.filter((r) => r.status === 'accepted').length;
+  const pendingCount = allRecords.filter((record) => record.status === 'pending').length;
+  const acceptedWithUnlocks = allRecords.filter(
+    (record) => record.status === 'accepted' && record.identityRevealed && record.documentsUnlocked,
+  ).length;
+  const rejectedLocked = allRecords.filter(
+    (record) => record.status === 'rejected' && !record.identityRevealed && !record.documentsUnlocked,
+  ).length;
+  const withChat = allRecords.filter((record) => chatRecordIds.has(record.id)).length;
+
+  if (loading) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <LoadingScreen color={adminUi.accent} role="admin" />
+      </>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Requests & Applications' }} />
+    <AdminScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <DemoModeBanner role="admin" />
 
-      {/* Summary strip */}
-      <View style={styles.summary}>
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryValue, { color: colors.warning }]}>{pendingCount}</Text>
-          <Text style={styles.summaryLabel}>Pending</Text>
-        </View>
-        <View style={styles.summaryDivider} />
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryValue, { color: colors.success }]}>{acceptedCount}</Text>
-          <Text style={styles.summaryLabel}>Accepted</Text>
-        </View>
-        <View style={styles.summaryDivider} />
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryValue, { color: colors.blue }]}>
-            {offerRequestsV2.length}
-          </Text>
-          <Text style={styles.summaryLabel}>Direct offers</Text>
-        </View>
-        <View style={styles.summaryDivider} />
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryValue, { color: colors.cyan }]}>
-            {offerApplicationsV2.length}
-          </Text>
-          <Text style={styles.summaryLabel}>Applications</Text>
-        </View>
-      </View>
+      <View style={[styles.topContent, isWide && styles.contentWide]}>
+        <AdminPageHeader
+          eyebrow="Oversight"
+          title="Requests & applications"
+          subtitle="Audit direct offers and technician applications without changing acceptance, unlock or chat behavior."
+          onBack={() => router.back()}
+        />
 
-      {/* Status tabs */}
-      <View style={styles.tabRow}>
-        {STATUS_TABS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.tab, statusFilter === key && styles.tabActive]}
-            onPress={() => setStatusFilter(key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.tabText, statusFilter === key && styles.tabTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+        <AdminCard style={styles.summaryCard}>
+          <SummaryGrid
+            items={[
+              { label: 'Pending', value: pendingCount, tone: pendingCount > 0 ? 'warning' : 'success', icon: Inbox },
+              { label: 'Accepted with unlocks', value: acceptedWithUnlocks, tone: 'success', icon: CheckCircle },
+              { label: 'Rejected locked', value: rejectedLocked, tone: 'error', icon: Lock },
+              { label: 'Chat rooms', value: withChat, tone: 'info', icon: MessageCircle },
+            ]}
+          />
+        </AdminCard>
 
-      {/* Kind filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.kindScroll}
-        contentContainerStyle={styles.kindChips}
-      >
-        {KIND_CHIPS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.chip, kindFilter === key && styles.chipActive]}
-            onPress={() => setKindFilter(key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.chipText, kindFilter === key && styles.chipTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+        <AdminCard style={styles.controls}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {STATUS_TABS.map(({ key, label }) => (
+              <AdminChip
+                key={key}
+                label={label}
+                selected={statusFilter === key}
+                onPress={() => setStatusFilter(key)}
+              />
+            ))}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {KIND_CHIPS.map(({ key, label }) => (
+              <AdminChip
+                key={key}
+                label={label}
+                selected={kindFilter === key}
+                onPress={() => setKindFilter(key)}
+              />
+            ))}
+          </ScrollView>
+        </AdminCard>
+      </View>
 
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, isWide && styles.contentWide]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          !loading ? (
-            <Text style={styles.resultCount}>
-              {filtered.length} record{filtered.length !== 1 ? 's' : ''}
-            </Text>
-          ) : null
+          <View style={styles.listHeader}>
+            <View>
+              <Text style={styles.resultCount}>
+                {filtered.length} record{filtered.length !== 1 ? 's' : ''}
+              </Text>
+              <Text style={styles.resultSub}>
+                {offerRequestsV2.length} direct offers - {offerApplicationsV2.length} applications
+              </Text>
+            </View>
+            <AdminIconBox icon={ClipboardCheck} size={17} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+          </View>
         }
         ListEmptyComponent={
-          !loading ? (
-            <EmptyState
-              icon="📋"
-              title="No records found"
-              subtitle="Try adjusting your filters."
-            />
-          ) : null
+          <AdminEmptyPanel
+            title="No records found"
+            subtitle="Adjust the status or record type filter to widen the audit list."
+          />
         }
         renderItem={({ item }) => (
           <RecordCard
@@ -190,10 +256,34 @@ export default function AdminRequestsScreen() {
             offerTitle={item.kind === 'direct_offer'
               ? (item.offerId ? offerTitleMap[item.offerId] : undefined)
               : offerTitleMap[item.offerId]}
+            chatExists={chatRecordIds.has(item.id)}
           />
         )}
       />
-    </SafeAreaView>
+    </AdminScreen>
+  );
+}
+
+function SummaryGrid({
+  items,
+}: {
+  items: {
+    label: string;
+    value: number;
+    tone: AdminTone;
+    icon: React.ComponentType<LucideProps>;
+  }[];
+}) {
+  return (
+    <View style={styles.summaryGrid}>
+      {items.map((item) => (
+        <View key={item.label} style={styles.summaryItem}>
+          <AdminIconBox icon={item.icon} size={16} color={toneColor(item.tone)} backgroundColor={toneSoft(item.tone)} />
+          <Text style={styles.summaryValue}>{item.value}</Text>
+          <Text style={styles.summaryLabel}>{item.label}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -203,222 +293,295 @@ function RecordCard({
   technicianCode,
   technicianName,
   offerTitle,
+  chatExists,
 }: {
   record: OfferInboxRecord;
   companyName: string;
   technicianCode: string;
   technicianName?: string;
   offerTitle?: string;
+  chatExists: boolean;
 }) {
-  const statusColor = STATUS_COLORS[record.status];
   const isDirectOffer = record.kind === 'direct_offer';
+  const note = isDirectOffer ? (record as OfferRequest).message : (record as OfferApplication).coverNote;
 
   return (
-    <View style={styles.card}>
+    <AdminCard
+      style={[
+        styles.recordCard,
+        record.status === 'pending' && styles.cardPending,
+        record.status === 'accepted' && styles.cardAccepted,
+      ]}
+    >
       <View style={styles.cardHeader}>
-        <View style={[
-          styles.kindBadge,
-          { backgroundColor: isDirectOffer ? colors.blue + '18' : colors.cyan + '18' },
-        ]}>
-          <Text style={[
-            styles.kindText,
-            { color: isDirectOffer ? colors.blue : colors.cyan },
-          ]}>
-            {isDirectOffer ? '📩 Direct offer' : '📝 Application'}
-          </Text>
+        <View style={styles.badgeRow}>
+          <AdminBadge
+            label={isDirectOffer ? 'Direct offer' : 'Application'}
+            tone={isDirectOffer ? 'info' : 'cyan'}
+            small
+          />
+          <AdminBadge label={statusLabel(record.status)} tone={statusTone(record.status)} small />
         </View>
-        <View style={[styles.statusPill, { backgroundColor: statusColor + '20' }]}>
-          <Text style={[styles.statusText, { color: statusColor }]}>
-            {record.status}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.cardBody}>
-        <Row icon="🏢" label={companyName} />
-        <Row
-          icon="👷"
-          label={technicianName
-            ? `${technicianName} (${technicianCode})`
-            : technicianCode}
+        <AdminIconBox
+          icon={isDirectOffer ? Inbox : ClipboardCheck}
+          color={isDirectOffer ? adminUi.blue : adminUi.accent}
+          backgroundColor={isDirectOffer ? adminUi.blueSoft : adminUi.accentSoft}
+          size={19}
         />
-        {offerTitle ? <Row icon="📋" label={offerTitle} /> : null}
-        {isDirectOffer && (record as OfferRequest).message ? (
-          <Row icon="💬" label={(record as OfferRequest).message!} muted italic />
-        ) : null}
-        {!isDirectOffer && (record as OfferApplication).coverNote ? (
-          <Row icon="💬" label={(record as OfferApplication).coverNote!} muted italic />
-        ) : null}
       </View>
 
-      <View style={styles.cardFooter}>
-        <View style={styles.flags}>
-          <FlagChip
-            label="Identity"
-            active={record.identityRevealed}
-          />
-          <FlagChip
-            label="Docs"
-            active={record.documentsUnlocked}
-          />
-        </View>
-        <Text style={styles.footerDate}>
-          {new Date(record.createdAt).toLocaleDateString('en-GB', {
-            day: '2-digit', month: 'short', year: 'numeric',
-          })}
-        </Text>
+      <View style={styles.metaGrid}>
+        <InfoPill icon={Building2} label={companyName} />
+        <InfoPill
+          icon={UserRound}
+          label={technicianName ? `${technicianName} (${technicianCode})` : technicianCode}
+        />
+        <InfoPill icon={BriefcaseBusiness} label={offerTitle ?? 'Related offer not linked'} />
       </View>
-    </View>
+
+      {note ? (
+        <View style={styles.noteBox}>
+          <Text style={styles.noteText} numberOfLines={3}>{note}</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.auditFooter}>
+        <View style={styles.flagRow}>
+          <FlagChip label="Identity" active={record.identityRevealed} />
+          <FlagChip label="Documents" active={record.documentsUnlocked} icon={FileCheck} />
+          <FlagChip label="Chat" active={chatExists} icon={MessageCircle} inactiveLabel="No chat" />
+        </View>
+        <Text style={styles.footerDate}>{formatDate(record.createdAt)}</Text>
+      </View>
+    </AdminCard>
   );
 }
 
-function Row({
+function InfoPill({
   icon,
   label,
-  muted,
-  italic,
 }: {
-  icon: string;
+  icon: React.ComponentType<LucideProps>;
   label: string;
-  muted?: boolean;
-  italic?: boolean;
 }) {
   return (
-    <View style={styles.row}>
-      <Text style={styles.rowIcon}>{icon}</Text>
-      <Text
-        style={[
-          styles.rowText,
-          muted && styles.rowTextMuted,
-          italic && styles.rowTextItalic,
-        ]}
-        numberOfLines={2}
-      >
-        {label}
+    <View style={styles.infoPill}>
+      <AdminIconBox icon={icon} size={16} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+      <Text style={styles.infoText} numberOfLines={2}>{label}</Text>
+    </View>
+  );
+}
+
+function FlagChip({
+  label,
+  active,
+  icon,
+  inactiveLabel,
+}: {
+  label: string;
+  active: boolean;
+  icon?: React.ComponentType<LucideProps>;
+  inactiveLabel?: string;
+}) {
+  const Icon = icon ?? (active ? CheckCircle : XCircle);
+  const color = active ? adminUi.green : adminUi.textMuted;
+  return (
+    <View style={[styles.flagChip, active ? styles.flagChipOn : styles.flagChipOff]}>
+      <Icon size={13} color={color} strokeWidth={2.2} />
+      <Text style={[styles.flagText, { color }]}>
+        {active ? label : inactiveLabel ?? `${label} locked`}
       </Text>
     </View>
   );
 }
 
-function FlagChip({ label, active }: { label: string; active: boolean }) {
-  return (
-    <View style={[styles.flagChip, active ? styles.flagChipOn : styles.flagChipOff]}>
-      <Text style={[styles.flagText, active ? styles.flagTextOn : styles.flagTextOff]}>
-        {active ? '✓' : '–'} {label}
-      </Text>
-    </View>
-  );
+function toneColor(tone: AdminTone): string {
+  if (tone === 'success') return adminUi.green;
+  if (tone === 'warning') return adminUi.amber;
+  if (tone === 'error') return adminUi.red;
+  if (tone === 'info') return adminUi.blue;
+  if (tone === 'cyan') return adminUi.accent;
+  if (tone === 'navy') return adminUi.navy;
+  return adminUi.textSoft;
+}
+
+function toneSoft(tone: AdminTone): string {
+  if (tone === 'success') return adminUi.greenSoft;
+  if (tone === 'warning') return adminUi.amberSoft;
+  if (tone === 'error') return adminUi.redSoft;
+  if (tone === 'info') return adminUi.blueSoft;
+  if (tone === 'cyan') return adminUi.accentSoft;
+  return adminUi.surfaceSoft;
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  summary: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingVertical: spacing.md,
+  topContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
-  summaryItem: { flex: 1, alignItems: 'center', gap: 2 },
-  summaryValue: { fontSize: 20, fontWeight: '700', lineHeight: 26 },
-  summaryLabel: { fontSize: 10, color: colors.textMuted, fontWeight: '500' },
-  summaryDivider: { width: 1, backgroundColor: colors.border, marginVertical: 4 },
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+  contentWide: {
+    maxWidth: 920,
+    alignSelf: 'center',
+    width: '100%',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: colors.background,
+  summaryCard: {
+    marginBottom: spacing.md,
   },
-  tabActive: { backgroundColor: colors.admin },
-  tabText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  tabTextActive: { color: colors.white },
-  kindScroll: {
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  kindChips: {
+  summaryGrid: {
     flexDirection: 'row',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
-  chip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  chipActive: { backgroundColor: colors.navy, borderColor: colors.navy },
-  chipText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
-  chipTextActive: { color: colors.white },
-  list: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  resultCount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
-  },
-  card: {
-    backgroundColor: colors.surface,
+  summaryItem: {
+    flexGrow: 1,
+    flexBasis: 132,
+    padding: spacing.sm,
     borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
     borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
+    borderColor: adminUi.borderSoft,
+    gap: 4,
+  },
+  summaryValue: {
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '700',
+    color: adminUi.text,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: adminUi.textSoft,
+  },
+  controls: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingRight: spacing.md,
+  },
+  list: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xxxl,
+  },
+  listHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
     marginBottom: spacing.sm,
+  },
+  resultCount: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: adminUi.text,
+  },
+  resultSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: adminUi.textMuted,
+  },
+  recordCard: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  cardPending: {
+    borderColor: '#FDE68A',
+    borderLeftWidth: 3,
+  },
+  cardAccepted: {
+    borderColor: '#BBF7D0',
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm,
+    gap: spacing.md,
   },
-  kindBadge: {
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  badgeRow: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
-  kindText: { fontSize: 11, fontWeight: '700' },
-  statusPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
-  statusText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
-  cardBody: { gap: 4, marginBottom: spacing.sm },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
-  rowIcon: { fontSize: 12, marginTop: 2 },
-  rowText: { fontSize: 13, color: colors.text, flex: 1, lineHeight: 18 },
-  rowTextMuted: { color: colors.textSecondary },
-  rowTextItalic: { fontStyle: 'italic' },
-  cardFooter: {
+  metaGrid: {
+    gap: spacing.sm,
+  },
+  infoPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  flags: { flexDirection: 'row', gap: 4 },
-  flagChip: {
-    borderRadius: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
     borderWidth: 1,
+    borderColor: adminUi.borderSoft,
   },
-  flagChipOn: { backgroundColor: colors.success + '18', borderColor: colors.success + '40' },
-  flagChipOff: { backgroundColor: colors.background, borderColor: colors.border },
-  flagText: { fontSize: 10, fontWeight: '600' },
-  flagTextOn: { color: colors.success },
-  flagTextOff: { color: colors.textMuted },
-  footerDate: { fontSize: 11, color: colors.textMuted },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: adminUi.textSoft,
+  },
+  noteBox: {
+    borderWidth: 1,
+    borderColor: adminUi.borderSoft,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
+    padding: spacing.sm,
+  },
+  noteText: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: adminUi.textSoft,
+  },
+  auditFooter: {
+    gap: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: adminUi.borderSoft,
+    paddingTop: spacing.sm,
+  },
+  flagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  flagChip: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  flagChipOn: {
+    backgroundColor: adminUi.greenSoft,
+    borderColor: '#BBF7D0',
+  },
+  flagChipOff: {
+    backgroundColor: adminUi.surfaceSoft,
+    borderColor: adminUi.borderSoft,
+  },
+  flagText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  footerDate: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: adminUi.textMuted,
+  },
 });

@@ -1,60 +1,95 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
   FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
   TextInput,
-  TouchableOpacity,
+  useWindowDimensions,
+  View,
 } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { Search, UserRound } from 'lucide-react-native';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
+import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { AdminTechnicianCard } from '../../src/components/AdminTechnicianCard';
-import { EmptyState } from '../../src/components/EmptyState';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import { Technician, VerificationStatus } from '../../src/types';
-import { colors, spacing } from '../../src/theme';
+import type { LegacyVerificationStatus, Technician, TechnicianWithRelations } from '../../src/types';
+import {
+  AdminCard,
+  AdminChip,
+  AdminEmptyPanel,
+  AdminIconBox,
+  AdminPageHeader,
+  AdminScreen,
+  adminUi,
+} from '../../src/components/admin/AdminUI';
+import { spacing } from '../../src/theme';
 
-type StatusFilter = 'all' | VerificationStatus;
+type StatusFilter = 'all' | 'pending' | 'verified' | 'rejected';
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'pending', label: 'Pending' },
   { key: 'verified', label: 'Verified' },
-  { key: 'unverified', label: 'Unverified' },
+  { key: 'rejected', label: 'Rejected' },
 ];
+
+// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
+function normalizedStatus(status: LegacyVerificationStatus): StatusFilter {
+  if (status === 'unverified') return 'pending';
+  return status;
+}
 
 function filterTechnicians(
   techs: Technician[],
+  detailsMap: Record<string, TechnicianWithRelations>,
   status: StatusFilter,
   query: string,
 ): Technician[] {
   let result = techs;
   if (status !== 'all') {
-    result = result.filter((t) => t.verificationStatus === status);
+    result = result.filter((technician) => normalizedStatus(technician.verificationStatus) === status);
   }
   if (query.trim()) {
     const q = query.trim().toLowerCase();
-    result = result.filter(
-      (t) =>
-        t.fullName.toLowerCase().includes(q) ||
-        t.anonymousCode.toLowerCase().includes(q) ||
-        t.city.toLowerCase().includes(q),
-    );
+    result = result.filter((technician) => {
+      const details = detailsMap[technician.id];
+      const searchable = [
+        technician.fullName,
+        technician.anonymousCode,
+        technician.city,
+        technician.country,
+        technician.baseAirport,
+        details?.technicianType,
+        ...technician.licenseCategories,
+        ...technician.aircraftTypes,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return searchable.includes(q);
+    });
   }
-  // Pending first within results
   return [...result].sort((a, b) => {
-    const order = { pending: 0, unverified: 1, rejected: 2, verified: 3 };
-    return (order[a.verificationStatus] ?? 0) - (order[b.verificationStatus] ?? 0);
+    const order: Record<StatusFilter, number> = { pending: 0, rejected: 1, verified: 2, all: 3 };
+    return order[normalizedStatus(a.verificationStatus)] - order[normalizedStatus(b.verificationStatus)];
   });
 }
 
 export default function AdminTechniciansScreen() {
-  const { technicians, loading, refresh, updateTechnicianVerification } =
-    useAdminDashboard();
+  const router = useRouter();
+  const {
+    technicians,
+    technicianDetailsMap,
+    loading,
+    refresh,
+    updateTechnicianVerification,
+  } = useAdminDashboard();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [query, setQuery] = useState('');
+  const { width } = useWindowDimensions();
+  const isWide = width >= 900;
 
   useFocusEffect(
     useCallback(() => {
@@ -63,131 +98,158 @@ export default function AdminTechniciansScreen() {
   );
 
   const filtered = useMemo(
-    () => filterTechnicians(technicians, statusFilter, query),
-    [technicians, statusFilter, query],
+    () => filterTechnicians(technicians, technicianDetailsMap, statusFilter, query),
+    [technicians, technicianDetailsMap, statusFilter, query],
   );
+  const pendingCount = technicians.filter((technician) => normalizedStatus(technician.verificationStatus) === 'pending').length;
+
+  if (loading) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <LoadingScreen color={adminUi.accent} role="admin" />
+      </>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Technicians' }} />
+    <AdminScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <DemoModeBanner role="admin" />
 
-      {/* Search */}
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search by name, code or city…"
-          placeholderTextColor={colors.textMuted}
-          value={query}
-          onChangeText={setQuery}
-          clearButtonMode="while-editing"
-          autoCapitalize="none"
-          autoCorrect={false}
+      <View style={[styles.topContent, isWide && styles.contentWide]}>
+        <AdminPageHeader
+          eyebrow="Moderation"
+          title="Technician management"
+          subtitle="Review identity, license coverage and operational readiness before marketplace access."
+          onBack={() => router.back()}
         />
-      </View>
 
-      {/* Status filter tabs */}
-      <View style={styles.tabRow}>
-        {STATUS_TABS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.tab, statusFilter === key && styles.tabActive]}
-            onPress={() => setStatusFilter(key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.tabText, statusFilter === key && styles.tabTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <AdminCard style={styles.controls}>
+          <View style={styles.searchShell}>
+            <Search size={18} color={adminUi.textMuted} strokeWidth={2.2} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search name, code, city, license or aircraft"
+              placeholderTextColor={adminUi.textMuted}
+              value={query}
+              onChangeText={setQuery}
+              clearButtonMode="while-editing"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {STATUS_TABS.map(({ key, label }) => (
+              <AdminChip
+                key={key}
+                label={label}
+                selected={statusFilter === key}
+                onPress={() => setStatusFilter(key)}
+              />
+            ))}
+          </ScrollView>
+        </AdminCard>
       </View>
 
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, isWide && styles.contentWide]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          !loading ? (
-            <Text style={styles.resultCount}>
-              {filtered.length} technician{filtered.length !== 1 ? 's' : ''}
-            </Text>
-          ) : null
+          <View style={styles.listHeader}>
+            <View>
+              <Text style={styles.resultCount}>
+                {filtered.length} technician{filtered.length !== 1 ? 's' : ''}
+              </Text>
+              <Text style={styles.resultSub}>
+                {pendingCount} pending verification
+              </Text>
+            </View>
+            <AdminIconBox icon={UserRound} size={17} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+          </View>
         }
         ListEmptyComponent={
-          !loading ? (
-            <EmptyState
-              icon="👷"
-              title="No technicians found"
-              subtitle="Try adjusting your search or filter."
-            />
-          ) : null
+          <AdminEmptyPanel
+            title="No technicians found"
+            subtitle="Adjust the search or moderation filter to widen the queue."
+          />
         }
         renderItem={({ item }) => (
           <AdminTechnicianCard
             technician={item}
+            details={technicianDetailsMap[item.id]}
             onUpdateStatus={updateTechnicianVerification}
           />
         )}
       />
-    </SafeAreaView>
+    </AdminScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  searchRow: {
+  topContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+  },
+  contentWide: {
+    maxWidth: 920,
+    alignSelf: 'center',
+    width: '100%',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+  },
+  controls: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  searchShell: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: adminUi.border,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
+    paddingHorizontal: spacing.md,
   },
   searchInput: {
-    height: 40,
-    backgroundColor: colors.background,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    fontSize: 14,
-    color: colors.text,
-  },
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.sm,
-    gap: spacing.xs,
-  },
-  tab: {
     flex: 1,
-    paddingVertical: 6,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: colors.background,
+    minWidth: 0,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: adminUi.text,
+    paddingVertical: spacing.sm,
   },
-  tabActive: {
-    backgroundColor: colors.admin,
-  },
-  tabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  tabTextActive: {
-    color: colors.white,
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingRight: spacing.md,
   },
   list: {
-    padding: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingBottom: spacing.xxxl,
   },
-  resultCount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMuted,
+  listHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
     marginBottom: spacing.sm,
+  },
+  resultCount: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: adminUi.text,
+  },
+  resultSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: adminUi.textMuted,
   },
 });

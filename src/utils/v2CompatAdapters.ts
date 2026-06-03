@@ -20,11 +20,12 @@ import {
   TechnicianWithRelations,
   TechnicianProfile,
 } from '../types/technician';
-import { Company, CompanyProfile } from '../types/company';
+import { Company, CompanyProfile, CompanyProfileView } from '../types/company';
 import { TechnicianDocument, Document } from '../types/document';
 import { SafeTechnicianPreview, UnlockedTechnicianView } from '../types/privacy';
 import { OfferRequest } from '../types/offerRequest';
 import { MatchRequest, MatchRequestStatus } from '../types/matchRequest';
+import { resolveLocationSnapshot } from '../constants/locationCities';
 
 // ---------------------------------------------------------------------------
 // Availability helpers
@@ -33,8 +34,17 @@ import { MatchRequest, MatchRequestStatus } from '../types/matchRequest';
 /**
  * Derive V1 AvailabilityStatus from a V2 Availability object.
  * V2 uses `immediately: boolean`; V1 screens read `availability.status`.
+ * During the migration, an explicit `status` may already exist on locally
+ * edited profiles. Prefer it so "open_to_offers" can stand without a date.
  */
 export function deriveAvailabilityStatus(avail: Availability): AvailabilityStatus {
+  if (
+    avail.status === 'available' ||
+    avail.status === 'open_to_offers' ||
+    avail.status === 'unavailable'
+  ) {
+    return avail.status;
+  }
   if (avail.immediately) return 'available';
   if (avail.availableFrom) return 'open_to_offers';
   return 'unavailable';
@@ -45,7 +55,7 @@ export function deriveAvailabilityStatus(avail: Availability): AvailabilityStatu
  * same object. Existing screens read `availability.status`; new code reads
  * `availability.immediately`.
  */
-function withStatus(avail: Availability): Availability {
+export function withAvailabilityStatus(avail: Availability): Availability {
   return { ...avail, status: deriveAvailabilityStatus(avail) };
 }
 
@@ -66,6 +76,28 @@ export function computeYearsExperience(experience: TechnicianAircraftExperience[
 }
 
 // ---------------------------------------------------------------------------
+// Location helpers
+// ---------------------------------------------------------------------------
+
+function compatLocation(reference: {
+  locationCityId?: string;
+  country?: string;
+  city?: string;
+  baseAirport?: string;
+}) {
+  const resolved = resolveLocationSnapshot(reference);
+
+  return {
+    locationCityId: resolved?.locationCityId ?? reference.locationCityId,
+    country: resolved?.country ?? reference.country ?? '',
+    city: resolved?.city ?? reference.city ?? '',
+    baseAirport: resolved?.baseAirport ?? reference.baseAirport ?? '',
+    latitude: resolved?.latitude,
+    longitude: resolved?.longitude,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // SafeTechnicianPreview  →  SafeTechnicianView (anonymous, no identity)
 // ---------------------------------------------------------------------------
 
@@ -77,18 +109,21 @@ export function computeYearsExperience(experience: TechnicianAircraftExperience[
  * - No matchingScore (general search has no offer context)
  */
 export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview): SafeTechnicianView {
+  const location = compatLocation(preview);
+
   return {
     id: preview.id,
     anonymousCode: preview.anonymousCode,
-    country: preview.country,
-    city: preview.city,
-    baseAirport: preview.baseAirport ?? '',
-    latitude: 0,
-    longitude: 0,
+    locationCityId: location.locationCityId,
+    country: location.country,
+    city: location.city,
+    baseAirport: location.baseAirport,
+    latitude: location.latitude,
+    longitude: location.longitude,
     licenseCategories: preview.licenses,
     aircraftTypes: [...new Set(preview.habilitations.map((h) => h.aircraftTypeCode))],
     specialties: [],
-    availability: withStatus(preview.availability),
+    availability: withAvailabilityStatus(preview.availability),
     verificationStatus: preview.verificationStatus,
     profileCompleteness: 0,
     yearsExperience: computeYearsExperience(preview.aircraftExperience),
@@ -122,21 +157,24 @@ export function v2UnlockedViewToSafeView(view: UnlockedTechnicianView): SafeTech
  * Always reveals identity — only call for own-profile or admin views.
  */
 export function v2TechnicianToV1(tech: TechnicianWithRelations): Technician {
+  const location = compatLocation(tech);
+
   return {
     id: tech.id,
     anonymousCode: tech.anonymousCode,
     fullName: `${tech.firstName} ${tech.lastName}`,
     email: tech.email,
     phone: tech.phone ?? '',
-    country: tech.country,
-    city: tech.city,
-    baseAirport: tech.baseAirport ?? '',
-    latitude: tech.latitude ?? 0,
-    longitude: tech.longitude ?? 0,
+    locationCityId: location.locationCityId,
+    country: location.country,
+    city: location.city,
+    baseAirport: location.baseAirport,
+    latitude: location.latitude,
+    longitude: location.longitude,
     licenseCategories: tech.licenses.map((l) => l.licenseCode),
     aircraftTypes: [...new Set(tech.habilitations.map((h) => h.aircraftTypeCode))],
     specialties: [],
-    availability: withStatus(tech.availability),
+    availability: withAvailabilityStatus(tech.availability),
     verificationStatus: tech.verificationStatus,
     profileCompleteness: tech.profileCompleteness,
     yearsExperience: computeYearsExperience(tech.aircraftExperience),
@@ -167,13 +205,41 @@ export function applyV1PatchToV2Profile(
     v2.firstName = parts[0] ?? '';
     v2.lastName = parts.slice(1).join(' ') || existingProfile.lastName;
   }
+  if (patch.email !== undefined) v2.email = patch.email;
   if (patch.phone !== undefined) v2.phone = patch.phone || undefined;
-  if (patch.city !== undefined) v2.city = patch.city;
-  if (patch.country !== undefined) v2.country = patch.country;
-  if (patch.baseAirport !== undefined) v2.baseAirport = patch.baseAirport || undefined;
-  if (patch.latitude !== undefined) v2.latitude = patch.latitude;
-  if (patch.longitude !== undefined) v2.longitude = patch.longitude;
-  if (patch.availability !== undefined) v2.availability = patch.availability;
+  const locationChanged =
+    patch.locationCityId !== undefined ||
+    patch.country !== undefined ||
+    patch.city !== undefined ||
+    patch.baseAirport !== undefined;
+
+  if (locationChanged) {
+    const location = resolveLocationSnapshot({
+      locationCityId: patch.locationCityId ?? existingProfile.locationCityId,
+      country: patch.country,
+      city: patch.city,
+      baseAirport: patch.baseAirport,
+    });
+
+    if (location) {
+      v2.locationCityId = location.locationCityId;
+    } else {
+      if (patch.locationCityId !== undefined) v2.locationCityId = patch.locationCityId || undefined;
+    }
+  }
+  if (patch.availability !== undefined) {
+    const availability = { ...existingProfile.availability, ...patch.availability };
+    if (availability.status === 'available') {
+      availability.immediately = true;
+      availability.availableFrom = undefined;
+    } else if (availability.status === 'open_to_offers') {
+      availability.immediately = false;
+    } else if (availability.status === 'unavailable') {
+      availability.immediately = false;
+      availability.availableFrom = undefined;
+    }
+    v2.availability = availability;
+  }
   if (patch.verificationStatus !== undefined) v2.verificationStatus = patch.verificationStatus;
   if (patch.profileCompleteness !== undefined) v2.profileCompleteness = patch.profileCompleteness;
 
@@ -188,12 +254,15 @@ export function applyV1PatchToV2Profile(
  * Convert a V2 CompanyProfile to the V1 Company shape.
  * V2 has no `website` field — it is set to an empty string.
  */
-export function v2CompanyToV1(c: CompanyProfile): Company {
+export function v2CompanyToV1(c: CompanyProfile | CompanyProfileView): Company {
+  const location = compatLocation(c);
+
   return {
     id: c.id,
     companyName: c.name,
-    country: c.country,
-    city: c.city,
+    locationCityId: location.locationCityId,
+    country: location.country,
+    city: location.city,
     website: '',
     companyType: c.companyType, // CompanyTypeCode ⊂ CompanyType union
     verificationStatus: c.verificationStatus,
@@ -237,9 +306,13 @@ export function v2OfferRequestToMatchRequest(req: OfferRequest): MatchRequest {
 // Document  →  TechnicianDocument (V1 compat)
 // ---------------------------------------------------------------------------
 
-/** Strip V2-only fields (storagePath, verifiedAt, verifiedBy, expiresAt). */
+/**
+ * Strip storage and admin-internal V2 fields (storagePath, reviewedAt) that V1
+ * screens don't need. Pass through expiresAt and rejectionReason so technician
+ * screens can access them via the existing typecast pattern.
+ */
 export function v2DocumentToV1(doc: Document): TechnicianDocument {
-  return {
+  const result: TechnicianDocument = {
     id: doc.id,
     technicianId: doc.technicianId,
     type: doc.type,
@@ -247,4 +320,9 @@ export function v2DocumentToV1(doc: Document): TechnicianDocument {
     status: doc.status,
     uploadedAt: doc.uploadedAt,
   };
+  // Pass through display fields used by technician screens via typecast.
+  // These are not on TechnicianDocument's TypeScript type but exist at runtime.
+  if (doc.expiresAt !== undefined) (result as any).expiresAt = doc.expiresAt;
+  if (doc.rejectionReason !== undefined) (result as any).rejectionReason = doc.rejectionReason;
+  return result;
 }

@@ -1,19 +1,6 @@
 [
   {
     "kind": "application",
-    "id": "oapp-001",
-    "technicianId": "tech-002",
-    "offerId": "offer-004",
-    "companyId": "comp-003",
-    "status": "pending",
-    "identityRevealed": false,
-    "documentsUnlocked": false,
-    "coverNote": "I have 8 years of avionics experience with a strong focus on A320-family aircraft. My B2 habilitation on the A320 and recent FANS-1/A training make me an ideal fit for this contract.",
-    "createdAt": "2026-05-12T10:00:00.000Z",
-    "updatedAt": "2026-05-12T10:00:00.000Z"
-  },
-  {
-    "kind": "application",
     "id": "oapp-002",
     "technicianId": "tech-010",
     "offerId": "offer-005",
@@ -27,19 +14,6 @@
   },
   {
     "kind": "application",
-    "id": "oapp-003",
-    "technicianId": "tech-001",
-    "offerId": "offer-001",
-    "companyId": "comp-001",
-    "status": "accepted",
-    "identityRevealed": true,
-    "documentsUnlocked": true,
-    "coverNote": "I am a B1.1/C certified technician with 12 years of B737 line and base maintenance experience, including 10 years on the Classic and NG variants. Immediately available.",
-    "createdAt": "2026-04-28T09:00:00.000Z",
-    "updatedAt": "2026-05-03T11:30:00.000Z"
-  },
-  {
-    "kind": "application",
     "id": "oapp-004",
     "technicianId": "tech-006",
     "offerId": "offer-005",
@@ -50,19 +24,6 @@
     "coverNote": "I hold both B1.1 and B2 licenses with A320 and A330 habilitations and am based in Frankfurt, close to Hamburg. Very interested in this role.",
     "createdAt": "2026-04-02T11:00:00.000Z",
     "updatedAt": "2026-04-15T16:00:00.000Z"
-  },
-  {
-    "kind": "application",
-    "id": "oapp-005",
-    "technicianId": "tech-014",
-    "offerId": "offer-007",
-    "companyId": "comp-005",
-    "status": "pending",
-    "identityRevealed": false,
-    "documentsUnlocked": false,
-    "coverNote": "I am a B1.1/B1.3 dual-rated technician with 13 years of rotary-wing experience, including 10 years on the Sikorsky S-76 and 8 years on the Bell 412. Available immediately.",
-    "createdAt": "2026-05-14T08:00:00.000Z",
-    "updatedAt": "2026-05-14T08:00:00.000Z"
   },
   {
     "kind": "application",

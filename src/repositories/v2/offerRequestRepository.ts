@@ -1,9 +1,16 @@
 import { storageAdapter } from '../../storage/asyncStorageAdapter';
 import { DB_KEYS } from '../../storage/localDatabase';
-import { OfferRequest } from '../../types/offerRequest';
+import { OfferApplication, OfferRequest } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
 import { chatRepository } from './chatRepository';
 import { activityRepository } from './activityRepository';
+import { isOfferOpenForTechnicians, offerRepository } from './offerRepository';
+import {
+  assertOfferRelationTransition,
+  getStatusActivityType,
+  isActiveOfferRelationStatus,
+  shouldUnlockAcceptedRelation,
+} from '../../utils/offerRelationStateMachine';
 
 function uuid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -21,7 +28,21 @@ export const offerRequestRepository = {
 
   async getForTechnician(technicianId: string): Promise<OfferRequest[]> {
     const all = await this.getAll();
-    return all.filter((r) => r.technicianId === technicianId);
+    const technicianRequests = all.filter((r) => r.technicianId === technicianId);
+
+    // Only pending direct offers are subject to offer-status filtering:
+    // an inactive linked offer makes a pending offer non-actionable, so hide it from the list.
+    // Accepted, rejected, expired, and withdrawn records are historical — always returned
+    // regardless of the linked offer's current status (active relationship, audit trail, chat access).
+    const results = await Promise.all(
+      technicianRequests.map(async (request) => {
+        if (request.status !== 'pending' || !request.offerId) return request;
+        const offer = await offerRepository.getById(request.offerId);
+        return isOfferOpenForTechnicians(offer) ? request : null;
+      }),
+    );
+
+    return results.filter((r): r is OfferRequest => r !== null);
   },
 
   async getForCompany(companyId: string): Promise<OfferRequest[]> {
@@ -37,14 +58,35 @@ export const offerRequestRepository = {
   }): Promise<OfferRequest> {
     const all = await this.getAll();
 
-    const existingPending = all.find(
+    if (data.offerId) {
+      const offer = await offerRepository.getById(data.offerId);
+      if (!isOfferOpenForTechnicians(offer) || offer?.companyId !== data.companyId) {
+        throw new Error('Closed or unpublished offers cannot be sent as direct offers.');
+      }
+    }
+
+    const existingActiveDirectOffer = all.find(
       (r) =>
         r.companyId === data.companyId &&
         r.technicianId === data.technicianId &&
-        r.status === 'pending' &&
+        isActiveOfferRelationStatus(r.status) &&
         (data.offerId ? r.offerId === data.offerId : !r.offerId),
     );
-    if (existingPending) throw new Error('A pending direct offer already exists for this technician.');
+    if (existingActiveDirectOffer) throw new Error('An active direct offer already exists for this technician.');
+
+    if (data.offerId) {
+      const applications = await storageAdapter.get<OfferApplication[]>(DB_KEYS.v2OfferApplications) ?? [];
+      const existingActiveApplication = applications.find(
+        (application) =>
+          application.companyId === data.companyId &&
+          application.technicianId === data.technicianId &&
+          application.offerId === data.offerId &&
+          isActiveOfferRelationStatus(application.status),
+      );
+      if (existingActiveApplication) {
+        throw new Error('This technician already has an active application for this offer.');
+      }
+    }
 
     const now = new Date().toISOString();
     const request: OfferRequest = {
@@ -71,16 +113,27 @@ export const offerRequestRepository = {
     return request;
   },
 
+  /**
+   * Validates and applies a status transition. Local equivalent of transition_offer_request_status() RPC.
+   * Handles all side effects (identityRevealed, documentsUnlocked, chat room, activity event) atomically in local storage.
+   * Future Supabase: all side effects run server-side inside the RPC + handle_offer_relation_status_transition() trigger.
+   * Frontend must call this method — never write identityRevealed or documentsUnlocked directly.
+   */
   async updateStatus(id: string, status: OfferRequestStatus): Promise<OfferRequest | null> {
     const all = await this.getAll();
     const idx = all.findIndex((r) => r.id === id);
     if (idx === -1) return null;
 
     const prev = all[idx];
+    assertOfferRelationTransition(prev.status, status);
+    if (status === 'accepted' && prev.offerId) {
+      const offer = await offerRepository.getById(prev.offerId);
+      if (!isOfferOpenForTechnicians(offer)) {
+        throw new Error('This offer is no longer active.');
+      }
+    }
 
-    // TODO: Move this invariant to a Supabase trigger/Edge Function in the backend phase.
-    // Local simulation of the on_offer_accepted trigger:
-    const isAccepted = status === 'accepted';
+    const isAccepted = shouldUnlockAcceptedRelation(status);
     const updated: OfferRequest = {
       ...prev,
       status,
@@ -93,6 +146,8 @@ export const offerRequestRepository = {
     next[idx] = updated;
     await storageAdapter.set(DB_KEYS.v2OfferRequests, next);
 
+    // Local simulation of the Supabase RPC/trigger side effects.
+    // In production this must run server-side in the same transaction as the status transition.
     if (isAccepted) {
       await chatRepository.getOrCreateRoom({
         offerRequestId: id,
@@ -101,12 +156,15 @@ export const offerRequestRepository = {
       });
     }
 
-    await activityRepository.create({
-      type: isAccepted ? 'direct_offer_accepted' : 'direct_offer_rejected',
-      recipientRole: 'company',
-      recipientId: prev.companyId,
-      entityId: id,
-    });
+    const activityType = getStatusActivityType('direct_offer', status);
+    if (activityType) {
+      await activityRepository.create({
+        type: activityType,
+        recipientRole: 'company',
+        recipientId: prev.companyId,
+        entityId: id,
+      });
+    }
 
     return updated;
   },

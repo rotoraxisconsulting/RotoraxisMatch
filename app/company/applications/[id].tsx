@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
@@ -12,9 +11,32 @@ import {
   Modal,
 } from 'react-native';
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
-import { colors, spacing, typography } from '../../../src/theme';
+import {
+  BriefcaseBusiness,
+  CheckCircle,
+  ClipboardCheck,
+  FileCheck,
+  Lock,
+  MessageCircle,
+  Unlock,
+  UserRound,
+  XCircle,
+} from 'lucide-react-native';
+import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
-import { Badge } from '../../../src/components/Badge';
+import { InlineScore } from '../../../src/components/InlineScore';
+import {
+  CompanyBadge,
+  CompanyCard,
+  CompanyChip,
+  CompanyPageHeader,
+  CompanyScreen,
+  EmptyPanel,
+  IconBox,
+  InfoRow,
+  companyStyles,
+  companyUi,
+} from '../../../src/components/company/CompanyUI';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
@@ -22,11 +44,10 @@ import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
-import { DEMO_COMPANY_ID, DEMO_COMPANY_MEMBER_ROLE } from '../../../src/state/useCompanyDashboard';
+import { useCompanySession } from '../../../src/state/SessionContext';
 import { canReviewApplications } from '../../../src/utils/companyPermissionsV2';
 import { OfferApplication } from '../../../src/types/offerRequest';
 import { OfferWithRequirements } from '../../../src/types/offer';
-import { TechnicianWithRelations } from '../../../src/types/technician';
 import { MatchScore } from '../../../src/types/matching';
 import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
@@ -48,23 +69,24 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-type BadgeVariant = 'success' | 'warning' | 'error' | 'navy';
-const DOC_STATUS_VARIANT: Record<string, BadgeVariant> = {
-  verified: 'success',
-  pending: 'warning',
-  rejected: 'error',
-  expired: 'navy',
-};
-
 function scoreColor(total: number): string {
-  if (total >= 80) return colors.success;
-  if (total >= 60) return colors.blue;
-  if (total >= 40) return colors.warning;
-  return colors.textMuted;
+  if (total >= 80) return companyUi.green;
+  if (total >= 60) return companyUi.blue;
+  if (total >= 40) return companyUi.amber;
+  return companyUi.textMuted;
 }
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function statusInfo(status: string): { label: string; tone: 'success' | 'warning' | 'error' | 'muted' } {
+  if (status === 'pending') return { label: 'Pending review', tone: 'warning' };
+  if (status === 'accepted') return { label: 'Accepted', tone: 'success' };
+  if (status === 'rejected') return { label: 'Rejected', tone: 'error' };
+  if (status === 'withdrawn') return { label: 'Withdrawn', tone: 'muted' };
+  if (status === 'expired') return { label: 'Expired', tone: 'muted' };
+  return { label: status, tone: 'muted' };
 }
 
 export default function ApplicationDetailScreen() {
@@ -72,11 +94,11 @@ export default function ApplicationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const { companyId, companyMemberRole } = useCompanySession();
 
   const [app, setApp] = useState<OfferApplication | null>(null);
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
   const [techView, setTechView] = useState<TechnicianView | null>(null);
-  const [techWithRel, setTechWithRel] = useState<TechnicianWithRelations | null>(null);
   const [score, setScore] = useState<MatchScore | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -93,23 +115,23 @@ export default function ApplicationDetailScreen() {
 
     const [o, view, rel] = await Promise.all([
       offerRepository.getWithRequirements(application.offerId),
-      technicianRepositoryV2.getViewForCompany(application.technicianId, DEMO_COMPANY_ID),
+      technicianRepositoryV2.getViewForCompany(application.technicianId, companyId),
       technicianRepositoryV2.getWithRelations(application.technicianId),
     ]);
 
     setOffer(o);
     setTechView(view);
-    setTechWithRel(rel);
     if (o && rel) setScore(calculateOfferTechnicianMatch(o, rel));
 
-    // Load chat room if application is accepted
     if (application.status === 'accepted') {
-      const rooms = await chatRepository.getRoomsForCompany(DEMO_COMPANY_ID);
+      const rooms = await chatRepository.getRoomsForCompany(companyId);
       setChatRoom(rooms.find((r) => r.offerApplicationId === application.id) ?? null);
+    } else {
+      setChatRoom(null);
     }
 
-    await activityRepository.markRead('company', DEMO_COMPANY_ID, id);
-  }, [id]);
+    await activityRepository.markRead('company', companyId, id);
+  }, [companyId, id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -164,7 +186,7 @@ export default function ApplicationDetailScreen() {
   if (loading) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Application' }} />
+        <Stack.Screen options={{ headerShown: false }} />
         <LoadingScreen color={colors.blue} role="company" />
       </>
     );
@@ -172,265 +194,231 @@ export default function ApplicationDetailScreen() {
 
   if (!app || !offer) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <Stack.Screen options={{ title: 'Application' }} />
+      <CompanyScreen>
+        <Stack.Screen options={{ headerShown: false }} />
         <View style={styles.notFound}>
-          <Text style={styles.notFoundText}>Application not found.</Text>
+          <EmptyPanel title="Application not found" subtitle="This application is no longer available." />
         </View>
-      </SafeAreaView>
+      </CompanyScreen>
     );
   }
 
-  const unlocked = techView ? isUnlocked(techView) : false;
-  const accent = score ? scoreColor(score.total) : colors.textMuted;
+  const unlockedView = techView && isUnlocked(techView) ? techView : null;
+  const unlocked = !!unlockedView;
+  const accent = score ? scoreColor(score.total) : companyUi.textMuted;
+  const appStatus = statusInfo(app.status);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: offer.title }} />
+    <CompanyScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, isWide && styles.contentWide]}
+        contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* Score hero */}
-        <View style={[styles.scoreHero, { borderColor: accent + '40' }]}>
-          {score ? (
-            <>
-              <Text style={[styles.scoreHeroValue, { color: accent }]}>{score.total}%</Text>
-              <Text style={styles.scoreHeroLabel}>match for this offer</Text>
-              <Text style={[styles.scoreHeroMatch, { color: accent }]}>{score.label}</Text>
-            </>
-          ) : (
-            <Text style={styles.scoreUnavailable}>Score unavailable</Text>
-          )}
-        </View>
+        <CompanyPageHeader
+          eyebrow="Application review"
+          title={offer.title}
+          subtitle={`Applied ${formatDate(app.createdAt)}`}
+          onBack={() => router.back()}
+          right={<CompanyBadge label={appStatus.label} tone={appStatus.tone} />}
+        />
 
-        {/* Score breakdown */}
-        {score && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Score breakdown</Text>
+        <CompanyCard style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <IconBox icon={ClipboardCheck} color={accent} backgroundColor={companyUi.blueSoft} />
+            <View style={styles.sectionCopy}>
+              <Text style={styles.sectionTitle}>Application overview</Text>
+              <Text style={styles.sectionSub}>Review the fit, privacy state and action status.</Text>
+            </View>
+          </View>
+          {score ? (
+            <InlineScore score={score.total} quality={score.label} context="match for this offer" />
+          ) : null}
+          {app.coverNote ? (
+            <View style={styles.coverNote}>
+              <Text style={styles.coverNoteLabel}>Cover note</Text>
+              <Text style={styles.coverNoteText}>{app.coverNote}</Text>
+            </View>
+          ) : null}
+        </CompanyCard>
+
+        <CompanyCard style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <IconBox icon={BriefcaseBusiness} color={companyUi.accent} backgroundColor={companyUi.accentSoft} />
+            <View style={styles.sectionCopy}>
+              <Text style={styles.sectionTitle}>Offer summary</Text>
+              <Text style={styles.sectionSub}>{offer.locationCity}, {offer.locationCountry}</Text>
+            </View>
+          </View>
+          <InfoRow label="Status" value={offer.status} />
+          <InfoRow label="Contract" value={offer.contractType} />
+          <InfoRow label="Experience" value={`${offer.minYearsExperience} yrs min`} />
+          <TouchableOpacity
+            style={styles.textLink}
+            onPress={() => router.push(`/company/offers/${offer.id}` as any)}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.textLinkText}>View full offer details</Text>
+          </TouchableOpacity>
+        </CompanyCard>
+
+        {techView ? (
+          <CompanyCard style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <IconBox icon={unlocked ? Unlock : Lock} color={unlocked ? companyUi.green : companyUi.amber} backgroundColor={unlocked ? companyUi.greenSoft : companyUi.amberSoft} />
+              <View style={styles.sectionCopy}>
+                <Text style={styles.sectionTitle}>{unlocked ? 'Identity unlocked' : 'Identity locked until accepted'}</Text>
+                <Text style={styles.sectionSub}>
+                  {unlocked ? 'Private contact details and admin-verified documents are available.' : 'Only privacy-safe technician data is visible before acceptance.'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.profileRow}>
+              <View style={[styles.profileAvatar, { backgroundColor: unlocked ? companyUi.accent : companyUi.navy }]}>
+                <UserRound color={colors.white} size={22} strokeWidth={2} />
+              </View>
+              <View style={styles.profileInfo}>
+                {unlocked ? (
+                  <>
+                    <Text style={styles.profileName}>{unlockedView.firstName} {unlockedView.lastName}</Text>
+                    <Text style={styles.profileSub}>{unlockedView.email}</Text>
+                    {unlockedView.phone ? <Text style={styles.profileSub}>{unlockedView.phone}</Text> : null}
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.profileName}>{techView.anonymousCode}</Text>
+                    <Text style={styles.profileSub}>Anonymous technician profile</Text>
+                  </>
+                )}
+              </View>
+            </View>
+
+            <View style={styles.badgeRow}>
+              <CompanyBadge label={TECH_TYPE_LABELS[techView.technicianType] ?? techView.technicianType} tone="cyan" small />
+              <CompanyBadge label={`${techView.city}, ${techView.country}`} tone="muted" small />
+              <CompanyBadge label={techView.verificationStatus} tone={techView.verificationStatus === 'verified' ? 'success' : 'warning'} small />
+            </View>
+
+            {techView.licenses.length > 0 ? (
+              <View style={styles.chipBlock}>
+                <Text style={styles.chipBlockLabel}>Licenses</Text>
+                <View style={styles.chipRow}>{techView.licenses.map((l) => <CompanyChip key={l} label={l} />)}</View>
+              </View>
+            ) : null}
+          </CompanyCard>
+        ) : null}
+
+        {score ? (
+          <CompanyCard style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Match breakdown</Text>
             <BreakdownRow label="Verified" value={score.breakdown.verified} max={25} />
             <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={25} />
             <BreakdownRow label="License" value={score.breakdown.license} max={20} />
             <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} />
             <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={5} />
-          </View>
-        )}
-
-        {/* Offer info */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Job offer</Text>
-            <Badge
-              label={offer.status}
-              variant={offer.status === 'published' ? 'success' : offer.status === 'draft' ? 'warning' : 'navy'}
-            />
-          </View>
-          <Text style={styles.offerTitle}>{offer.title}</Text>
-          <Text style={styles.offerLocation}>
-            {offer.locationCity}, {offer.locationCountry}
-            {offer.locationBaseAirport ? ` · ${offer.locationBaseAirport}` : ''}
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.push(`/company/offers/${offer.id}` as any)}
-            activeOpacity={0.75}
-          >
-            <Text style={styles.viewOfferLink}>View full offer details →</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Applicant profile */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>Applicant profile</Text>
-            {!unlocked && (
-              <View style={styles.lockedPill}>
-                <Text style={styles.lockedPillText}>Anonymous</Text>
-              </View>
-            )}
-          </View>
-
-          {techView && (
-            <>
-              <View style={styles.profileRow}>
-                <View style={[styles.profileAvatar, unlocked && styles.profileAvatarUnlocked]}>
-                  <Text style={styles.profileAvatarText}>
-                    {unlocked
-                      ? (techView as any).firstName.charAt(0)
-                      : techView.anonymousCode.charAt(0)}
-                  </Text>
-                </View>
-                <View style={styles.profileInfo}>
-                  {unlocked ? (
-                    <>
-                      <Text style={styles.profileName}>
-                        {(techView as any).firstName} {(techView as any).lastName}
-                      </Text>
-                      <Text style={styles.profileSub}>{(techView as any).email}</Text>
-                      {(techView as any).phone && (
-                        <Text style={styles.profileSub}>{(techView as any).phone}</Text>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.profileName}>{techView.anonymousCode}</Text>
-                      <Text style={styles.profileSub}>Identity hidden · Accept to reveal</Text>
-                    </>
-                  )}
-                </View>
-              </View>
-
-              <View style={styles.metaGrid}>
-                <MetaRow label="Type" value={TECH_TYPE_LABELS[techView.technicianType] ?? techView.technicianType} />
-                <MetaRow label="Age" value={`${techView.age} years old`} />
-                <MetaRow
-                  label="Location"
-                  value={`${techView.city}, ${techView.country}${techView.baseAirport ? ` · ${techView.baseAirport}` : ''}`}
-                />
-                <MetaRow
-                  label="Status"
-                  value={techView.verificationStatus === 'verified' ? '✓ Verified' : 'Unverified'}
-                  valueColor={techView.verificationStatus === 'verified' ? colors.success : colors.warning}
-                />
-              </View>
-
-              {techView.licenses.length > 0 && (
-                <View style={styles.licRow}>
-                  {techView.licenses.map((l, i) => (
-                    <View key={i} style={styles.licChip}>
-                      <Text style={styles.licChipText}>{l}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </>
-          )}
-        </View>
-
-        {/* Cover note */}
-        {app.coverNote ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Cover note</Text>
-            <Text style={styles.coverNoteText}>"{app.coverNote}"</Text>
-          </View>
+          </CompanyCard>
         ) : null}
 
-        {/* Application status */}
-        <View style={styles.section}>
-          <View style={styles.statusRow}>
-            <Text style={styles.sectionTitle}>Application status</Text>
-            <AppStatusBadge status={app.status} />
+        <CompanyCard style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <IconBox icon={FileCheck} color={unlocked ? companyUi.green : companyUi.amber} backgroundColor={unlocked ? companyUi.greenSoft : companyUi.amberSoft} />
+            <View style={styles.sectionCopy}>
+              <Text style={styles.sectionTitle}>Documents</Text>
+              <Text style={styles.sectionSub}>{unlocked ? 'Admin-verified documents only.' : 'Locked until this application is accepted.'}</Text>
+            </View>
           </View>
-          <Text style={styles.dateText}>Applied {formatDate(app.createdAt)}</Text>
-          {app.updatedAt !== app.createdAt && (
-            <Text style={styles.dateText}>Last updated {formatDate(app.updatedAt)}</Text>
-          )}
-        </View>
 
-        {/* Inline error */}
-        {actionError && (
-          <View style={styles.errorNote}>
-            <Text style={styles.errorNoteText}>{actionError}</Text>
-          </View>
-        )}
-
-        {/* Accept / Reject buttons */}
-        {app.status === 'pending' && canReviewApplications(DEMO_COMPANY_MEMBER_ROLE) && (
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.rejectBtn, actioning && styles.btnDisabled]}
-              onPress={handleReject}
-              disabled={actioning}
-              activeOpacity={0.75}
-            >
-              {actioning
-                ? <ActivityIndicator color={colors.error} size="small" />
-                : <Text style={styles.rejectBtnText}>Reject</Text>}
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.acceptBtn, actioning && styles.btnDisabled]}
-              onPress={handleAccept}
-              disabled={actioning}
-              activeOpacity={0.75}
-            >
-              {actioning
-                ? <ActivityIndicator color={colors.white} size="small" />
-                : <Text style={styles.acceptBtnText}>Accept application</Text>}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {app.status === 'pending' && !canReviewApplications(DEMO_COMPANY_MEMBER_ROLE) && (
-          <View style={styles.viewerNote}>
-            <Text style={styles.viewerNoteText}>
-              Viewer role — cannot accept or reject applications.
-            </Text>
-          </View>
-        )}
-
-        {/* Post-acceptance confirmation note */}
-        {app.status === 'accepted' && (
-          <View style={styles.acceptedNote}>
-            <Text style={styles.acceptedNoteTitle}>Application accepted</Text>
-            <Text style={styles.acceptedNoteSub}>
-              The technician's identity and documents are now visible. A chat room has been created for direct communication.
-            </Text>
-            {chatRoom && (
-              <TouchableOpacity
-                style={styles.chatBtn}
-                onPress={() => router.push(`/company/chats/${chatRoom.id}` as any)}
-                activeOpacity={0.75}
-              >
-                <Text style={styles.chatBtnText}>Open chat →</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        {/* Documents — only visible after acceptance */}
-        {unlocked && (techView as any).documents && (
-          <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { marginBottom: spacing.md }]}>Documents</Text>
-            {(techView as any).documents.length === 0 ? (
-              <Text style={styles.noDocsText}>No documents on file.</Text>
+          {unlocked ? (
+            unlockedView.documents.length === 0 ? (
+              <Text style={styles.emptyText}>No documents on file.</Text>
             ) : (
-              (techView as any).documents.map((doc: Document) => (
+              unlockedView.documents.map((doc: Document) => (
                 <View key={doc.id} style={styles.docRow}>
                   <View style={styles.docInfo}>
                     <Text style={styles.docName}>{doc.fileName}</Text>
                     <Text style={styles.docMeta}>
                       {DOC_TYPE_LABELS[doc.type] ?? doc.type}
-                      {doc.expiresAt ? ` · Expires ${formatDate(doc.expiresAt)}` : ''}
+                      {doc.expiresAt ? ` - Expires ${formatDate(doc.expiresAt)}` : ''}
                     </Text>
                   </View>
-                  <Badge
-                    label={doc.status}
-                    variant={DOC_STATUS_VARIANT[doc.status] ?? 'navy'}
-                    small
-                  />
+                  <CompanyBadge label={doc.status} tone={doc.status === 'verified' ? 'success' : doc.status === 'pending' ? 'warning' : 'error'} small />
                 </View>
               ))
-            )}
-          </View>
-        )}
+            )
+          ) : (
+            <View style={styles.lockedPanel}>
+              <Lock color={companyUi.amber} size={20} strokeWidth={2} />
+              <Text style={styles.lockedText}>
+                {app.status === 'rejected'
+                  ? 'Documents remain locked for rejected applications.'
+                  : 'Accept this application to unlock documents and identity.'}
+              </Text>
+            </View>
+          )}
+        </CompanyCard>
 
-        {/* Locked documents placeholder — shown while pending or after rejection */}
-        {!unlocked && app.status !== 'withdrawn' && (
-          <View style={styles.lockedDocs}>
-            <Text style={styles.lockedDocsIcon}>🔒</Text>
-            <Text style={styles.lockedDocsTitle}>Documents locked</Text>
-            <Text style={styles.lockedDocsSub}>
-              {app.status === 'rejected'
-                ? 'Documents remain locked for rejected applications.'
-                : 'Documents are unlocked only after you accept this application.'}
-            </Text>
+        {actionError ? (
+          <CompanyCard style={styles.errorCard}>
+            <Text style={styles.errorText}>{actionError}</Text>
+          </CompanyCard>
+        ) : null}
+
+        {app.status === 'pending' && canReviewApplications(companyMemberRole) ? (
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={[styles.rejectButton, actioning && styles.disabled]}
+              onPress={handleReject}
+              disabled={actioning}
+              activeOpacity={0.75}
+            >
+              {actioning ? <ActivityIndicator color={companyUi.red} size="small" /> : <XCircle color={companyUi.red} size={16} strokeWidth={2} />}
+              <Text style={styles.rejectButtonText}>Reject</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.acceptButton, actioning && styles.disabled]}
+              onPress={handleAccept}
+              disabled={actioning}
+              activeOpacity={0.75}
+            >
+              {actioning ? <ActivityIndicator color={colors.white} size="small" /> : <CheckCircle color={colors.white} size={16} strokeWidth={2} />}
+              <Text style={styles.acceptButtonText}>Accept application</Text>
+            </TouchableOpacity>
           </View>
-        )}
+        ) : null}
+
+        {app.status === 'pending' && !canReviewApplications(companyMemberRole) ? (
+          <CompanyCard style={styles.noteCard}>
+            <Text style={styles.noteText}>Viewer role cannot accept or reject applications.</Text>
+          </CompanyCard>
+        ) : null}
+
+        {app.status === 'accepted' ? (
+          <CompanyCard style={styles.acceptedCard}>
+            <View style={styles.sectionHeader}>
+              <IconBox icon={CheckCircle} color={companyUi.green} backgroundColor={companyUi.greenSoft} />
+              <View style={styles.sectionCopy}>
+                <Text style={styles.sectionTitle}>Application accepted</Text>
+                <Text style={styles.sectionSub}>Identity unlocked. Admin-verified documents are available. Chat is open for direct coordination.</Text>
+              </View>
+            </View>
+            {chatRoom ? (
+              <TouchableOpacity
+                style={styles.chatButton}
+                onPress={() => router.push(`/company/chats/${chatRoom.id}` as any)}
+                activeOpacity={0.75}
+              >
+                <MessageCircle color={colors.white} size={16} strokeWidth={2} />
+                <Text style={styles.acceptButtonText}>Open chat</Text>
+              </TouchableOpacity>
+            ) : null}
+          </CompanyCard>
+        ) : null}
       </ScrollView>
 
-      {/* Confirmation modal */}
       <Modal
         visible={confirmAction !== null}
         transparent
@@ -438,319 +426,369 @@ export default function ApplicationDetailScreen() {
         onRequestClose={() => setConfirmAction(null)}
       >
         <View style={modalStyles.overlay}>
-          <View style={modalStyles.card}>
+          <CompanyCard style={modalStyles.card}>
             <Text style={modalStyles.title}>
               {confirmAction === 'accept' ? 'Accept application?' : 'Reject application?'}
             </Text>
             <Text style={modalStyles.body}>
               {confirmAction === 'accept'
-                ? 'This will unlock the technician identity/documents and open a chat.'
+                ? 'This will unlock the technician identity and admin-verified documents, then open chat access.'
                 : 'The technician will remain locked and no chat will be created.'}
             </Text>
             <TouchableOpacity
-              style={[
-                modalStyles.confirmBtn,
-                confirmAction === 'reject' && modalStyles.confirmBtnDestructive,
-              ]}
+              style={[modalStyles.confirmButton, confirmAction === 'reject' && modalStyles.destructiveButton]}
               onPress={doConfirmAction}
               activeOpacity={0.75}
             >
-              <Text style={modalStyles.confirmBtnText}>
+              <Text style={modalStyles.confirmText}>
                 {confirmAction === 'accept' ? 'Confirm accept' : 'Confirm reject'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={modalStyles.cancelBtn}
+              style={modalStyles.cancelButton}
               onPress={() => setConfirmAction(null)}
               activeOpacity={0.75}
             >
-              <Text style={modalStyles.cancelBtnText}>Cancel</Text>
+              <Text style={modalStyles.cancelText}>Cancel</Text>
             </TouchableOpacity>
-          </View>
+          </CompanyCard>
         </View>
       </Modal>
-    </SafeAreaView>
+    </CompanyScreen>
   );
 }
 
 function BreakdownRow({ label, value, max }: { label: string; value: number; max: number }) {
-  const pct = max > 0 ? value / max : 0;
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
-    <View style={bdStyles.row}>
-      <Text style={bdStyles.label}>{label}</Text>
-      <View style={bdStyles.barBg}>
-        <View
-          style={[
-            bdStyles.barFill,
-            {
-              width: `${pct * 100}%` as any,
-              backgroundColor: value > 0 ? colors.blue : colors.border,
-            },
-          ]}
-        />
+    <View style={styles.breakdownRow}>
+      <Text style={styles.breakdownLabel}>{label}</Text>
+      <View style={styles.breakdownTrack}>
+        <View style={[styles.breakdownFill, { width: `${pct}%` as any, backgroundColor: value > 0 ? companyUi.accent : companyUi.border }]} />
       </View>
-      <Text style={[bdStyles.pts, { color: value > 0 ? colors.success : colors.textMuted }]}>
+      <Text style={[styles.breakdownValue, { color: value > 0 ? companyUi.green : companyUi.textMuted }]}>
         {value}/{max}
       </Text>
     </View>
   );
 }
 
-function MetaRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <View style={metaStyles.row}>
-      <Text style={metaStyles.label}>{label}</Text>
-      <Text style={[metaStyles.value, valueColor ? { color: valueColor } : undefined]}>{value}</Text>
-    </View>
-  );
-}
-
-function AppStatusBadge({ status }: { status: string }) {
-  type V = 'success' | 'warning' | 'error' | 'navy';
-  const map: Record<string, { label: string; variant: V }> = {
-    pending: { label: 'Pending review', variant: 'warning' },
-    accepted: { label: 'Accepted', variant: 'success' },
-    rejected: { label: 'Rejected', variant: 'error' },
-    withdrawn: { label: 'Withdrawn', variant: 'navy' },
-    expired: { label: 'Expired', variant: 'navy' },
-  };
-  const info = map[status] ?? { label: status, variant: 'navy' as V };
-  return <Badge label={info.label} variant={info.variant} />;
-}
-
-const bdStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: 3 },
-  label: { fontSize: 11, color: colors.textSecondary, width: 85 },
-  barBg: { flex: 1, height: 6, backgroundColor: colors.borderLight, borderRadius: 3, overflow: 'hidden' },
-  barFill: { height: '100%' as any, borderRadius: 3 },
-  pts: { fontSize: 11, fontWeight: '700', width: 36, textAlign: 'right' },
-});
-
-const metaStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
-  },
-  label: { fontSize: 12, color: colors.textMuted },
-  value: { fontSize: 12, fontWeight: '600', color: colors.text },
-});
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  contentWide: { maxWidth: 720, alignSelf: 'center', width: '100%' },
-  notFound: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  notFoundText: { fontSize: 16, color: colors.textSecondary },
-  scoreHero: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 2,
-    marginBottom: spacing.md,
-  },
-  scoreHeroValue: { fontSize: 56, fontWeight: '800', lineHeight: 64 },
-  scoreHeroLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: 4,
-  },
-  scoreHeroMatch: { fontSize: 14, fontWeight: '700', marginTop: 4 },
-  scoreUnavailable: { fontSize: 16, color: colors.textMuted },
-  section: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
+  notFound: {
+    flex: 1,
+    justifyContent: 'center',
     padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+  },
+  sectionCard: {
+    gap: spacing.md,
     marginBottom: spacing.md,
   },
-  sectionHeaderRow: {
+  sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  sectionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  sectionSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  coverNote: {
+    borderLeftWidth: 3,
+    borderLeftColor: companyUi.border,
+    paddingLeft: spacing.sm,
+  },
+  coverNoteLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+    marginBottom: 4,
+  },
+  coverNoteText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  textLink: {
+    minHeight: 34,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+  },
+  textLinkText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: companyUi.accent,
+  },
+  profileRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.xs,
+    gap: spacing.sm,
   },
-  sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text },
-  offerTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 2 },
-  offerLocation: { fontSize: 12, color: colors.textSecondary, marginBottom: spacing.xs },
-  viewOfferLink: { fontSize: 12, fontWeight: '600', color: colors.blue, marginTop: spacing.xs },
-  lockedPill: {
-    backgroundColor: colors.warning + '15',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: colors.warning + '40',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-  },
-  lockedPillText: { fontSize: 10, color: colors.warning, fontWeight: '600' },
-  profileRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },
   profileAvatar: {
     width: 48,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.textMuted,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
-  profileAvatarUnlocked: { backgroundColor: colors.blue },
-  profileAvatarText: { fontSize: 20, fontWeight: '700', color: colors.white },
-  profileInfo: { flex: 1 },
-  profileName: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 2 },
-  profileSub: { fontSize: 12, color: colors.textSecondary },
-  metaGrid: { marginBottom: spacing.sm },
-  licRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
-  licChip: {
-    backgroundColor: colors.navyLight + '15',
-    borderWidth: 1,
-    borderColor: colors.navyLight + '40',
-    borderRadius: 6,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-  },
-  licChipText: { fontSize: 11, color: colors.navy, fontWeight: '600' },
-  coverNoteText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-    lineHeight: 20,
-    marginTop: spacing.xs,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  dateText: { fontSize: 12, color: colors.textMuted },
-  actionRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-  actionBtn: {
+  profileInfo: {
     flex: 1,
-    paddingVertical: spacing.md,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    minWidth: 0,
   },
-  acceptBtn: { backgroundColor: colors.success },
-  rejectBtn: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.error },
-  btnDisabled: { opacity: 0.6 },
-  acceptBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
-  rejectBtnText: { fontSize: 14, fontWeight: '700', color: colors.error },
-  acceptedNote: {
-    backgroundColor: colors.success + '10',
-    borderRadius: 12,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.success + '30',
-    marginBottom: spacing.md,
+  profileName: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: companyUi.text,
   },
-  acceptedNoteTitle: { fontSize: 14, fontWeight: '700', color: colors.success, marginBottom: 4 },
-  acceptedNoteSub: { fontSize: 13, color: colors.textSecondary, lineHeight: 20, marginBottom: spacing.sm },
-  chatBtn: {
-    backgroundColor: colors.blue,
-    borderRadius: 10,
-    paddingVertical: spacing.sm + 2,
-    alignItems: 'center',
+  profileSub: {
     marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
-  chatBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  chipBlock: {
+    gap: spacing.xs,
+  },
+  chipBlockLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  breakdownLabel: {
+    width: 76,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: companyUi.textSoft,
+  },
+  breakdownTrack: {
+    flex: 1,
+    height: 6,
+    borderRadius: 4,
+    backgroundColor: companyUi.borderSoft,
+    overflow: 'hidden',
+  },
+  breakdownFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  breakdownValue: {
+    width: 38,
+    textAlign: 'right',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
   docRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: spacing.xs + 2,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
   },
-  docInfo: { flex: 1 },
-  docName: { fontSize: 13, fontWeight: '600', color: colors.text },
-  docMeta: { fontSize: 11, color: colors.textMuted },
-  noDocsText: { fontSize: 13, color: colors.textSecondary },
-  viewerNote: {
-    backgroundColor: colors.warning + '10',
-    borderRadius: 10,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.warning + '30',
-    marginBottom: spacing.md,
-    alignItems: 'center' as const,
+  docInfo: {
+    flex: 1,
+    minWidth: 0,
   },
-  viewerNoteText: { fontSize: 13, color: colors.warning, fontStyle: 'italic' as const },
-  lockedDocs: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: spacing.lg,
+  docName: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  docMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '500',
+    color: companyUi.textMuted,
+  },
+  emptyText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  lockedPanel: {
+    minHeight: 68,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
+    borderColor: '#FDE68A',
+    backgroundColor: companyUi.amberSoft,
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  lockedDocsIcon: { fontSize: 32, marginBottom: spacing.sm },
-  lockedDocsTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 4 },
-  lockedDocsSub: { fontSize: 13, color: colors.textSecondary, textAlign: 'center', maxWidth: 260 },
-  errorNote: {
-    backgroundColor: colors.error + '10',
-    borderRadius: 10,
+    gap: spacing.sm,
     padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.error + '30',
+  },
+  lockedText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: companyUi.amber,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
     marginBottom: spacing.md,
   },
-  errorNoteText: { fontSize: 13, color: colors.error, lineHeight: 18 },
+  rejectButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: companyUi.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  acceptButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 16,
+    backgroundColor: companyUi.green,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  chatButton: {
+    minHeight: 44,
+    borderRadius: 15,
+    backgroundColor: companyUi.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  disabled: {
+    opacity: 0.6,
+  },
+  rejectButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.red,
+  },
+  acceptButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  acceptedCard: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  noteCard: {
+    marginBottom: spacing.md,
+    backgroundColor: companyUi.amberSoft,
+    borderColor: '#FDE68A',
+  },
+  noteText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: companyUi.amber,
+    textAlign: 'center',
+  },
+  errorCard: {
+    marginBottom: spacing.md,
+    backgroundColor: companyUi.redSoft,
+    borderColor: '#FECACA',
+  },
+  errorText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: companyUi.red,
+  },
 });
 
 const modalStyles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(15, 23, 42, 0.44)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.lg,
   },
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    padding: spacing.lg,
     width: '100%',
-    maxWidth: 340,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 10,
+    maxWidth: 360,
+    gap: spacing.md,
   },
   title: {
-    fontSize: 17,
+    fontSize: 18,
+    lineHeight: 24,
     fontWeight: '700',
-    color: colors.text,
-    marginBottom: spacing.sm,
+    color: companyUi.text,
   },
   body: {
     fontSize: 13,
-    color: colors.textSecondary,
-    lineHeight: 20,
-    marginBottom: spacing.lg,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
-  confirmBtn: {
-    backgroundColor: colors.success,
-    borderRadius: 10,
-    paddingVertical: spacing.sm + 2,
+  confirmButton: {
+    minHeight: 44,
+    borderRadius: 15,
+    backgroundColor: companyUi.green,
     alignItems: 'center',
-    marginBottom: spacing.xs,
+    justifyContent: 'center',
   },
-  confirmBtnDestructive: { backgroundColor: colors.error },
-  confirmBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
-  cancelBtn: {
-    paddingVertical: spacing.sm,
+  destructiveButton: {
+    backgroundColor: companyUi.red,
+  },
+  confirmText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  cancelButton: {
+    minHeight: 38,
     alignItems: 'center',
-    marginTop: spacing.xs,
+    justifyContent: 'center',
   },
-  cancelBtnText: { fontSize: 14, color: colors.textMuted, fontWeight: '500' },
+  cancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+  },
 });

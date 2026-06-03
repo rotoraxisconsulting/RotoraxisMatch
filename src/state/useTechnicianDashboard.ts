@@ -11,8 +11,7 @@ import {
   v2CompanyToV1,
   applyV1PatchToV2Profile,
 } from '../utils/v2CompatAdapters';
-
-export const DEMO_TECHNICIAN_ID = 'tech-001';
+import { useTechnicianSession } from './SessionContext';
 
 export function computeProfileCompleteness(t: Technician): number {
   let score = 0;
@@ -43,6 +42,7 @@ interface TechnicianDashboardState {
 }
 
 export function useTechnicianDashboard(): TechnicianDashboardState {
+  const { technicianId } = useTechnicianSession();
   const [technician, setTechnician] = useState<Technician | null>(null);
   const [requests, setRequests] = useState<MatchRequest[]>([]);
   const [documents, setDocuments] = useState<TechnicianDocument[]>([]);
@@ -52,9 +52,9 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
   const loadData = useCallback(async () => {
     setLoading(true);
     const [withRelations, v2Requests, v2Docs, companies] = await Promise.all([
-      technicianRepositoryV2.getWithRelations(DEMO_TECHNICIAN_ID),
-      offerRequestRepository.getForTechnician(DEMO_TECHNICIAN_ID),
-      documentRepositoryV2.getForTechnician(DEMO_TECHNICIAN_ID),
+      technicianRepositoryV2.getWithRelations(technicianId),
+      offerRequestRepository.getForTechnician(technicianId),
+      documentRepositoryV2.getForTechnician(technicianId),
       companyRepositoryV2.getAll(),
     ]);
 
@@ -76,7 +76,7 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
     });
     setCompanyMap(map);
     setLoading(false);
-  }, []);
+  }, [technicianId]);
 
   useEffect(() => {
     loadData();
@@ -107,17 +107,26 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
       updatedV1.profileCompleteness = computeProfileCompleteness(updatedV1);
 
       // Load the V2 profile to get reference fields (needed for firstName/lastName split)
-      const existingProfile = await technicianRepositoryV2.getById(DEMO_TECHNICIAN_ID);
+      const existingProfile = await technicianRepositoryV2.getById(technicianId);
       if (!existingProfile) return;
 
       const v2Patch = applyV1PatchToV2Profile(
         { ...patch, profileCompleteness: updatedV1.profileCompleteness },
         existingProfile,
       );
-      await technicianRepositoryV2.update(DEMO_TECHNICIAN_ID, v2Patch);
+      await technicianRepositoryV2.update(technicianId, v2Patch);
+      if (patch.licenseCategories !== undefined) {
+        await technicianRepositoryV2.updateLicenses(technicianId, patch.licenseCategories);
+      }
+      if (patch.aircraftTypes !== undefined) {
+        await technicianRepositoryV2.updateAircraftTypes(technicianId, patch.aircraftTypes);
+      }
+      if (patch.yearsExperience !== undefined) {
+        await technicianRepositoryV2.updateExperienceYears(technicianId, patch.yearsExperience);
+      }
       await loadData();
     },
-    [technician, loadData],
+    [technician, technicianId, loadData],
   );
 
   return {

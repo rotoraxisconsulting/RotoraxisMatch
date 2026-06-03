@@ -1,13 +1,13 @@
 import { gsap } from 'gsap';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
   useWindowDimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../theme';
 
 // GSAP targets React Native Web DOM nodes via (ref.current as unknown as HTMLElement).

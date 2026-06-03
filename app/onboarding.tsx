@@ -3,16 +3,18 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   useWindowDimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { Stack, useRouter } from 'expo-router';
 import { useDemoSession } from '../src/state/useDemoSession';
 import { UserRole } from '../src/repositories/demoSessionRepository';
 import { colors, spacing } from '../src/theme';
 import { Button } from '../src/components/Button';
+import { InlineBackButton } from '../src/components/company/CompanyUI';
 
 interface RoleOption {
   role: UserRole;
@@ -68,10 +70,16 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <StatusBar style="dark" />
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         contentContainerStyle={[styles.scroll, isWide && styles.scrollWide]}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.backRow}>
+          <InlineBackButton label="Back to home" onPress={() => router.back()} />
+        </View>
+
         <View style={styles.header}>
           <Text style={styles.title}>How will you use{'\n'}RotoraxisMatch?</Text>
           <Text style={styles.subtitle}>
@@ -250,9 +258,12 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     width: '100%',
   },
+  backRow: {
+    alignItems: 'flex-start',
+    marginBottom: spacing.md,
+  },
   header: {
     marginBottom: spacing.xl,
-    marginTop: spacing.sm,
   },
   title: {
     fontSize: 26,

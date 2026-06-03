@@ -3,35 +3,60 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
+import {
+  BriefcaseBusiness,
+  ClipboardCheck,
+  Edit3,
+  ListChecks,
+  MapPin,
+  Plus,
+} from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
-import { Badge } from '../../../src/components/Badge';
 import { Button } from '../../../src/components/Button';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
+import {
+  CompanyBadge,
+  CompanyCard,
+  CompanyChip,
+  CompanyPageHeader,
+  CompanyScreen,
+  EmptyPanel,
+  IconBox,
+  companyStyles,
+  companyUi,
+} from '../../../src/components/company/CompanyUI';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
-import { Offer } from '../../../src/types/offer';
-import { DEMO_COMPANY_ID } from '../../../src/state/useCompanyDashboard';
+import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
+import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
+import { OfferWithRequirements } from '../../../src/types/offer';
+import { useCompanySession } from '../../../src/state/SessionContext';
 
-type BadgeVariant = 'success' | 'warning' | 'navy' | 'error';
+type OfferCounts = {
+  applications: number;
+  directOffers: number;
+};
 
-function statusVariant(status: Offer['status']): BadgeVariant {
+type StatusTone = 'success' | 'warning' | 'error' | 'muted' | 'navy';
+
+function statusTone(status: OfferWithRequirements['status']): StatusTone {
   if (status === 'published') return 'success';
   if (status === 'draft') return 'warning';
   if (status === 'expired') return 'error';
-  return 'navy';
+  if (status === 'closed') return 'navy';
+  return 'muted';
 }
 
-function statusAccent(status: Offer['status']): string {
-  if (status === 'published') return colors.success;
-  if (status === 'draft') return colors.warning;
-  if (status === 'expired') return colors.error;
-  return colors.textMuted;
+function statusAccent(status: OfferWithRequirements['status']): string {
+  if (status === 'published') return companyUi.green;
+  if (status === 'draft') return companyUi.amber;
+  if (status === 'expired') return companyUi.red;
+  return companyUi.textMuted;
 }
 
 const CONTRACT_LABELS: Record<string, string> = {
@@ -40,20 +65,47 @@ const CONTRACT_LABELS: Record<string, string> = {
   short_term: 'Short-term',
 };
 
+function compactRequirements(offer: OfferWithRequirements): string[] {
+  return [
+    ...offer.requiredTechnicianTypes,
+    ...offer.requiredLicenses,
+    ...offer.requiredAircraftTypes,
+  ].slice(0, 5);
+}
+
 export default function OffersListScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const { companyId } = useCompanySession();
 
-  const [offers, setOffers] = useState<Offer[]>([]);
+  const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
+  const [counts, setCounts] = useState<Record<string, OfferCounts>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const list = await offerRepository.getForCompany(DEMO_COMPANY_ID);
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setOffers(list);
-  }, []);
+    const [allOffers, apps, requests] = await Promise.all([
+      offerRepository.getAllWithRequirements(),
+      offerApplicationRepository.getForCompany(companyId),
+      offerRequestRepository.getForCompany(companyId),
+    ]);
+
+    const companyOffers = allOffers
+      .filter((offer) => offer.companyId === companyId)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const nextCounts: Record<string, OfferCounts> = {};
+    companyOffers.forEach((offer) => {
+      nextCounts[offer.id] = {
+        applications: apps.filter((app) => app.offerId === offer.id).length,
+        directOffers: requests.filter((req) => req.offerId === offer.id).length,
+      };
+    });
+
+    setOffers(companyOffers);
+    setCounts(nextCounts);
+  }, [companyId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -76,157 +128,248 @@ export default function OffersListScreen() {
   if (loading) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Job Offers' }} />
+        <Stack.Screen options={{ headerShown: false }} />
         <LoadingScreen color={colors.blue} role="company" />
       </>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Job Offers' }} />
+    <CompanyScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, isWide && styles.contentWide]}
+        contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.pageTitle}>Job Offers</Text>
-            <Text style={styles.pageSub}>
-              {published.length} published · {drafts.length} draft
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.newBtn}
-            onPress={() => router.push('/company/offers/new' as any)}
-            activeOpacity={0.75}
-          >
-            <Text style={styles.newBtnText}>+ New offer</Text>
-          </TouchableOpacity>
-        </View>
-
-        {offers.length === 0 && (
-          <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📋</Text>
-            <Text style={styles.emptyTitle}>No offers yet</Text>
-            <Text style={styles.emptySub}>
-              Create your first job offer to start matching with technicians.
-            </Text>
-            <Button
-              label="Create offer"
+        <CompanyPageHeader
+          eyebrow="Offer management"
+          title="Job Offers"
+          subtitle={`${offers.length} total · ${published.length} published · ${drafts.length} draft${drafts.length !== 1 ? 's' : ''}`}
+          onBack={() => router.back()}
+          right={(
+            <TouchableOpacity
+              style={styles.newButton}
               onPress={() => router.push('/company/offers/new' as any)}
-              variant="primary"
-              style={styles.emptyBtn}
-            />
-          </View>
-        )}
+              activeOpacity={0.75}
+            >
+              <Plus color={colors.white} size={17} strokeWidth={2.2} />
+              <Text style={styles.newButtonText}>New</Text>
+            </TouchableOpacity>
+          )}
+        />
 
-        {offers.map((offer) => (
-          <TouchableOpacity
-            key={offer.id}
-            style={[styles.card, { borderLeftColor: statusAccent(offer.status) }]}
-            onPress={() => router.push(`/company/offers/${offer.id}` as any)}
-            activeOpacity={0.75}
-          >
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle} numberOfLines={1}>{offer.title}</Text>
-              <Badge label={offer.status} variant={statusVariant(offer.status)} />
-            </View>
-            <Text style={styles.cardSub}>
-              {offer.locationCity}, {offer.locationCountry}
-              {offer.locationBaseAirport ? ` · ${offer.locationBaseAirport}` : ''}
-            </Text>
-            <View style={styles.metaRow}>
-              <View style={styles.metaChip}>
-                <Text style={styles.metaChipText}>
-                  {CONTRACT_LABELS[offer.contractType] ?? offer.contractType}
-                </Text>
-              </View>
-              {offer.minYearsExperience > 0 && (
-                <View style={styles.metaChip}>
-                  <Text style={styles.metaChipText}>{offer.minYearsExperience}+ yrs exp</Text>
+        {offers.length === 0 ? (
+          <EmptyPanel
+            title="No offers yet"
+            subtitle="Create your first job offer to start matching with technicians."
+          />
+        ) : null}
+
+        {offers.length === 0 ? (
+          <Button
+            label="Create offer"
+            onPress={() => router.push('/company/offers/new' as any)}
+            variant="primary"
+            fullWidth
+            style={styles.emptyButton}
+          />
+        ) : null}
+
+        {offers.map((offer) => {
+          const offerCounts = counts[offer.id] ?? { applications: 0, directOffers: 0 };
+          const requirements = compactRequirements(offer);
+          const hiddenReqs = Math.max(
+            0,
+            offer.requiredTechnicianTypes.length + offer.requiredLicenses.length + offer.requiredAircraftTypes.length - requirements.length,
+          );
+
+          return (
+            <CompanyCard key={offer.id} style={[styles.offerCard, { borderLeftColor: statusAccent(offer.status) }]}>
+              <View style={styles.cardTop}>
+                <IconBox
+                  icon={BriefcaseBusiness}
+                  color={statusAccent(offer.status)}
+                  backgroundColor={offer.status === 'published' ? companyUi.greenSoft : companyUi.surfaceSoft}
+                />
+                <View style={styles.cardTitleBlock}>
+                  <Text style={styles.cardTitle} numberOfLines={2}>{offer.title}</Text>
+                  <View style={styles.locationRow}>
+                    <MapPin color={companyUi.textMuted} size={14} strokeWidth={2} />
+                    <Text style={styles.locationText} numberOfLines={1}>
+                      {offer.locationCity}, {offer.locationCountry}
+                      {offer.locationBaseAirport ? ` - ${offer.locationBaseAirport}` : ''}
+                    </Text>
+                  </View>
                 </View>
-              )}
-            </View>
-          </TouchableOpacity>
-        ))}
+                <CompanyBadge label={offer.status} tone={statusTone(offer.status)} small />
+              </View>
+
+              <View style={styles.metaRow}>
+                <CompanyBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" small />
+                {offer.minYearsExperience > 0 ? (
+                  <CompanyBadge label={`${offer.minYearsExperience}+ yrs`} tone="muted" small />
+                ) : null}
+                <CompanyBadge label={`${offerCounts.applications} applications`} tone={offerCounts.applications > 0 ? 'info' : 'muted'} small />
+                <CompanyBadge label={`${offerCounts.directOffers} direct offers`} tone={offerCounts.directOffers > 0 ? 'cyan' : 'muted'} small />
+              </View>
+
+              {requirements.length > 0 ? (
+                <View style={styles.requirementsBlock}>
+                  <View style={styles.requirementsLabel}>
+                    <ListChecks color={companyUi.textMuted} size={14} strokeWidth={2} />
+                    <Text style={styles.requirementsText}>Requirements</Text>
+                  </View>
+                  <View style={styles.chipRow}>
+                    {requirements.map((req) => <CompanyChip key={req} label={req} />)}
+                    {hiddenReqs > 0 ? <CompanyChip label={`+${hiddenReqs}`} /> : null}
+                  </View>
+                </View>
+              ) : null}
+
+              <View style={styles.cardActions}>
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => router.push(`/company/offers/edit?id=${offer.id}` as any)}
+                  activeOpacity={0.75}
+                >
+                  <Edit3 color={companyUi.textSoft} size={15} strokeWidth={2} />
+                  <Text style={styles.secondaryButtonText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={() => router.push(`/company/offers/${offer.id}` as any)}
+                  activeOpacity={0.75}
+                >
+                  <ClipboardCheck color={colors.white} size={16} strokeWidth={2} />
+                  <Text style={styles.primaryButtonText}>View</Text>
+                </TouchableOpacity>
+              </View>
+            </CompanyCard>
+          );
+        })}
       </ScrollView>
-    </SafeAreaView>
+    </CompanyScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  contentWide: { maxWidth: 720, alignSelf: 'center', width: '100%' },
-  headerRow: {
+  newButton: {
+    minHeight: 38,
+    borderRadius: 14,
+    paddingHorizontal: spacing.md,
+    backgroundColor: companyUi.accent,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    justifyContent: 'center',
+    gap: spacing.xs,
   },
-  pageTitle: { fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 2 },
-  pageSub: { fontSize: 12, color: colors.textSecondary },
-  newBtn: {
-    backgroundColor: colors.blue,
-    borderRadius: 10,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  newBtnText: { color: colors.white, fontSize: 13, fontWeight: '700' },
-  empty: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxxl,
-  },
-  emptyIcon: { fontSize: 48, marginBottom: spacing.md },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.text,
-    marginBottom: spacing.sm,
-  },
-  emptySub: {
+  newButtonText: {
     fontSize: 13,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: spacing.lg,
-    maxWidth: 280,
+    fontWeight: '700',
+    color: colors.white,
   },
-  emptyBtn: { minWidth: 160 },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
+  emptyButton: {
+    marginTop: spacing.md,
+    backgroundColor: companyUi.accent,
+    borderRadius: 16,
+  },
+  offerCard: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
     borderLeftWidth: 4,
   },
-  cardHeader: {
+  cardTop: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  cardTitleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   cardTitle: {
-    fontSize: 15,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: '700',
-    color: colors.text,
+    color: companyUi.text,
+  },
+  locationRow: {
+    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  locationText: {
     flex: 1,
-    marginRight: spacing.sm,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
-  cardSub: { fontSize: 12, color: colors.textSecondary, marginBottom: spacing.sm },
-  metaRow: { flexDirection: 'row', gap: spacing.xs },
-  metaChip: {
-    backgroundColor: colors.background,
+  metaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  requirementsBlock: {
+    gap: spacing.xs,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
+  },
+  requirementsLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  requirementsText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  secondaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 15,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 6,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
   },
-  metaChipText: { fontSize: 11, color: colors.textSecondary },
+  secondaryButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  primaryButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 15,
+    backgroundColor: companyUi.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  primaryButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.white,
+  },
 });

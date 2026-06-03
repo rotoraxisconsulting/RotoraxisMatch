@@ -43,7 +43,18 @@ export interface TechnicianFilters {
 
 /** @deprecated use TechnicianSearchFilters instead */
 export interface MapFilters {
+  licenseCategories?: string[];
+  aircraftTypes?: string[];
+  verificationStatuses?: string[];
+  availabilityStatuses?: string[];
+  /** @deprecated use licenseCategories instead */
   licenseCategory?: string;
+  /** @deprecated use aircraftTypes instead */
   aircraftType?: string;
+  /** @deprecated use verificationStatuses instead */
   verificationStatus?: string;
+  /** @deprecated use availabilityStatuses instead */
+  availabilityStatus?: string;
 }
+
+export type MapFilterValue = string | string[] | undefined;

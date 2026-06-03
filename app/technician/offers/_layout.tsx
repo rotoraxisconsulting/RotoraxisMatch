@@ -1,14 +1,12 @@
 import { Stack } from 'expo-router';
-import { colors } from '../../../src/theme';
+import { techUi } from '../../../src/components/technician/TechnicianUI';
 
 export default function TechnicianOffersLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: colors.navy },
-        headerTintColor: colors.white,
-        headerTitleStyle: { fontWeight: '600' },
-        contentStyle: { backgroundColor: colors.background },
+        headerShown: false,
+        contentStyle: { backgroundColor: techUi.page },
       }}
     />
   );

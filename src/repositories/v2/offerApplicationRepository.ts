@@ -1,9 +1,16 @@
 import { storageAdapter } from '../../storage/asyncStorageAdapter';
 import { DB_KEYS } from '../../storage/localDatabase';
-import { OfferApplication } from '../../types/offerRequest';
+import { OfferApplication, OfferRequest } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
 import { chatRepository } from './chatRepository';
 import { activityRepository } from './activityRepository';
+import { isOfferOpenForTechnicians, offerRepository } from './offerRepository';
+import {
+  assertOfferRelationTransition,
+  getStatusActivityType,
+  isActiveOfferRelationStatus,
+  shouldUnlockAcceptedRelation,
+} from '../../utils/offerRelationStateMachine';
 
 function uuid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -41,14 +48,30 @@ export const offerApplicationRepository = {
     coverNote?: string;
   }): Promise<OfferApplication> {
     const all = await this.getAll();
+    const offer = await offerRepository.getById(data.offerId);
 
-    const existingPending = all.find(
-      (a) =>
-        a.technicianId === data.technicianId &&
-        a.offerId === data.offerId &&
-        a.status === 'pending',
+    if (!isOfferOpenForTechnicians(offer) || offer?.companyId !== data.companyId) {
+      throw new Error('This offer is no longer available.');
+    }
+
+    // Block any duplicate regardless of status — one application per technician per offer.
+    // Supabase equivalent: UNIQUE(technician_id, offer_id) on offer_applications.
+    const existingApplication = all.find(
+      (a) => a.technicianId === data.technicianId && a.offerId === data.offerId,
     );
-    if (existingPending) throw new Error('You have already applied to this offer.');
+    if (existingApplication) throw new Error('You have already applied to this offer.');
+
+    const directOffers = await storageAdapter.get<OfferRequest[]>(DB_KEYS.v2OfferRequests) ?? [];
+    const existingActiveDirectOffer = directOffers.find(
+      (request) =>
+        request.companyId === data.companyId &&
+        request.technicianId === data.technicianId &&
+        request.offerId === data.offerId &&
+        isActiveOfferRelationStatus(request.status),
+    );
+    if (existingActiveDirectOffer) {
+      throw new Error('You already have a direct offer for this role. Review it from Direct Offers.');
+    }
 
     const now = new Date().toISOString();
     const application: OfferApplication = {
@@ -75,16 +98,21 @@ export const offerApplicationRepository = {
     return application;
   },
 
+  /**
+   * Validates and applies a status transition. Local equivalent of transition_offer_application_status() RPC.
+   * Handles all side effects (identityRevealed, documentsUnlocked, chat room, activity event) atomically in local storage.
+   * Future Supabase: all side effects run server-side inside the RPC + handle_offer_relation_status_transition() trigger.
+   * Frontend must call this method — never write identityRevealed or documentsUnlocked directly.
+   */
   async updateStatus(id: string, status: OfferRequestStatus): Promise<OfferApplication | null> {
     const all = await this.getAll();
     const idx = all.findIndex((a) => a.id === id);
     if (idx === -1) return null;
 
     const prev = all[idx];
+    assertOfferRelationTransition(prev.status, status);
 
-    // TODO: Move this invariant to a Supabase trigger/Edge Function in the backend phase.
-    // Local simulation of the on_offer_accepted trigger:
-    const isAccepted = status === 'accepted';
+    const isAccepted = shouldUnlockAcceptedRelation(status);
     const updated: OfferApplication = {
       ...prev,
       status,
@@ -97,6 +125,8 @@ export const offerApplicationRepository = {
     next[idx] = updated;
     await storageAdapter.set(DB_KEYS.v2OfferApplications, next);
 
+    // Local simulation of the Supabase RPC/trigger side effects.
+    // In production this must run server-side in the same transaction as the status transition.
     if (isAccepted) {
       await chatRepository.getOrCreateRoom({
         offerApplicationId: id,
@@ -105,12 +135,15 @@ export const offerApplicationRepository = {
       });
     }
 
-    await activityRepository.create({
-      type: isAccepted ? 'application_accepted' : 'application_rejected',
-      recipientRole: 'technician',
-      recipientId: prev.technicianId,
-      entityId: id,
-    });
+    const activityType = getStatusActivityType('application', status);
+    if (activityType) {
+      await activityRepository.create({
+        type: activityType,
+        recipientRole: 'technician',
+        recipientId: prev.technicianId,
+        entityId: id,
+      });
+    }
 
     return updated;
   },

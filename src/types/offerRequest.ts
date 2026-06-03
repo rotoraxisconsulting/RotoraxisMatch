@@ -10,8 +10,8 @@ export interface OfferRequest {
   technicianId: string;
   offerId?: string; // optional link to a published offer
   status: OfferRequestStatus;
-  identityRevealed: boolean; // READ-ONLY — set server-side on acceptance
-  documentsUnlocked: boolean; // READ-ONLY — set server-side on acceptance
+  identityRevealed: boolean; // READ-ONLY — set by handle_offer_relation_status_transition() trigger. Never write from frontend.
+  documentsUnlocked: boolean; // READ-ONLY — set by handle_offer_relation_status_transition() trigger. Never write from frontend.
   message?: string;
   createdAt: string;
   updatedAt: string;
@@ -27,8 +27,8 @@ export interface OfferApplication {
   offerId: string;
   companyId: string; // denormalized
   status: OfferRequestStatus;
-  identityRevealed: boolean; // READ-ONLY — set server-side on acceptance
-  documentsUnlocked: boolean; // READ-ONLY — set server-side on acceptance
+  identityRevealed: boolean; // READ-ONLY — set by handle_offer_relation_status_transition() trigger. Never write from frontend.
+  documentsUnlocked: boolean; // READ-ONLY — set by handle_offer_relation_status_transition() trigger. Never write from frontend.
   coverNote?: string;
   createdAt: string;
   updatedAt: string;

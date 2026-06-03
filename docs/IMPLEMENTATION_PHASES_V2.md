@@ -2,7 +2,32 @@
 
 Build V2 incrementally on top of the existing V1 demo base.
 Keep the app runnable at the end of every phase.
-Do not connect Supabase until Phase V2-9.
+
+---
+
+## Phase status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| V2-1a | TypeScript types + constants | ✅ Complete |
+| V2-1b | V2 seed data | ✅ Complete |
+| V2-1c | V2 repositories | ✅ Complete |
+| V2-1d | Hooks + privacy utils migration | ✅ Complete |
+| V2-1e | Data layer QA | ✅ Complete |
+| V2-2 | Company offer management UI | ✅ Complete |
+| V2-3 | Technician offer browsing + apply | ✅ Complete |
+| V2-4 | Company application review | ✅ Complete |
+| V2-5 | Chat / messaging | ✅ Complete |
+| V2-6 | Technician direct offers | ✅ Complete |
+| V2-7 | Multi-user company team | ✅ Complete |
+| V2-8 | Admin V2 | ✅ Complete |
+| V2-9 | Full local end-to-end QA | ✅ Complete |
+| V2-10 | Pre-flight fixes + activity badges + V1 cleanup | ✅ Complete |
+| V2-11 | UI/UX polish (dashboards, scores, chat) | ✅ Complete |
+| V2-12 | Company area premium UI redesign | ✅ Complete |
+| V2-13 | Admin area premium UI redesign | ✅ Complete |
+| V2-docs | Documentation cleanup + alignment | ✅ Complete |
+| **V2-S1** | **Supabase / Auth MVP** | ⏳ Next |
 
 ---
 
@@ -21,7 +46,7 @@ Tasks:
 - Add `src/types/catalog.ts` — `TechnicianTypeCode`, `LicenseCode`, `ContractTypeCode`, `CompanyTypeCode`, catalog interfaces.
 - Rewrite `src/types/technician.ts` — split `fullName` → `firstName`/`lastName`, add `birthDate`, `technicianType`, `TechnicianLicense`, `TechnicianHabilitation`, `TechnicianAircraftExperience`, `Availability` with `contractTypes`.
 - Rewrite `src/types/company.ts` — rename `companyName` → `name`, rename `contactEmail` → `email`, add `phone`, update `CompanyType` values, add `CompanyMember`.
-- Rewrite `src/types/document.ts` — add `'expired'` to `DocumentStatus`, add `storagePath`, `verifiedAt`, `verifiedBy`, `expiresAt`.
+- Rewrite `src/types/document.ts` — add `'expired'` to `DocumentStatus`, add `storagePath`, `reviewedAt`, `rejectionReason`, `expiresAt`. (MVP document review model: no `verifiedAt`/`verifiedBy` — admin sets status only.)
 - Add `src/types/offer.ts` — `Offer`, `OfferWithRequirements`.
 - Add `src/types/offerRequest.ts` — `OfferRequest` with `kind: 'direct_offer'`, `OfferApplication` with `kind: 'application'`, `OfferInboxRecord` union, `isDirectOffer`/`isApplication` helpers. Mark `identityRevealed` and `documentsUnlocked` as READ-ONLY in comments.
 - Add `src/types/chat.ts` — `ChatRoom`, `ChatMessage`.
@@ -233,10 +258,10 @@ Rules:
 **Goal:** Companies can have multiple users with different roles.
 
 Tasks:
-- Add `CompanyUser` model and repository.
-- Company admin screen: invite users, set roles, remove users.
+- Add `CompanyMember` model and repository.
+- Company admin screen: manually/demo-add members, set roles, remove members. No self-service invite links, invite tokens, or email invite flow in MVP.
 - Role enforcement: recruiter can send offers; viewer is read-only.
-- Demo seeds: one company with admin + recruiter + viewer user.
+- Demo seeds: one company with admin + recruiter + viewer member.
 
 ---
 
@@ -253,27 +278,45 @@ Additions:
 
 ---
 
-## Phase V2-9 — Supabase migration
+## Phase V2-S1 — Supabase / Auth MVP
 
-**Goal:** Replace local AsyncStorage repositories with Supabase.
+**Goal:** Replace local AsyncStorage repositories with Supabase. Repository interfaces do not change — only the adapter underneath is swapped.
 
-Order:
-1. Supabase Auth (email/password, role in profiles table).
-2. Technician profiles and habilitations.
-3. Company profiles and company_users.
-4. JobOffers.
-5. OfferRequests and OfferApplications.
-6. TechnicianDocuments + Storage bucket.
-7. ChatRooms and ChatMessages + Realtime.
-8. RLS policies per SUPABASE_PLAN_V2.md.
-9. Edge functions: `on_offer_accepted`, `notify_offer_status`, `expire_job_offers`.
-10. Remove AsyncStorage layer.
+**Clean-start policy:**
 
-Repository interfaces must not change — only the adapter underneath is swapped.
+Supabase does NOT receive local demo data. The local `src/data/seeds/*.json` files use human-readable IDs (`tech-001`, `comp-001`, `prof-t001`) that are not valid UUIDs. Supabase uses `gen_random_uuid()` for all PKs; `profiles.id` = `auth.users.id`.
+
+The first Supabase deployment contains:
+1. Enums + all domain tables (`docs/SUPABASE_SCHEMA_V2.sql`)
+2. Catalog INSERTs: `technician_types`, `license_categories`, `aircraft_types`, `company_types`, `contract_types`
+3. First admin profile row (`docs/V2_S1_ADMIN_BOOTSTRAP_SQL.sql`)
+4. No marketplace rows — real users register and create their own data
+
+**Recommended order:**
+
+1. Supabase project setup — create project, configure `.env` with `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+2. Auth — email/password sign-in/sign-up where needed. Role stored in `profiles`; company users/members are provisioned manually for the MVP.
+3. Bootstrap core tables — `profiles`, `technician_profiles`, `companies`, `company_members`, with one company membership per company user.
+4. Replace demo constants — swap `DEMO_COMPANY_ID`, `DEMO_TECHNICIAN_ID`, `DEMO_COMPANY_USER_ID` with real session context from `auth.uid()`.
+5. Migrate repositories one at a time — start with read-heavy entities (technicians, companies) before write-heavy ones (offer_requests, offer_applications).
+6. RLS policies — apply per `docs/RLS_PLAN_V2.md` before exposing any data to real users.
+7. Offers and offer relations — `offers`, `offer_requests`, `offer_applications`, plus `on_offer_accepted` trigger (unlocks identity/docs, creates chat room).
+8. Activity events — `activity_events` + `activity_reads` (server-side inserts via SECURITY DEFINER trigger).
+9. Documents and Storage — `documents` table, then `technician-documents` private bucket with signed-URL access.
+10. Remove AsyncStorage layer once all entities are live.
+
+**Future scope (not required for V2-S1):**
+- Supabase Realtime (real-time badge updates)
+- Email notifications via Resend
+- `expire_offers` cron function
+- Push notifications
+- Self-service company invitations and invite tokens
+- Multi-company membership and company switching
+- Complete worldwide airport seeding
 
 ---
 
-## Phase V2-10 — EAS build and release prep
+## Phase V2-S2 — EAS build and release prep
 
 Tasks:
 - Update `app.json` / `app.config.ts` for V2.
@@ -286,19 +329,25 @@ Tasks:
 
 ## Phase order summary
 
-| Phase | Focus | Depends on |
-|-------|-------|-----------|
-| **V2-1a** | Types and constants | — |
-| **V2-1b** | Seed data | V2-1a |
-| **V2-1c** | Repositories | V2-1a, V2-1b |
-| **V2-1d** | UI adaptation (hooks + privacy utils) | V2-1c |
-| **V2-1e** | QA / verification | V2-1d |
-| V2-2 | Company: publish offers | V2-1e |
-| V2-3 | Technician: browse + apply | V2-1e |
-| V2-4 | Direct offer flow refactor | V2-1e |
-| V2-5 | Acceptance + unlock | V2-4 |
-| V2-6 | Chat | V2-5 |
-| V2-7 | Multi-user company | V2-1e |
-| V2-8 | Admin V2 | V2-2, V2-5 |
-| V2-9 | Supabase migration | V2-6, V2-7, V2-8 |
-| V2-10 | EAS + release | V2-9 |
+| Phase | Focus | Status |
+|-------|-------|--------|
+| V2-1a | Types and constants | ✅ |
+| V2-1b | Seed data | ✅ |
+| V2-1c | Repositories | ✅ |
+| V2-1d | UI adaptation (hooks + privacy utils) | ✅ |
+| V2-1e | QA / verification | ✅ |
+| V2-2 | Company: publish offers | ✅ |
+| V2-3 | Technician: browse + apply | ✅ |
+| V2-4 | Company: application review | ✅ |
+| V2-5 | Chat / messaging | ✅ |
+| V2-6 | Technician: direct offers | ✅ |
+| V2-7 | Multi-user company team | ✅ |
+| V2-8 | Admin V2 | ✅ |
+| V2-9 | Full local E2E QA | ✅ |
+| V2-10 | Pre-flight fixes + activity badges + V1 cleanup | ✅ |
+| V2-11 | UI/UX polish | ✅ |
+| V2-12 | Company premium UI | ✅ |
+| V2-13 | Admin premium UI | ✅ |
+| V2-docs | Documentation cleanup | ✅ |
+| **V2-S1** | **Supabase / Auth MVP** | ⏳ Next |
+| V2-S2 | EAS + release | — |

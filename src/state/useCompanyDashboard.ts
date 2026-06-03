@@ -1,6 +1,16 @@
+/**
+ * useCompanyDashboard — dashboard metrics and direct-offer (match-request) state.
+ *
+ * Privacy contract:
+ *   technicianMap values are SafeTechnicianView — anonymous before acceptance, identity
+ *   revealed after. buildTechnicianMapV2() applies canRevealIdentity() per technician.
+ *   Private fields are never present in the map for locked technicians.
+ *
+ * Future Supabase: technicianMap will be built from technician_public_view rows returned
+ *   by the offer_requests query (joined or separately fetched). The same DTO shape applies.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import { Company, MatchRequest, SafeTechnicianView } from '../types';
-import { CompanyMemberRole } from '../types/enums';
 import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
@@ -15,16 +25,7 @@ import {
   v2SafePreviewToSafeView,
   v2UnlockedViewToSafeView,
 } from '../utils/v2CompatAdapters';
-
-// Demo: Delta Air Lines is the active company for the company role
-export const DEMO_COMPANY_ID = 'comp-001';
-// Demo: first admin member of comp-001 (userId=prof-c001a, role=admin, memberId=cm-001)
-// TODO: replace with real auth context in V2-9 Supabase phase
-export const DEMO_COMPANY_USER_ID = 'prof-c001a';
-export const DEMO_COMPANY_MEMBER_ID = 'cm-001';
-// Static role constant for demo-mode permission checks in company screens.
-// TODO: replace with dynamic role loaded from auth context in V2-9 Supabase phase.
-export const DEMO_COMPANY_MEMBER_ROLE: CompanyMemberRole = 'admin';
+import { useCompanySession } from './SessionContext';
 
 interface CompanyDashboardState {
   company: Company | null;
@@ -42,18 +43,19 @@ interface CompanyDashboardState {
  * Applies the privacy gate: pending → anonymous view, accepted → unlocked view.
  */
 async function buildTechnicianMapV2(
+  companyId: string,
   offerRequests: OfferRequest[],
   allOfferRequests: OfferRequest[],
 ): Promise<Record<string, SafeTechnicianView>> {
   const map: Record<string, SafeTechnicianView> = {};
-  const allApplications = await offerApplicationRepository.getForCompany(DEMO_COMPANY_ID);
+  const allApplications = await offerApplicationRepository.getForCompany(companyId);
 
   await Promise.all(
     offerRequests.map(async (req) => {
       const techId = req.technicianId;
 
       const accepted = canRevealIdentity({
-        companyId: DEMO_COMPANY_ID,
+        companyId,
         technicianId: techId,
         offerRequests: allOfferRequests,
         offerApplications: allApplications,
@@ -81,6 +83,7 @@ async function buildTechnicianMapV2(
 }
 
 export function useCompanyDashboard(): CompanyDashboardState {
+  const { companyId } = useCompanySession();
   const [company, setCompany] = useState<Company | null>(null);
   const [requests, setRequests] = useState<MatchRequest[]>([]);
   const [technicianMap, setTechnicianMap] = useState<Record<string, SafeTechnicianView>>({});
@@ -89,8 +92,8 @@ export function useCompanyDashboard(): CompanyDashboardState {
   const loadData = useCallback(async () => {
     setLoading(true);
     const [companyProfile, v2Requests] = await Promise.all([
-      companyRepositoryV2.getById(DEMO_COMPANY_ID),
-      offerRequestRepository.getForCompany(DEMO_COMPANY_ID),
+      companyRepositoryV2.getById(companyId),
+      offerRequestRepository.getForCompany(companyId),
     ]);
 
     setCompany(companyProfile ? v2CompanyToV1(companyProfile) : null);
@@ -100,9 +103,9 @@ export function useCompanyDashboard(): CompanyDashboardState {
     const compatRequests = v2Requests.map(v2OfferRequestToMatchRequest);
     setRequests(compatRequests);
 
-    setTechnicianMap(await buildTechnicianMapV2(v2Requests, v2Requests));
+    setTechnicianMap(await buildTechnicianMapV2(companyId, v2Requests, v2Requests));
     setLoading(false);
-  }, []);
+  }, [companyId]);
 
   useEffect(() => {
     loadData();
@@ -111,26 +114,36 @@ export function useCompanyDashboard(): CompanyDashboardState {
   const sendRequest = useCallback(
     async (technicianId: string, message: string): Promise<MatchRequest[]> => {
       await offerRequestRepository.create({
-        companyId: DEMO_COMPANY_ID,
+        companyId,
         technicianId,
         message,
       });
-      const v2Requests = await offerRequestRepository.getForCompany(DEMO_COMPANY_ID);
+      const v2Requests = await offerRequestRepository.getForCompany(companyId);
       const compatRequests = v2Requests.map(v2OfferRequestToMatchRequest);
       setRequests(compatRequests);
-      setTechnicianMap(await buildTechnicianMapV2(v2Requests, v2Requests));
+      setTechnicianMap(await buildTechnicianMapV2(companyId, v2Requests, v2Requests));
       return compatRequests;
     },
-    [],
+    [companyId],
   );
 
+  // Only active (sent=pending, accepted) requests block sending a new direct offer.
+  // Rejected, expired, and withdrawn are historical records and must not block new sends.
   const hasSentRequest = useCallback(
-    (technicianId: string) => requests.some((r) => r.technicianId === technicianId),
+    (technicianId: string) => requests.some(
+      (r) => r.technicianId === technicianId && (r.status === 'sent' || r.status === 'accepted'),
+    ),
     [requests],
   );
 
+  // Return the active request if one exists, otherwise the most recent historical one.
   const getRequestForTechnician = useCallback(
-    (technicianId: string) => requests.find((r) => r.technicianId === technicianId),
+    (technicianId: string) => {
+      const active = requests.find(
+        (r) => r.technicianId === technicianId && (r.status === 'sent' || r.status === 'accepted'),
+      );
+      return active ?? requests.find((r) => r.technicianId === technicianId);
+    },
     [requests],
   );
 

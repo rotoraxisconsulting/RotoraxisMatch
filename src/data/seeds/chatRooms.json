@@ -7,13 +7,6 @@
     "createdAt": "2026-04-20T14:30:00.000Z"
   },
   {
-    "id": "room-seed-002",
-    "offerApplicationId": "oapp-003",
-    "technicianId": "tech-001",
-    "companyId": "comp-001",
-    "createdAt": "2026-05-03T12:00:00.000Z"
-  },
-  {
     "id": "room-seed-003",
     "offerRequestId": "oreq-003",
     "technicianId": "tech-007",

@@ -7,6 +7,8 @@ export interface Offer {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  locationCityId: string;
+  // Controlled snapshot copied from the canonical location catalog at create/update time.
   locationCountry: string;
   locationCity: string;
   locationBaseAirport?: string;

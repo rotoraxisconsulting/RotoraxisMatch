@@ -1,7 +1,7 @@
 # RotoraxisMatch — V2 Handoff Summary
 
-**As of:** 2026-05-24  
-**Current state:** V2-10 complete — activity badges, V1 legacy cleanup; ready for Supabase migration
+**As of:** 2026-06-01  
+**Current state:** V2-S0C final pre-Supabase audit complete - all critical/high pre-Supabase issues are resolved or explicitly deferred; ready for Supabase/Auth foundation (V2-S1)
 
 ---
 
@@ -18,7 +18,7 @@ The app is fully functional in **demo mode** (AsyncStorage + JSON seeds). Real a
 | Phase | Description | QA report |
 |---|---|---|
 | V2-1a | TypeScript types + constants | — |
-| V2-1b | V2 seed data (18 techs, 9 companies, 12 offers, 20 requests/apps, 25 docs) | — |
+| V2-1b | V2 seed data (18 techs, 9 companies, 12 offers, 18 requests/apps, 25 docs) | — |
 | V2-1c | 10 V2 repositories | — |
 | V2-1d | Hooks + privacy utils migrated to V2 | — |
 | V2-1e | Data layer QA | — |
@@ -33,10 +33,16 @@ The app is fully functional in **demo mode** (AsyncStorage + JSON seeds). Real a
 | V2-10a | Pre-flight fixes — reset button, pending seed, team modals, admin type filter | `docs/V2_10_PREFLIGHT_FIXES_REPORT.md` |
 | V2-10b | Activity badges — red dots on NavCards + cards, unread-first sort, mark-as-read | `docs/V2_10_ACTIVITY_BADGES_REPORT.md` |
 | V2-10c | V1 legacy cleanup — redirect screens, company dashboard V2 metrics, copy updates | `docs/V2_LEGACY_CLEANUP_REPORT.md` |
+| V2-11 | UI/UX polish — dashboards, score display, chat cards, emoji removed | `docs/V2_11_UI_UX_POLISH_REPORT.md` |
+| V2-12 | Company premium UI redesign — CompanyUI.tsx component system | `docs/V2_12_COMPANY_UI_POLISH_REPORT.md` |
+| V2-13 | Admin premium UI redesign — AdminUI.tsx component system | `docs/V2_13_ADMIN_UI_POLISH_REPORT.md` |
+| V2-docs | Documentation cleanup — removed V1 docs, aligned V2 naming, MVP scope | `docs/DOCS_CLEANUP_REPORT.md` |
+| V2-cat | Aircraft catalog alignment + category UX — 33-type canonical catalog, `aircraftCategory` field, category filter + badge across offer/search/profile screens | `docs/V2_AIRCRAFT_CATEGORY_UX_REPORT.md` |
+| V2-S0C | Final validators + final pre-Supabase audit — TypeScript, seed validator, web export and legacy/docs/route sanity checks | `docs/V2_S0C_FINAL_PRE_SUPABASE_AUDIT_REPORT.md` |
 
 ---
 
-## App routes (36 total)
+## App routes (37 total)
 
 ### Public
 - `/` — Role selector
@@ -52,7 +58,7 @@ The app is fully functional in **demo mode** (AsyncStorage + JSON seeds). Real a
 - `/company/applications/[id]` — Application detail + accept/reject + identity/docs unlock
 - `/company/chats` — Chat list
 - `/company/chats/[id]` — Chat thread
-- `/company/requests` — Legacy redirect → Applications + Job Offers (TODO: remove)
+- `/company/requests` — Legacy redirect → Applications + Offers (TODO: remove)
 - `/company/team` — Team management
 - `/company/profile` — Company profile (view)
 
@@ -61,8 +67,9 @@ The app is fully functional in **demo mode** (AsyncStorage + JSON seeds). Real a
 - `/technician/profile` — Editable profile
 - `/technician/documents` — Document list
 - `/technician/requests` — Legacy redirect → Direct Offers (TODO: remove)
-- `/technician/offers` — Browse published offers
-- `/technician/offers/[id]` — Offer detail + apply
+- `/technician/offers` — Browse published offers (discovery only — published/visible offers ranked by match)
+- `/technician/offers/[id]` — Offer detail + apply; also shows historical context for closed/expired offers with existing applications
+- `/technician/applications` — My Applications — application history independent of offer status
 - `/technician/direct-offers` — Direct offers inbox
 - `/technician/direct-offers/[id]` — Direct offer detail + accept/reject
 - `/technician/chats` — Chat list
@@ -108,6 +115,8 @@ Permissions: `src/utils/companyPermissionsV2.ts` — frontend guards, RLS later
 
 5. **Seed consistency**: Every accepted `OfferRequest` and `OfferApplication` has a corresponding chat room in `chatRooms.json`. Validated by `scripts/validateSeeds.js`.
 
+6. **MVP scope decisions**: `location_airports` is a curated catalog, not a global airport database. Company members are created manually/demo-only, with no invite links or email flow. Each company user belongs to one company.
+
 ---
 
 ## Seed data summary
@@ -119,10 +128,11 @@ Permissions: `src/utils/companyPermissionsV2.ts` — frontend guards, RLS later
 | Profiles (auth) | 34 |
 | Offers | 12 (11 published, 1 draft) |
 | OfferRequests (direct offers) | 12 (3 accepted, 5 pending, 2 rejected, 1 expired, 1 withdrawn) |
-| OfferApplications | 8 (2 accepted, 4 pending, 1 rejected, 1 expired) |
+| OfferApplications | 6 (1 accepted, 3 pending, 1 rejected, 1 expired) |
 | Documents | 25 |
-| ChatRooms | 5 (one per accepted record) |
-| ChatMessages | 12 |
+| ChatRooms | 4 (one per accepted record) |
+| ChatMessages | 9 |
+| Activities | 2 |
 | CompanyMembers | 15 |
 
 Demo IDs:
@@ -130,6 +140,8 @@ Demo IDs:
 - `DEMO_COMPANY_USER_ID = 'prof-c001a'`
 - `DEMO_COMPANY_MEMBER_ROLE = 'admin'`
 - `DEMO_TECHNICIAN_ID = 'tech-001'`
+
+> **Local IDs are NOT Supabase UUIDs.** All demo IDs (`comp-001`, `tech-001`, `prof-t001`, etc.) are human-readable strings for local demo readability only. Supabase uses real UUIDs (`gen_random_uuid()`) for all primary keys; `profiles.id` equals `auth.users.id`. Local JSON seeds must NOT be inserted into Supabase. When migrating, replace `DEMO_*` constants with real `auth.uid()` session values.
 
 ---
 
@@ -160,29 +172,54 @@ See `docs/V2_LEGACY_CLEANUP_REPORT.md` for the full audit.
 | Offer expiry not automated | No scheduled edge function yet |
 | Single demo session per role | DEMO_* constants replace auth session |
 | Acceptance side-effect is simulated locally | Must become `on_offer_accepted` edge function |
+| Company member onboarding is manual/demo | No self-service invitations or email invite flow in MVP |
 
 ---
 
-## Next phase: V2-10 — Supabase migration
+## Final pre-Supabase status
 
-Recommended order per `docs/IMPLEMENTATION_PHASES_V2.md`:
+V2-S0C final audit is complete. TypeScript, the hardened local seed validator, and Expo web export all pass.
 
-1. Supabase Auth (email/password, role in `profiles` table)
-2. Technician profiles + habilitations
-3. Company profiles + company_users
-4. Offers
-5. OfferRequests + OfferApplications
-6. TechnicianDocuments + Storage bucket
-7. ChatRooms + ChatMessages + Realtime
-8. RLS policies (see `docs/RLS_PLAN_V2.md`)
-9. Edge functions: `on_offer_accepted`, `notify_offer_status`, `expire_job_offers`
+All critical/high pre-Supabase issues are resolved or explicitly deferred as local/demo compatibility. The remaining V1 compatibility surfaces (`MatchRequest`, `SafeTechnicianView`, flat `yearsExperience`, V1 company fields and map adapter code) are documented local-only/compat items and must not be used as Supabase schema sources.
+
+Next phase is **V2-S1 Supabase/Auth foundation**: clean Supabase project, env vars, schema/catalogs, first admin profile bootstrap, auth context, and demo mode kept available. No marketplace demo-row migration yet.
+
+---
+
+## Current state: V2-S0C final pre-Supabase audit complete
+
+All local demo phases (V2-1 through V2-13), documentation cleanup, S0/S0B fixes, and the S0C final audit are complete. The app is fully functional in demo mode and ready to start V2-S1 Supabase/Auth foundation.
+
+The aircraft type catalog has been aligned across TypeScript constants, SQL schema, and docs (33 canonical codes). Aircraft types now carry an `aircraftCategory` field (`airplane` | `helicopter`), exposed in the UI as:
+- **Company offer create/edit**: Airplanes / Helicopters tab selector for required aircraft types
+- **Technician profile**: Airplanes / Helicopters section grouping
+- **Technician browse offers**: category filter row + Airplane/Helicopter/Mixed badge on offer cards
+- **Company search**: category filter (Any / Airplanes / Helicopters) post-filters results + category badge on technician cards
+
+---
+
+## Next phase: V2-S1 — Supabase / Auth MVP
+
+Repository interfaces do not change — only the adapter underneath is swapped.
+
+**Recommended order:**
+
+1. Supabase project setup — create project, configure `.env`
+2. Auth — email/password where needed, role in `profiles` table; company users/members are manually provisioned for MVP
+3. Bootstrap tables — `profiles`, `technician_profiles`, `companies`, `company_members` with one company membership per company user
+4. Replace `DEMO_*` constants with real `auth.uid()` session context
+5. Migrate repositories one at a time (read-heavy first)
+6. Apply RLS policies — see `docs/RLS_PLAN_V2.md`
+7. Offers + `offer_requests` + `offer_applications` + `handle_offer_accepted` trigger
+8. Activity events — `activity_events` + `activity_reads`
+9. Documents + Storage — `documents` table + `technician-documents` bucket
 10. Remove AsyncStorage layer
 
-Repository interfaces do not change — only the adapter underneath swaps.
+**Future scope (not V2-S1):** Realtime, email notifications, `expire_offers` cron, push notifications, self-service company invitations, multi-company membership, complete worldwide airport seeding.
 
-Reference docs:
-- `docs/SUPABASE_PLAN_V2.md` — migration plan
-- `docs/SUPABASE_SCHEMA_V2.sql` — Postgres schema with seeds
+**Reference docs:**
+- `docs/SUPABASE_PLAN_V2.md` — migration plan and table definitions
+- `docs/SUPABASE_SCHEMA_V2.sql` — full Postgres schema
 - `docs/RLS_PLAN_V2.md` — RLS policies
-- `docs/TYPESCRIPT_TYPES_V2.md` — canonical types
+- `docs/TYPESCRIPT_TYPES_V2.md` — canonical TypeScript types
 - `docs/MIGRATION_FROM_DEMO_TO_V2.md` — V1→V2 field mapping

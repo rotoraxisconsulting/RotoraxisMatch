@@ -1,20 +1,43 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
+  ActivityIndicator,
   FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
   TouchableOpacity,
-  Alert,
+  useWindowDimensions,
+  View,
 } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import {
+  BriefcaseBusiness,
+  Building2,
+  CheckCircle,
+  Clock,
+  FileText,
+  MapPin,
+  XCircle,
+} from 'lucide-react-native';
+import type { LucideProps } from 'lucide-react-native';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
-import { EmptyState } from '../../src/components/EmptyState';
+import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import { Offer } from '../../src/types/offer';
-import { OfferStatus } from '../../src/types/enums';
-import { colors, spacing } from '../../src/theme';
+import type { OfferWithRequirements } from '../../src/types/offer';
+import type { OfferStatus } from '../../src/types/enums';
+import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
+import {
+  AdminBadge,
+  AdminCard,
+  AdminChip,
+  AdminEmptyPanel,
+  AdminIconBox,
+  AdminPageHeader,
+  AdminScreen,
+  adminUi,
+} from '../../src/components/admin/AdminUI';
+import type { AdminTone } from '../../src/components/admin/AdminUI';
+import { spacing } from '../../src/theme';
 
 type StatusFilter = 'all' | OfferStatus;
 
@@ -26,20 +49,6 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'expired', label: 'Expired' },
 ];
 
-const STATUS_COLORS: Record<OfferStatus, string> = {
-  published: colors.success,
-  draft: colors.textMuted,
-  closed: colors.warning,
-  expired: colors.error,
-};
-
-const NEXT_STATUSES: Record<OfferStatus, OfferStatus[]> = {
-  draft: ['published', 'expired'],
-  published: ['closed', 'expired'],
-  closed: ['expired'],
-  expired: [],
-};
-
 const STATUS_LABELS: Record<OfferStatus, string> = {
   draft: 'Draft',
   published: 'Published',
@@ -47,15 +56,72 @@ const STATUS_LABELS: Record<OfferStatus, string> = {
   expired: 'Expired',
 };
 
-function filterOffers(offers: Offer[], status: StatusFilter): Offer[] {
-  const result = status === 'all' ? offers : offers.filter((o) => o.status === status);
+const CONTRACT_LABELS: Record<string, string> = {
+  permanent: 'Permanent',
+  long_term: 'Long-term',
+  short_term: 'Short-term',
+};
+
+type OfferAction = {
+  status: OfferStatus;
+  label: string;
+  color: string;
+  icon: React.ComponentType<LucideProps>;
+};
+
+const NEXT_ACTIONS: Record<OfferStatus, OfferAction[]> = {
+  draft: [
+    { status: 'published', label: 'Publish', color: adminUi.green, icon: CheckCircle },
+    { status: 'expired', label: 'Expire', color: adminUi.red, icon: XCircle },
+  ],
+  published: [
+    { status: 'closed', label: 'Close', color: adminUi.amber, icon: Clock },
+    { status: 'expired', label: 'Expire', color: adminUi.red, icon: XCircle },
+  ],
+  closed: [
+    { status: 'published', label: 'Reopen', color: adminUi.green, icon: CheckCircle },
+    { status: 'expired', label: 'Expire', color: adminUi.red, icon: XCircle },
+  ],
+  expired: [],
+};
+
+function statusTone(status: OfferStatus): AdminTone {
+  if (status === 'published') return 'success';
+  if (status === 'draft') return 'warning';
+  if (status === 'closed') return 'navy';
+  return 'error';
+}
+
+function filterOffers(offers: OfferWithRequirements[], status: StatusFilter): OfferWithRequirements[] {
+  const result = status === 'all' ? offers : offers.filter((offer) => offer.status === status);
   const order: Record<OfferStatus, number> = { published: 0, draft: 1, closed: 2, expired: 3 };
-  return [...result].sort((a, b) => (order[a.status] ?? 0) - (order[b.status] ?? 0));
+  return [...result].sort((a, b) => {
+    const statusOrder = order[a.status] - order[b.status];
+    if (statusOrder !== 0) return statusOrder;
+    return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
+  });
+}
+
+function technicianTypeLabel(code: string): string {
+  return TECHNICIAN_TYPES.find((type) => type.code === code)?.label ?? code.replace(/_/g, ' ');
+}
+
+function contractLabel(code: string): string {
+  return CONTRACT_LABELS[code] ?? code.replace(/_/g, ' ');
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date pending';
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export default function AdminOffersScreen() {
+  const router = useRouter();
   const { offers, loading, refresh, updateOfferStatus, companyMap } = useAdminDashboard();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const { width } = useWindowDimensions();
+  const isWide = width >= 900;
 
   useFocusEffect(
     useCallback(() => {
@@ -64,56 +130,71 @@ export default function AdminOffersScreen() {
   );
 
   const filtered = useMemo(() => filterOffers(offers, statusFilter), [offers, statusFilter]);
+  const publishedCount = offers.filter((offer) => offer.status === 'published').length;
 
   async function handleAction(id: string, status: OfferStatus) {
-    try {
-      await updateOfferStatus(id, status);
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not update offer status.');
-    }
+    await updateOfferStatus(id, status);
+  }
+
+  if (loading) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <LoadingScreen color={adminUi.accent} role="admin" />
+      </>
+    );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Offers' }} />
+    <AdminScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <DemoModeBanner role="admin" />
 
-      {/* Status tabs */}
-      <View style={styles.tabRow}>
-        {STATUS_TABS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.tab, statusFilter === key && styles.tabActive]}
-            onPress={() => setStatusFilter(key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.tabText, statusFilter === key && styles.tabTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={[styles.topContent, isWide && styles.contentWide]}>
+        <AdminPageHeader
+          eyebrow="Marketplace"
+          title="Offer moderation"
+          subtitle="Review visibility, contract details and requirement fit across published and draft offers."
+          onBack={() => router.back()}
+        />
+
+        <AdminCard style={styles.controls}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {STATUS_TABS.map(({ key, label }) => (
+              <AdminChip
+                key={key}
+                label={label}
+                selected={statusFilter === key}
+                onPress={() => setStatusFilter(key)}
+              />
+            ))}
+          </ScrollView>
+        </AdminCard>
       </View>
 
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, isWide && styles.contentWide]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          !loading ? (
-            <Text style={styles.resultCount}>
-              {filtered.length} offer{filtered.length !== 1 ? 's' : ''}
-            </Text>
-          ) : null
+          <View style={styles.listHeader}>
+            <View>
+              <Text style={styles.resultCount}>
+                {filtered.length} offer{filtered.length !== 1 ? 's' : ''}
+              </Text>
+              <Text style={styles.resultSub}>
+                {publishedCount} published on the marketplace
+              </Text>
+            </View>
+            <AdminIconBox icon={BriefcaseBusiness} size={17} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+          </View>
         }
         ListEmptyComponent={
-          !loading ? (
-            <EmptyState
-              icon="📋"
-              title="No offers found"
-              subtitle="Try adjusting your filter."
-            />
-          ) : null
+          <AdminEmptyPanel
+            title="No offers found"
+            subtitle="Adjust the offer status filter to widen the moderation list."
+          />
         }
         renderItem={({ item }) => (
           <OfferCard
@@ -123,7 +204,7 @@ export default function AdminOffersScreen() {
           />
         )}
       />
-    </SafeAreaView>
+    </AdminScreen>
   );
 }
 
@@ -132,159 +213,267 @@ function OfferCard({
   companyName,
   onAction,
 }: {
-  offer: Offer;
+  offer: OfferWithRequirements;
   companyName: string;
-  onAction: (offerId: string, status: OfferStatus) => void;
+  onAction: (offerId: string, status: OfferStatus) => Promise<void>;
 }) {
-  const statusColor = STATUS_COLORS[offer.status];
-  const nextStatuses = NEXT_STATUSES[offer.status];
+  const [loadingStatus, setLoadingStatus] = useState<OfferStatus | null>(null);
+  const nextActions = NEXT_ACTIONS[offer.status];
+  const requirementChips = [
+    ...offer.requiredTechnicianTypes.map(technicianTypeLabel),
+    ...offer.requiredLicenses,
+    ...offer.requiredAircraftTypes,
+    `${offer.minYearsExperience}+ years`,
+  ];
+
+  async function handlePress(status: OfferStatus) {
+    setLoadingStatus(status);
+    try {
+      await onAction(offer.id, status);
+    } finally {
+      setLoadingStatus(null);
+    }
+  }
 
   return (
-    <View style={styles.card}>
+    <AdminCard style={styles.offerCard}>
       <View style={styles.cardHeader}>
-        <View style={styles.cardTitleBlock}>
-          <Text style={styles.cardTitle} numberOfLines={1}>{offer.title}</Text>
-          <Text style={styles.cardCompany} numberOfLines={1}>{companyName}</Text>
+        <View style={styles.titleBlock}>
+          <View style={styles.badgeRow}>
+            <AdminBadge label={STATUS_LABELS[offer.status]} tone={statusTone(offer.status)} small />
+            <AdminBadge label={contractLabel(offer.contractType)} tone="cyan" small />
+          </View>
+          <Text style={styles.cardTitle}>{offer.title}</Text>
         </View>
-        <View style={[styles.statusPill, { backgroundColor: statusColor + '20' }]}>
-          <Text style={[styles.statusText, { color: statusColor }]}>
-            {STATUS_LABELS[offer.status]}
-          </Text>
-        </View>
+        <AdminIconBox
+          icon={BriefcaseBusiness}
+          color={offer.status === 'published' ? adminUi.green : adminUi.accent}
+          backgroundColor={offer.status === 'published' ? adminUi.greenSoft : adminUi.accentSoft}
+          size={19}
+        />
       </View>
 
-      <View style={styles.cardMeta}>
-        <Text style={styles.metaItem}>
-          📍 {offer.locationCity}, {offer.locationCountry}
-        </Text>
-        <Text style={styles.metaItem}>
-          📄 {offer.contractType}
-        </Text>
-        <Text style={styles.metaItem}>
-          🎓 {offer.minYearsExperience}+ yrs
-        </Text>
+      <View style={styles.metaGrid}>
+        <InfoPill icon={Building2} label={companyName} />
+        <InfoPill icon={MapPin} label={`${offer.locationCity}, ${offer.locationCountry}`} />
+        <InfoPill icon={FileText} label={`Created ${formatDate(offer.createdAt)}`} />
       </View>
 
-      <View style={styles.cardFooter}>
-        <Text style={styles.footerDate}>
-          {new Date(offer.createdAt).toLocaleDateString('en-GB', {
-            day: '2-digit', month: 'short', year: 'numeric',
-          })}
-        </Text>
-        {nextStatuses.length === 0 && (
-          <Text style={styles.noActionHint}>No actions available</Text>
-        )}
-      </View>
-
-      {nextStatuses.length > 0 && (
-        <View style={styles.actionRow}>
-          {nextStatuses.map((s) => (
-            <TouchableOpacity
-              key={s}
-              style={[styles.actionBtn, { borderColor: STATUS_COLORS[s] + '99' }]}
-              onPress={() => onAction(offer.id, s)}
-              activeOpacity={0.75}
-            >
-              <Text style={[styles.actionBtnText, { color: STATUS_COLORS[s] }]}>
-                → {STATUS_LABELS[s]}
-              </Text>
-            </TouchableOpacity>
+      <View style={styles.requirementBlock}>
+        <Text style={styles.requirementLabel}>Requirements</Text>
+        <View style={styles.chipRow}>
+          {requirementChips.map((chip) => (
+            <AdminBadge key={chip} label={chip} tone="muted" small />
           ))}
         </View>
-      )}
+      </View>
+
+      <View style={styles.actions}>
+        {nextActions.length > 0 ? (
+          nextActions.map((action) => (
+            <OfferActionButton
+              key={action.status}
+              action={action}
+              loading={loadingStatus === action.status}
+              disabled={loadingStatus !== null}
+              onPress={() => handlePress(action.status)}
+            />
+          ))
+        ) : (
+          <Text style={styles.noActionHint}>No moderation actions available for this status.</Text>
+        )}
+      </View>
+    </AdminCard>
+  );
+}
+
+function InfoPill({
+  icon,
+  label,
+}: {
+  icon: React.ComponentType<LucideProps>;
+  label: string;
+}) {
+  return (
+    <View style={styles.infoPill}>
+      <AdminIconBox icon={icon} size={16} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+      <Text style={styles.infoText} numberOfLines={2}>{label}</Text>
     </View>
   );
 }
 
+function OfferActionButton({
+  action,
+  loading,
+  disabled,
+  onPress,
+}: {
+  action: OfferAction;
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const Icon = action.icon;
+  return (
+    <TouchableOpacity
+      style={[
+        styles.actionBtn,
+        { borderColor: action.color + '55', backgroundColor: action.color + '0F' },
+        disabled && styles.actionBtnDisabled,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.78}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color={action.color} />
+      ) : (
+        <>
+          <Icon size={15} color={action.color} strokeWidth={2.2} />
+          <Text style={[styles.actionBtnText, { color: action.color }]}>{action.label}</Text>
+        </>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+  topContent: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    gap: 4,
+    paddingTop: spacing.md,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: 8,
+  contentWide: {
+    maxWidth: 920,
+    alignSelf: 'center',
+    width: '100%',
+    paddingHorizontal: spacing.lg,
+  },
+  controls: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingRight: spacing.md,
+  },
+  list: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xxxl,
+  },
+  listHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.sm,
   },
-  tabActive: { backgroundColor: colors.admin },
-  tabText: { fontSize: 11, fontWeight: '600', color: colors.textSecondary },
-  tabTextActive: { color: colors.white },
-  list: { padding: spacing.lg, paddingBottom: spacing.xxxl },
   resultCount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: adminUi.text,
   },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+  resultSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: adminUi.textMuted,
+  },
+  offerCard: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
   },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
-  cardTitleBlock: { flex: 1 },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.xs,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
   cardTitle: {
-    fontSize: 14,
+    fontSize: 16,
+    lineHeight: 22,
     fontWeight: '700',
-    color: colors.text,
-    marginBottom: 2,
+    color: adminUi.text,
   },
-  cardCompany: { fontSize: 12, color: colors.textSecondary },
-  statusPill: {
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    flexShrink: 0,
+  metaGrid: {
+    gap: spacing.sm,
   },
-  statusText: { fontSize: 11, fontWeight: '700' },
-  cardMeta: {
+  infoPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
+    borderWidth: 1,
+    borderColor: adminUi.borderSoft,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: adminUi.textSoft,
+  },
+  requirementBlock: {
+    gap: spacing.xs,
+  },
+  requirementLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    color: adminUi.textMuted,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  metaItem: { fontSize: 11, color: colors.textSecondary },
-  cardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  footerDate: { fontSize: 11, color: colors.textMuted },
-  noActionHint: { fontSize: 11, color: colors.textMuted, fontStyle: 'italic' },
-  actionRow: {
-    flexDirection: 'row',
-    gap: spacing.xs,
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
-    marginTop: spacing.xs,
+    borderTopColor: adminUi.borderSoft,
   },
   actionBtn: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: 112,
+    minHeight: 38,
     borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: spacing.xs + 2,
+    borderRadius: 12,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
     alignItems: 'center',
-    backgroundColor: colors.background,
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  actionBtnDisabled: {
+    opacity: 0.55,
   },
   actionBtnText: {
-    fontSize: 11,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
+  },
+  noActionHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: adminUi.textMuted,
   },
 });

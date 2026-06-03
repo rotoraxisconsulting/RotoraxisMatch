@@ -24,11 +24,12 @@ export interface Technician {
   fullName: string;
   email: string;
   phone: string;
+  locationCityId?: string;
   country: string;
   city: string;
   baseAirport: string;
-  latitude: number;
-  longitude: number;
+  latitude?: number;
+  longitude?: number;
   licenseCategories: string[];
   aircraftTypes: string[];
   specialties: string[];
@@ -81,8 +82,21 @@ export interface SocialLinks {
   [key: string]: string | undefined;
 }
 
-// Full technician profile — contains private fields.
-// Never send to a company without the privacy filter.
+/**
+ * Full private technician profile — the authoritative internal record.
+ * Contains ALL fields including private identity data (firstName, lastName,
+ * email, phone, birthDate, socialLinks).
+ *
+ * Usage rules:
+ *   ✓ Technician own-profile screens (app/technician/*)
+ *   ✓ Admin screens (app/admin/*)
+ *   ✓ Repository internals (reading/writing the local store)
+ *   ✗ Company-facing screens — must use SafeTechnicianPreview or UnlockedTechnicianView
+ *
+ * Future Supabase: this type maps to a direct SELECT on technician_profiles.
+ * Companies never receive this shape — they receive technician_public_view rows
+ * (private fields gated by CASE WHEN offer_accepted_between()).
+ */
 export interface TechnicianProfile {
   id: string;
   userId: string;
@@ -97,13 +111,13 @@ export interface TechnicianProfile {
 
   // Public
   technicianType: TechnicianTypeCode;
-  country: string;
-  city: string;
-  baseAirport?: string;
-  latitude?: number;
-  longitude?: number;
+  // Location FK only. Country, city, base airport and coordinates are derived
+  // from the canonical location catalog when building views.
+  // Required: every persisted technician profile must reference a valid location_airports entry.
+  locationCityId: string;
 
   availability: Availability;
+  /** ADMIN-ONLY in Supabase — technician cannot write this field; set via admin-only RLS policy */
   verificationStatus: VerificationStatus;
   profileCompleteness: number;
 

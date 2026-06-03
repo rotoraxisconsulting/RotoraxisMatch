@@ -1,5 +1,20 @@
+/**
+ * useTechnicianSearch — company search hook.
+ *
+ * Privacy contract:
+ *   Results are SafeTechnicianView[] (V1 compat). The `fullName` field is set ONLY
+ *   when canRevealIdentity() returns true (i.e. an accepted offer record exists for
+ *   the companyId + technicianId pair). Before acceptance, fullName is undefined and
+ *   the card shows anonymousCode + "Identity locked" badge.
+ *
+ * Future Supabase: the internal search + privacy gate will be replaced by a single
+ *   call to search_technicians_public(filters) RPC. The RPC returns rows from
+ *   technician_public_view — private columns are NULL until offer_accepted_between().
+ *   This hook's return type stays SafeTechnicianView[] (mapped from the RPC response).
+ */
 import { useState, useCallback } from 'react';
 import { SafeTechnicianView } from '../types';
+import type { AvailabilityStatus } from '../types/technician';
 import { TechnicianFilters } from '../types/filters';
 import { MatchRequest } from '../types/matchRequest';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
@@ -12,7 +27,7 @@ import {
   v2SafePreviewToSafeView,
   v2UnlockedViewToSafeView,
 } from '../utils/v2CompatAdapters';
-import { DEMO_COMPANY_ID } from './useCompanyDashboard';
+import { useCompanySession } from './SessionContext';
 
 interface UseTechnicianSearchReturn {
   results: SafeTechnicianView[];
@@ -28,6 +43,7 @@ interface UseTechnicianSearchReturn {
 const EMPTY_FILTERS: TechnicianFilters = {};
 
 export function useTechnicianSearch(): UseTechnicianSearchReturn {
+  const { companyId } = useCompanySession();
   const [results, setResults] = useState<SafeTechnicianView[]>([]);
   const [filters, setFilters] = useState<TechnicianFilters>(EMPTY_FILTERS);
   const [loading, setLoading] = useState(false);
@@ -60,23 +76,21 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
         country: filters.country ?? undefined,
         city: filters.city ?? undefined,
         verificationStatus: filters.verificationStatus ?? undefined,
-        // V1 availabilityStatus === 'available' means immediate availability
-        availableImmediately:
-          filters.availabilityStatus === 'available' ? true : undefined,
+        availabilityStatus: filters.availabilityStatus as AvailabilityStatus | undefined,
       };
 
       // Load previews and the acceptance records in parallel
       const [previews, offerRequests, offerApplications] = await Promise.all([
         technicianRepositoryV2.search(v2Filters),
-        offerRequestRepository.getForCompany(DEMO_COMPANY_ID),
-        offerApplicationRepository.getForCompany(DEMO_COMPANY_ID),
+        offerRequestRepository.getForCompany(companyId),
+        offerApplicationRepository.getForCompany(companyId),
       ]);
 
       // Apply privacy gate per technician result
       const views: SafeTechnicianView[] = await Promise.all(
         previews.map(async (preview) => {
           const accepted = canRevealIdentity({
-            companyId: DEMO_COMPANY_ID,
+            companyId,
             technicianId: preview.id,
             offerRequests,
             offerApplications,
@@ -98,7 +112,7 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
       setResults(views);
       setLoading(false);
     },
-    [filters],
+    [companyId, filters],
   );
 
   return { results, filters, loading, hasSearched, updateFilter, clearFilters, search };

@@ -26,19 +26,31 @@ export const documentRepositoryV2 = {
   async updateStatus(
     id: string,
     status: DocumentStatus,
-    verifiedBy?: string,
+    rejectionReason?: string,
   ): Promise<Document | null> {
     const docs = await this.getAll();
     const idx = docs.findIndex((d) => d.id === id);
     if (idx === -1) return null;
 
-    const updated: Document = {
-      ...docs[idx],
-      status,
-      ...(status === 'verified' && verifiedBy
-        ? { verifiedAt: new Date().toISOString(), verifiedBy }
-        : {}),
-    };
+    const now = new Date().toISOString();
+    const prev = docs[idx];
+
+    let updated: Document;
+    if (status === 'verified') {
+      updated = { ...prev, status, reviewedAt: now, rejectionReason: undefined };
+    } else if (status === 'rejected') {
+      updated = {
+        ...prev,
+        status,
+        reviewedAt: now,
+        rejectionReason: rejectionReason ?? prev.rejectionReason ?? 'Document rejected',
+      };
+    } else if (status === 'expired') {
+      updated = { ...prev, status, reviewedAt: now, rejectionReason: undefined };
+    } else {
+      // pending — reset review state
+      updated = { ...prev, status, reviewedAt: undefined, rejectionReason: undefined };
+    }
 
     const next = [...docs];
     next[idx] = updated;

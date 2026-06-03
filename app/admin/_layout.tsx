@@ -1,14 +1,12 @@
 import { Stack } from 'expo-router';
-import { colors } from '../../src/theme';
+import { adminUi } from '../../src/components/admin/AdminUI';
 
 export default function AdminLayout() {
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: colors.navy },
-        headerTintColor: colors.white,
-        headerTitleStyle: { fontWeight: '600' },
-        contentStyle: { backgroundColor: colors.background },
+        headerShown: false,
+        contentStyle: { backgroundColor: adminUi.page },
       }}
     />
   );

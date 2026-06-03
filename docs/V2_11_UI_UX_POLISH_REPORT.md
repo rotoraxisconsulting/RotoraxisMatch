@@ -1,89 +1,122 @@
-# V2-11 UI/UX Polish Report
+# V2-11 UI/UX Polish Report (Pass 2)
 
 **Date:** 2026-05-24  
-**Phase:** V2-11 — UI/UX polish pass
+**Phase:** V2-11 — Senior UI/UX polish pass
 
 ---
 
-## UI Direction Summary
+## Design Direction
 
-### Design Intent
-Calm operational tool. Aviation marketplace. Premium B2B SaaS without flashiness.  
-NOT a marketing landing page. NOT "AI generated". Benchmarked against Linear / Vercel clarity level.
+### Role
+Senior UI/UX product designer — mobile-first SaaS / aviation operations tool.  
+Not a consumer app. Not a marketing site. Not an AI-generated template.
 
-### Key Problems Found
+### Core Problems Found (Pass 1 → Pass 2)
 
-1. **Inverted hierarchy on offer/application cards** — Match % (22–24px, 800-weight) dominated every list card, overshadowing offer titles (15px). Context label ("match with / your profile") was 9px across 2 lines — unreadable.
-2. **Page titles used `typography.h4` (16px/600)** — too weak to be a screen's primary heading.
-3. **Direct offers detail chips used emoji prefixes** — `📍 Paris, France` and `📋 Permanent` feel amateurish in a B2B context.
-4. **"Chats" NavCard orphaned** on technician dashboard — rendered alone in the last row at half-width.
-5. **Admin dashboard header card** — 52px emoji icon box (⚙️) looked like a placeholder.
+Pass 1 made typographic changes but missed the structural issues:
 
----
-
-## Components Created
-
-### `src/components/MatchBadge.tsx`
-
-Replaces the large floating score block in offer and application cards.
-
-| Before | After |
-|---|---|
-| 24px bold % number | 17px bold % in score color |
-| "match with" (9px) | single-line context label (10px muted) |
-| "your profile" (9px second line) | aligned right, not dominating |
-| Total visual height ~3 lines | 2 clean lines |
-
-Props: `score: number`, `context?: string`  
-Score color: green ≥80, blue ≥60, yellow ≥40, muted <40
+1. **Score hero blocks** — 48–56px centered numbers in bordered cards. The single most "AI-generated template" pattern in the app. Appeared on 3 detail screens.
+2. **Dashboard NavCards = generic icon-grid** — 7 identical icon-in-colored-circle cards with no visual priority between "Applications (3 pending)" and "Technician Map". The emoji icon box is the hallmark of generic SaaS templates.
+3. **MetricCard trio** — Three equal-weight numbered boxes floating independently. No visual grouping.
+4. **Emoji in MetaItem fields** — `📋 Contract`, `⏱ Min. experience` chips in B2B detail screens.
+5. **Section label typography inconsistency** — 11px, 12px, 13px, 14px used interchangeably for section headings across detail screens.
+6. **Chat cards** — Generic blue circle avatar, no left accent, no visual context differentiator.
 
 ---
 
-## Screens Polished
+## What Changed in Pass 2
 
-### `app/technician/offers/index.tsx` — Browse Offers
-- Replaced large `scorePercent` + 2-line `scoreSubLabel` with `<MatchBadge score={score.total} context="match with profile" />`
-- Page title: `typography.h4` (16px) → `fontSize: 20, fontWeight: '700'`
-- Removed dead `scoreBlock`, `scorePercent`, `scoreSubLabel` styles
-- Removed unused `typography` import
+### Design Decisions
 
-### `app/company/applications/index.tsx` — Incoming Applications
-- Replaced large scoreBlock with `<MatchBadge score={score.total} context="match for offer" />`
-- Page title: 16px → 20px bold
-- Removed dead score styles
-- Removed unused `typography` import
+| Problem | Old pattern | New pattern |
+|---|---|---|
+| Score hero blocks | 48–56px centered % in bordered card | `InlineScore`: 22px horizontal display with colored left accent bar |
+| Dashboard NavCards | Icon-in-circle + label | Text-first cards, no icon box, left accent bar for active items |
+| MetricCard trio | 3 separate card boxes | Single `statsStrip` — unified horizontal bar |
+| Emoji in MetaItem | `📋 Contract` | `Contract` label-value stacked (no emoji) |
+| Chat avatars | 44px circle (blue/navy) | 40px rounded square (navyLight) |
+| Chat cards | No left accent | 3px cyan left accent |
 
-### `app/technician/direct-offers/index.tsx` — Direct Offers List
-- Removed `📍` and `📋` emoji prefixes from detail chips (clean text only)
-- Integrated score into the details row as `{score.total}% match` in score color, alongside location and contract type — gives users the match signal early without a dedicated block
-- Simplified card footer to just show date (removed the separate score chip wrapper)
-- Page title: 16px → 20px bold
-- Removed unused `typography` import
+---
 
-### `app/admin/index.tsx` — Admin Dashboard
-- Removed emoji icon box (`52px circle with ⚙️` in a Card)
-- Replaced with clean `<View><Text>Platform Admin</Text><Text>subtitle</Text></View>`
-- Title: 20px bold (same pattern as other screens)
-- Removed unused `Card` import
+## New Component
 
-### `app/company/offers/index.tsx` — Job Offers List
-- Page title: 16px → 20px bold
-- Removed unused `typography` import
+### `src/components/InlineScore.tsx`
 
-### `app/company/chats/index.tsx` — Company Chats
-- Page title: 16px → 20px bold
-- Removed unused `typography` import
+Replaces the centered score hero on all detail screens.
 
-### `app/technician/chats/index.tsx` — Technician Chats
-- Page title: 16px → 20px bold
-- Removed unused `typography` import
+**Before:** 48–56px `fontWeight: '800'` number centered in a `borderWidth: 2` card. Took 120–140px vertical space for one number.
 
-### `app/company/team.tsx` — Company Team
-- Page title: 16px → 20px bold
-- Removed unused `typography` import
+**After:** 22px `fontWeight: '700'` number left-aligned with quality label inline. 3px left border in score color. ~40px vertical space. Embedded inside the summary section — score becomes metadata, not a hero.
+
+Props: `score: number`, `quality: string`, `context: string`
+
+---
+
+## Screens Changed
+
+### `app/company/index.tsx` — Company Dashboard
+- **Removed**: `Card` wrapper from profile header, three separate `MetricCard` boxes, icon boxes from all NavCards
+- **Added**: Flat profile header with `companyName` (22px 700) + type·location (12px), bottom divider
+- **Added**: `statsStrip` — single unified bar showing pending apps / direct offers / active chats
+- **NavCards**: Text-first layout. `isActive` prop adds 3px left accent in `accentColor`. No icon box.
+- **Result**: Immediate priority difference between active cards (Applications with unread) and utility cards (Profile, Map)
 
 ### `app/technician/index.tsx` — Technician Dashboard
-- "Chats" NavCard: `navCardHalf` → `navCardFull` — no longer rendered alone in last row; gives the chat feature appropriate visual weight
+- Same treatment as company dashboard
+- Kept avatar circle (shows technician initial) and completeness bar — these are useful data
+- **Removed**: `Card` wrapper, icon boxes from all NavCards, three separate `MetricCard` boxes
+- **Added**: Flat profile section with bottom divider, `statsStrip`
+- **Retained**: `navCardFull` for Chats card (already fixed in Pass 1)
+
+### `app/company/applications/[id].tsx` — Application Detail
+- **Removed**: 56px centered `scoreHero` block (full-width card with huge number)
+- **Added**: `InlineScore` inside the Job offer section — score appears as context for the offer, not a standalone hero
+- **Moved**: Score breakdown section follows the offer section (not before it)
+- **Removed**: `scoreHero`, `scoreHeroValue`, `scoreHeroLabel`, `scoreHeroMatch`, `scoreUnavailable` styles
+
+### `app/technician/offers/[id].tsx` — Offer Detail (Technician)
+- **Removed**: 48px centered `scoreCard` hero block
+- **Added**: `InlineScore` at top of the `summaryCard` — score is the first thing in the offer context
+- **Removed**: `typography` import (was only used for `typography.h4` on offer title)
+- **Fixed**: `offerTitle` → `fontSize: 17, fontWeight: '700'` inline
+- **Fixed**: `InfoItem` — removed emoji icon param (`📋`, `⏱`), now stacked label-value
+
+### `app/technician/direct-offers/[id].tsx` — Direct Offer Detail
+- **Removed**: 52px centered `scoreCard` hero block
+- **Added**: `InlineScore` at top of the Linked Offer section
+- **Removed**: `scoreCard`, `scoreValue`, `scoreLabel`, `scoreMatchLabel` styles
+- **Removed**: `typography` import
+
+### `app/company/offers/[id].tsx` — Offer Detail (Company) — Tech Match Cards
+- **Removed**: 26px `scorePercent` (fontWeight 800) in `scoreBox`
+- **Added**: `MatchBadge` (from Pass 1) — compact, right-aligned, consistent with list cards
+- **Removed**: `scoreBox`, `scorePercent`, `scoreLabel`, `scoreMatchLabel` styles
+- **Fixed**: `MetaItem` — removed emoji icon param, now stacked label-value
+- **Removed**: `typography` import (was only for `typography.h4` on offer title)
+
+### `app/company/offers/index.tsx` — Company Offers List
+- **Restructured**: Card layout — title+location on left, badge on right (flex-start alignment)
+- **Added**: Footer row with meta chips left + "View →" CTA link right
+- **Changed**: `borderRadius` 14 → 12 (consistent with new cards)
+
+### `app/company/chats/index.tsx` — Company Chats List
+- **Added**: `borderLeftWidth: 3, borderLeftColor: colors.cyan` — immediate visual context for chat type
+- **Changed**: Avatar 44px circle → 40px rounded square (10px radius, navyLight bg)
+- **Added**: `›` chevron on the right
+- **Changed**: `offerLine` — 11px blue 600 → 11px textSecondary 500 (less noisy)
+- **Changed**: `preview` — textSecondary → textMuted (clear visual hierarchy)
+
+### `app/technician/chats/index.tsx` — Technician Chats List
+- Same treatment as company chats
+- Avatar: 44px circle → 40px rounded square (navyLight bg)
+- `borderLeftColor: colors.cyan`, `›` chevron
+
+### `app/company/team.tsx` — Company Team
+- **Changed**: `currentUserCard` — blue border → standard border with `borderLeftWidth: 3, borderLeftColor: colors.blue`
+- **Changed**: `memberCardCurrent` — `borderColor: blue+40` → `borderLeftWidth: 3, borderLeftColor: colors.blue`
+- **Changed**: All card borderRadius 14 → 12
+- **Copy**: "Logged in as (demo)" → "Your session"
 
 ---
 
@@ -91,16 +124,41 @@ Score color: green ≥80, blue ≥60, yellow ≥40, muted <40
 
 | File | Change type |
 |---|---|
-| `src/components/MatchBadge.tsx` | **Created** — new reusable score badge |
-| `app/technician/offers/index.tsx` | Score hierarchy fix + page title |
-| `app/company/applications/index.tsx` | Score hierarchy fix + page title |
-| `app/technician/direct-offers/index.tsx` | Detail chip cleanup + score position + page title |
-| `app/admin/index.tsx` | Header simplification |
-| `app/company/offers/index.tsx` | Page title |
-| `app/company/chats/index.tsx` | Page title |
-| `app/technician/chats/index.tsx` | Page title |
-| `app/company/team.tsx` | Page title |
-| `app/technician/index.tsx` | Chats card full-width |
+| `src/components/InlineScore.tsx` | **Created** |
+| `app/company/index.tsx` | Dashboard redesign |
+| `app/technician/index.tsx` | Dashboard redesign |
+| `app/company/applications/[id].tsx` | Score hero → InlineScore |
+| `app/technician/offers/[id].tsx` | Score hero → InlineScore |
+| `app/technician/direct-offers/[id].tsx` | Score hero → InlineScore |
+| `app/company/offers/[id].tsx` | scoreBox → MatchBadge |
+| `app/company/offers/index.tsx` | Card structure + View CTA |
+| `app/company/chats/index.tsx` | Avatar + left accent + chevron |
+| `app/technician/chats/index.tsx` | Avatar + left accent + chevron |
+| `app/company/team.tsx` | Left-accent borders |
+
+---
+
+## Before / After Summary
+
+### Score display on detail screens
+**Before:** Full-width bordered card, 48–56px centered number, uppercase label below. Took ~140px vertical space. Screamed "AI template".  
+**After:** 22px number with quality label inline, 3px left border in score color, embedded in the relevant section. ~40px. Score is context, not a hero.
+
+### Dashboard layout
+**Before:** 7 identical icon-in-colored-circle cards in a 2-column grid. No visual priority.  
+**After:** Text-first cards, no icon box. Active items (Applications, Offers with unread badges) get a 3px left accent bar. Stats strip shows the three key numbers in a unified bar.
+
+### MetricCard row
+**Before:** Three separate bordered boxes, each with a 26px number floating with no visual connection.  
+**After:** Single `statsStrip` bar — one card, three inline stats with dividers.
+
+### Chat list cards
+**Before:** Plain cards, 44px circle avatars (blue/navy), no directional accent.  
+**After:** 3px cyan left border, 40px square avatar (navyLight), `›` chevron, cleaner typography hierarchy (name → offer → preview).
+
+### Emoji in detail screens
+**Before:** `📋 Contract · ⏱ Min. experience` as labeled metadata items.  
+**After:** `Contract` / `Min. experience` as stacked label-value pairs. No emoji.
 
 ---
 
@@ -114,46 +172,32 @@ Score color: green ≥80, blue ≥60, yellow ≥40, muted <40
 
 ---
 
-## Before / After Summary
-
-### List card hierarchy
-**Before:** Match % (24px 800-weight) visually dominated cards. Offer title (15px) was secondary.  
-**After:** Offer title is the clear primary. Match badge (17px 700-weight, right-aligned) is prominent but not dominant.
-
-### Page headings
-**Before:** `typography.h4` = 16px/600 — visually weak, felt like a section label not a page title.  
-**After:** All list screen headings: `fontSize: 20, fontWeight: '700'` — clearly the primary text on screen.
-
-### Direct Offers detail chips
-**Before:** `📍 Paris, France` · `📋 Permanent` — emoji prefixes in a B2B tool.  
-**After:** `Paris, France · Permanent · 75% match` — clean inline metadata with score integrated.
-
-### Admin dashboard header
-**Before:** Large emoji icon box inside a `Card` component.  
-**After:** Clean text header matching the typography system of other screens.
-
-### Technician dashboard Chats card
-**Before:** Half-width, rendered alone in final row.  
-**After:** Full-width — appropriate visual weight for the primary communication feature.
-
----
-
 ## Acceptance Criteria — Verification
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | App looks more professional and cohesive | PASS |
-| 2 | Does not look like a generic AI-generated template | PASS — score hierarchy fixed, emoji noise removed |
-| 3 | Main company and technician flows are clearer | PASS — page titles stronger, card hierarchy correct |
-| 4 | Cards, badges, CTAs and empty states more consistent | PASS — MatchBadge standardizes score display |
-| 5 | Activity badges still work | PASS — no changes to badge/activity system |
-| 6 | Matching labels still use correct context | PASS — "match with profile" / "match for offer" preserved |
-| 7 | Privacy rules still hold | PASS — no logic changes |
-| 8 | Typecheck passes | PASS |
-| 9 | Seed validation passes | PASS |
-| 10 | Expo export passes | PASS — 36 routes |
-| 11 | No Supabase added | PASS |
-| 12 | No real auth added | PASS |
+| 1 | Main screens look visibly more polished | PASS |
+| 2 | App no longer feels like a generic AI-generated template | PASS — icon boxes removed, score heroes removed, emoji removed |
+| 3 | Dashboard cards are more purposeful | PASS — visual priority for active items |
+| 4 | Offer/application/direct-offer cards easier to scan | PASS — consistent hierarchy, View CTA, InlineScore |
+| 5 | Detail screens have stronger hierarchy | PASS — score integrated into context, not hero |
+| 6 | Match badges and status badges are consistent | PASS |
+| 7 | Activity dots still work | PASS — no changes to activity system |
+| 8 | Business logic unchanged | PASS — only style changes |
+| 9 | Typecheck passes | PASS |
+| 10 | Seed validation passes | PASS |
+| 11 | Expo export passes | PASS — 36 routes |
+| 12 | At least 10 screens with meaningful visible changes | PASS — 11 files changed |
+
+---
+
+## What Will Users Notice Immediately
+
+1. **Dashboards**: No icon boxes — just clean text cards. Priority items stand out with a colored left accent bar. The stats strip is unified, not three floating boxes.
+2. **Detail screens**: No giant centered score percentage. Score is compact (22px, left-anchored with accent bar) and appears in context of the offer.
+3. **Offer detail (company)**: Technician match cards — score is a MatchBadge (compact) not a 26px number.
+4. **Chat lists**: Cards have a cyan left accent and square avatars — instantly distinguishable from offer/application cards.
+5. **Offer list (company)**: Cards have a "View →" CTA and cleaner title/badge alignment.
 
 ---
 
@@ -161,15 +205,15 @@ Score color: green ≥80, blue ≥60, yellow ≥40, muted <40
 
 | Area | Description | Priority |
 |---|---|---|
-| Detail screens (`[id].tsx`) | Application detail, offer detail, and direct offer detail screens have dense layouts without clear section structure (Overview / Match / Actions) | Medium |
-| `app/company/profile.tsx` | Still uses V1 compat metrics (sentCount/acceptedCount); cosmetically misleading | Low (pre-production fix) |
-| `app/company/search.tsx` | Search results still use V1 `SafeTechnicianView` and `TechnicianCard` — card design is inconsistent with V2 application/offer cards | Medium |
-| `app/map.tsx` | Map remains on V1 layer; popup hint still says "send a direct offer" but the map data is from V1 technicianRepository | Low |
-| Dashboard NavCard grid | 2-column equal-weight grid for 7-8 cards is workable but not optimal hierarchy | Low (pre-production redesign) |
-| Empty states | Mix of shared `EmptyState` component and inline ad-hoc empty states — inconsistent | Low |
+| `app/company/search.tsx` | Still uses V1 `SafeTechnicianView`/`TechnicianCard` — card design inconsistent with V2 | Medium |
+| `app/map.tsx` | Map on V1 layer; popup hint outdated | Low |
+| `app/company/profile.tsx` | Uses V1 compat metrics (sentCount/acceptedCount) | Low |
+| Empty states | Emoji icons still used in empty states on all list screens | Low |
+| Detail screen section labels | Minor inconsistency remains (some screens uppercase labels, some not) | Low |
+| Dashboard NavCard grid | Equal-weight 2-column grid OK for now; could benefit from hierarchy at product scale | Low (pre-production) |
 
 ---
 
 ## Ready for Supabase/Auth Phase?
 
-**Yes.** All core flows are functional and the demo is visually coherent. The remaining UI debt is acceptable for a demo/pre-production state. No blockers for starting the Supabase auth migration.
+**Yes.** All core flows are functional, visually coherent, and no longer look like a generic generated template. The remaining debt is cosmetic. No blockers for starting the Supabase auth migration.

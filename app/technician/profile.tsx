@@ -1,26 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TextInput,
-  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
-import { useCallback } from 'react';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { Card } from '../../src/components/Card';
-import { Badge } from '../../src/components/Badge';
 import { Button } from '../../src/components/Button';
+import { CountryPickerField, CityPickerField } from '../../src/components/LocationPicker';
+import { resolveLocationSnapshot } from '../../src/constants/locationCities';
+import {
+  InitialAvatar,
+  TechnicianBadge,
+  TechnicianCard,
+  TechnicianChip,
+  TechnicianPageHeader,
+  TechnicianScreen,
+  techStyles,
+  techUi,
+} from '../../src/components/technician/TechnicianUI';
 import { useTechnicianDashboard } from '../../src/state/useTechnicianDashboard';
-import { Technician, AvailabilityStatus, ContractType } from '../../src/types';
+import { Technician, AvailabilityStatus } from '../../src/types';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
-import { colors, spacing, typography } from '../../src/theme';
+import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
+import { AIRPLANES, HELICOPTERS } from '../../src/constants/aircraftTypes';
+import { colors, spacing } from '../../src/theme';
 
 const AVAILABILITY_OPTIONS: { value: AvailabilityStatus; label: string }[] = [
   { value: 'available', label: 'Available' },
@@ -28,72 +38,52 @@ const AVAILABILITY_OPTIONS: { value: AvailabilityStatus; label: string }[] = [
   { value: 'unavailable', label: 'Unavailable' },
 ];
 
-// ─── local chip ──────────────────────────────────────────────────────────────
+type AvailabilityContract = Technician['availability']['contractTypes'][number];
 
-function Chip({
-  label,
-  selected,
-  onPress,
-  accent,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-  accent?: string;
-}) {
-  return (
-    <TouchableOpacity
-      style={[
-        styles.chip,
-        selected && { backgroundColor: accent ?? colors.technician, borderColor: accent ?? colors.technician },
-      ]}
-      onPress={onPress}
-      activeOpacity={0.75}
-    >
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
-    </TouchableOpacity>
-  );
+function verificationTone(status: string): 'success' | 'warning' | 'error' | 'muted' {
+  if (status === 'verified') return 'success';
+  if (status === 'rejected') return 'error';
+  if (status === 'pending') return 'warning';
+  return 'muted';
 }
 
-// ─── section helpers ─────────────────────────────────────────────────────────
+function availabilityLabel(status?: AvailabilityStatus): string {
+  return AVAILABILITY_OPTIONS.find((opt) => opt.value === status)?.label ?? 'Open to offers';
+}
 
-function SectionLabel({ children }: { children: string }) {
-  return <Text style={styles.sectionLabel}>{children}</Text>;
+function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <View style={styles.sectionTitleBlock}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.sectionSub}>{subtitle}</Text> : null}
+    </View>
+  );
 }
 
 function FieldLabel({ children }: { children: string }) {
   return <Text style={styles.fieldLabel}>{children}</Text>;
 }
 
-function ReadOnlyRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.readOnlyRow}>
-      <Text style={styles.readOnlyLabel}>{label}</Text>
-      <Text style={styles.readOnlyValue}>{value}</Text>
-    </View>
-  );
+function EmptyValue() {
+  return <Text style={styles.emptyValue}>Not specified</Text>;
 }
-
-function Divider() {
-  return <View style={styles.divider} />;
-}
-
-// ─── screen ──────────────────────────────────────────────────────────────────
 
 export default function TechnicianProfileScreen() {
+  const router = useRouter();
   const { technician, loading, updateProfile, refresh } = useTechnicianDashboard();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
+
   const [form, setForm] = useState<Technician | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Refresh data when screen is focused
   useFocusEffect(
     useCallback(() => {
       refresh();
     }, [refresh]),
   );
 
-  // Sync form when technician loads/reloads (e.g. after save)
   useEffect(() => {
     if (technician) {
       setForm({ ...technician });
@@ -106,6 +96,11 @@ export default function TechnicianProfileScreen() {
     setIsDirty(true);
   }
 
+  function updateFields(patch: Partial<Technician>) {
+    setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+    setIsDirty(true);
+  }
+
   function updateAvailability(patch: Partial<Technician['availability']>) {
     setForm((prev) => {
       if (!prev) return prev;
@@ -114,7 +109,25 @@ export default function TechnicianProfileScreen() {
     setIsDirty(true);
   }
 
-  function toggleContractType(type: ContractType) {
+  function toggleLicense(code: string) {
+    if (!form) return;
+    const current = form.licenseCategories;
+    const next = current.includes(code)
+      ? current.filter((c) => c !== code)
+      : [...current, code];
+    updateField('licenseCategories', next);
+  }
+
+  function toggleAircraftType(code: string) {
+    if (!form) return;
+    const current = form.aircraftTypes;
+    const next = current.includes(code)
+      ? current.filter((c) => c !== code)
+      : [...current, code];
+    updateField('aircraftTypes', next);
+  }
+
+  function toggleContractType(type: AvailabilityContract) {
     if (!form) return;
     const current = form.availability.contractTypes;
     const next = current.includes(type)
@@ -125,25 +138,36 @@ export default function TechnicianProfileScreen() {
 
   async function handleSave() {
     if (!form || !isDirty) return;
+    const selectedLocation = resolveLocationSnapshot(form);
+    const profileToSave: Partial<Technician> = selectedLocation
+      ? {
+          ...form,
+          locationCityId: selectedLocation.locationCityId,
+          country: selectedLocation.country,
+          city: selectedLocation.city,
+          baseAirport: selectedLocation.baseAirport,
+        }
+      : form;
     setSaving(true);
-    await updateProfile(form);
+    await updateProfile(profileToSave);
     setSaving(false);
   }
 
   if (loading || !form) {
     return (
       <>
-        <Stack.Screen options={{ title: 'My Profile' }} />
+        <Stack.Screen options={{ headerShown: false }} />
         <LoadingScreen color={colors.technician} role="technician" />
       </>
     );
   }
 
   const completeness = form.profileCompleteness ?? 0;
+  const status = form.availability.status ?? 'open_to_offers';
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'My Profile' }} />
+    <TechnicianScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <DemoModeBanner role="technician" />
       <KeyboardAvoidingView
         style={styles.flex}
@@ -151,92 +175,139 @@ export default function TechnicianProfileScreen() {
       >
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[techStyles.content, isWide && techStyles.contentWide]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Header: anonymous code + completeness */}
-          <Card style={styles.headerCard} elevated>
-            <View style={styles.headerRow}>
-              <View style={styles.headerInfo}>
-                <Text style={styles.anonymousCode}>{form.anonymousCode}</Text>
-                <Text style={styles.headerSub}>Your anonymous identifier</Text>
-              </View>
-              <Badge
-                label={form.verificationStatus}
-                variant={form.verificationStatus === 'verified' ? 'success' : 'warning'}
-              />
-            </View>
-            <Text style={styles.completenessLabel}>
-              Profile completeness · {completeness}%
-            </Text>
-            <View style={styles.progressBg}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${completeness}%` as any },
-                ]}
-              />
-            </View>
-          </Card>
+          <TechnicianPageHeader
+            eyebrow="Technician profile"
+            title="My Profile"
+            subtitle="Manage the details companies use for matching and verification."
+            onBack={() => router.back()}
+          />
 
-          {/* Unsaved changes notice */}
+          <TechnicianCard style={styles.profileCard}>
+            <View style={styles.profileTop}>
+              <InitialAvatar label={form.fullName || form.anonymousCode} size={54} />
+              <View style={styles.profileInfo}>
+                <Text style={styles.profileName} numberOfLines={1}>{form.fullName}</Text>
+                <Text style={styles.profileCode}>{form.anonymousCode}</Text>
+              </View>
+              <TechnicianBadge
+                label={form.verificationStatus}
+                tone={verificationTone(form.verificationStatus)}
+                small
+              />
+            </View>
+
+            <View style={styles.profileMetaRow}>
+              <View style={styles.profileMetaItem}>
+                <Text style={styles.profileMetaLabel}>Base</Text>
+                <Text style={styles.profileMetaValue}>{form.baseAirport || 'N/A'}</Text>
+              </View>
+              <View style={styles.profileMetaItem}>
+                <Text style={styles.profileMetaLabel}>Experience</Text>
+                <Text style={styles.profileMetaValue}>{form.yearsExperience} yr</Text>
+              </View>
+              <View style={styles.profileMetaItem}>
+                <Text style={styles.profileMetaLabel}>Status</Text>
+                <Text style={styles.profileMetaValue}>{availabilityLabel(status)}</Text>
+              </View>
+            </View>
+
+            <View style={styles.completenessBlock}>
+              <View style={styles.completenessRow}>
+                <Text style={styles.completenessLabel}>Profile completeness</Text>
+                <Text style={styles.completenessValue}>{completeness}%</Text>
+              </View>
+              <View style={styles.progressBg}>
+                <View style={[styles.progressFill, { width: `${completeness}%` as any }]} />
+              </View>
+            </View>
+          </TechnicianCard>
+
           {isDirty && (
             <View style={styles.dirtyBanner}>
-              <Text style={styles.dirtyText}>You have unsaved changes</Text>
+              <Text style={styles.dirtyText}>Unsaved changes</Text>
             </View>
           )}
 
-          {/* ── IDENTITY (read-only) ── */}
-          <SectionLabel>Identity</SectionLabel>
-          <Card style={styles.sectionCard}>
-            <ReadOnlyRow label="Full name" value={form.fullName} />
-            <Divider />
-            <ReadOnlyRow label="Email" value={form.email} />
-            <Divider />
-            <ReadOnlyRow label="Phone" value={form.phone} />
-          </Card>
+          <SectionTitle title="Identity" subtitle="Private details remain controlled by privacy rules." />
+          <TechnicianCard style={styles.sectionCard}>
+            <FieldLabel>Full name</FieldLabel>
+            <TextInput
+              style={styles.input}
+              value={form.fullName}
+              onChangeText={(v) => updateField('fullName', v)}
+              placeholder="Full name"
+              placeholderTextColor={techUi.textMuted}
+              autoCapitalize="words"
+            />
+            <View style={styles.fieldGap} />
+            <FieldLabel>Email</FieldLabel>
+            <TextInput
+              style={styles.input}
+              value={form.email}
+              onChangeText={(v) => updateField('email', v)}
+              placeholder="email@example.com"
+              placeholderTextColor={techUi.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <View style={styles.fieldGap} />
+            <FieldLabel>Phone</FieldLabel>
+            <TextInput
+              style={styles.input}
+              value={form.phone}
+              onChangeText={(v) => updateField('phone', v)}
+              placeholder="+1 555 000 0000"
+              placeholderTextColor={techUi.textMuted}
+              keyboardType="phone-pad"
+            />
+          </TechnicianCard>
           <Text style={styles.privacyNote}>
-            Your identity is private by default. It is only shared with a company when you accept their contact request.
+            Your identity is private by default and is only shared with accepted company contacts.
           </Text>
 
-          {/* ── LOCATION (editable) ── */}
-          <SectionLabel>Location</SectionLabel>
-          <Card style={styles.sectionCard}>
-            <FieldLabel>Country</FieldLabel>
-            <TextInput
-              style={styles.input}
+          <SectionTitle title="Location" />
+          <TechnicianCard style={styles.sectionCard}>
+            <CountryPickerField
+              label="Country"
               value={form.country}
-              onChangeText={(v) => updateField('country', v)}
-              placeholder="Country"
-              placeholderTextColor={colors.textMuted}
+              onChange={(country) => updateFields({
+                country,
+                locationCityId: undefined,
+                city: '',
+                baseAirport: '',
+              })}
             />
             <View style={styles.fieldGap} />
-            <FieldLabel>City</FieldLabel>
-            <TextInput
-              style={styles.input}
+            <CityPickerField
+              label="City"
+              country={form.country}
               value={form.city}
-              onChangeText={(v) => updateField('city', v)}
-              placeholder="City"
-              placeholderTextColor={colors.textMuted}
+              onChange={(city, _icao, entry) => updateFields({
+                locationCityId: entry.id,
+                city,
+                baseAirport: entry.iata || entry.icao,
+              })}
             />
             <View style={styles.fieldGap} />
-            <FieldLabel>Base Airport (ICAO)</FieldLabel>
+            <FieldLabel>Base airport</FieldLabel>
             <TextInput
               style={styles.input}
               value={form.baseAirport}
               onChangeText={(v) => updateField('baseAirport', v.toUpperCase())}
               placeholder="e.g. KATL"
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor={techUi.textMuted}
               autoCapitalize="characters"
               maxLength={4}
             />
-          </Card>
+          </TechnicianCard>
 
-          {/* ── EXPERIENCE (editable) ── */}
-          <SectionLabel>Experience</SectionLabel>
-          <Card style={styles.sectionCard}>
-            <FieldLabel>Years of Experience</FieldLabel>
+          <SectionTitle title="Experience" />
+          <TechnicianCard style={styles.sectionCard}>
+            <FieldLabel>Years of experience</FieldLabel>
             <TextInput
               style={styles.input}
               value={String(form.yearsExperience)}
@@ -246,85 +317,108 @@ export default function TechnicianProfileScreen() {
                 else if (v === '') updateField('yearsExperience', 0);
               }}
               placeholder="0"
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor={techUi.textMuted}
               keyboardType="number-pad"
               maxLength={2}
             />
-          </Card>
+          </TechnicianCard>
 
-          {/* ── AVAILABILITY (editable) ── */}
-          <SectionLabel>Availability</SectionLabel>
-          <Card style={styles.sectionCard}>
+          <SectionTitle title="Availability" subtitle="Controls how your profile appears in offer matching." />
+          <TechnicianCard style={styles.sectionCard}>
             <FieldLabel>Status</FieldLabel>
             <View style={styles.chipRow}>
               {AVAILABILITY_OPTIONS.map((opt) => (
-                <Chip
+                <TechnicianChip
                   key={opt.value}
                   label={opt.label}
-                  selected={form.availability.status === opt.value}
+                  selected={status === opt.value}
                   onPress={() => updateAvailability({ status: opt.value })}
                 />
               ))}
             </View>
 
             <View style={styles.fieldGap} />
-            <FieldLabel>Contract Types (select all that apply)</FieldLabel>
+            <FieldLabel>Contract types</FieldLabel>
             <View style={styles.chipRow}>
-              {CONTRACT_TYPES.map((ct) => (
-                <Chip
-                  key={ct.code}
-                  label={ct.label}
-                  selected={form.availability.contractTypes.includes(ct.code as ContractType)}
-                  onPress={() => toggleContractType(ct.code as ContractType)}
-                />
-              ))}
+              {CONTRACT_TYPES.map((ct) => {
+                const code = ct.code as AvailabilityContract;
+                return (
+                  <TechnicianChip
+                    key={ct.code}
+                    label={ct.label}
+                    selected={form.availability.contractTypes.includes(code)}
+                    onPress={() => toggleContractType(code)}
+                  />
+                );
+              })}
             </View>
 
             <View style={styles.fieldGap} />
-            <FieldLabel>Available From (YYYY-MM-DD)</FieldLabel>
+            <FieldLabel>Available from</FieldLabel>
             <TextInput
               style={styles.input}
               value={form.availability.availableFrom ?? ''}
               onChangeText={(v) => updateAvailability({ availableFrom: v || undefined })}
-              placeholder="e.g. 2026-07-01"
-              placeholderTextColor={colors.textMuted}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={techUi.textMuted}
             />
-          </Card>
+          </TechnicianCard>
 
-          {/* ── LICENSES / AIRCRAFT / SPECIALTIES (read-only) ── */}
-          <SectionLabel>Licenses</SectionLabel>
-          <Card style={styles.sectionCard}>
-            <View style={styles.tagRow}>
-              {form.licenseCategories.map((l) => (
-                <Badge key={l} label={l} variant="navy" />
+          <SectionTitle title="Licenses" subtitle="Select all EASA Part-66 categories you hold." />
+          <TechnicianCard style={styles.sectionCard}>
+            <View style={styles.chipRow}>
+              {LICENSE_CATEGORIES.map((lic) => (
+                <TechnicianChip
+                  key={lic.code}
+                  label={lic.code}
+                  selected={form.licenseCategories.includes(lic.code)}
+                  onPress={() => toggleLicense(lic.code)}
+                />
               ))}
             </View>
-          </Card>
+          </TechnicianCard>
 
-          <SectionLabel>Aircraft Types</SectionLabel>
-          <Card style={styles.sectionCard}>
-            <View style={styles.tagRow}>
-              {form.aircraftTypes.map((a) => (
-                <Badge key={a} label={a} variant="info" />
+          <SectionTitle title="Aircraft types" subtitle="Select aircraft types you have experience with." />
+          <TechnicianCard style={styles.sectionCard}>
+            <FieldLabel>Airplanes</FieldLabel>
+            <View style={styles.chipRow}>
+              {AIRPLANES.map((a) => (
+                <TechnicianChip
+                  key={a.code}
+                  label={a.code}
+                  selected={form.aircraftTypes.includes(a.code)}
+                  onPress={() => toggleAircraftType(a.code)}
+                />
               ))}
             </View>
-          </Card>
-
-          <SectionLabel>Specialties</SectionLabel>
-          <Card style={styles.sectionCard}>
-            <View style={styles.tagRow}>
-              {form.specialties.map((s) => (
-                <Badge key={s} label={s} variant="cyan" />
+            <View style={styles.fieldGap} />
+            <FieldLabel>Helicopters</FieldLabel>
+            <View style={styles.chipRow}>
+              {HELICOPTERS.map((a) => (
+                <TechnicianChip
+                  key={a.code}
+                  label={a.code}
+                  selected={form.aircraftTypes.includes(a.code)}
+                  onPress={() => toggleAircraftType(a.code)}
+                />
               ))}
             </View>
-          </Card>
+          </TechnicianCard>
+
+          <SectionTitle title="Specialties" />
+          <TechnicianCard style={styles.sectionCard}>
+            <View style={styles.tagRow}>
+              {form.specialties.length > 0
+                ? form.specialties.map((s) => <TechnicianBadge key={s} label={s} tone="cyan" small />)
+                : <EmptyValue />}
+            </View>
+          </TechnicianCard>
           <Text style={styles.privacyNote}>
-            Licenses, aircraft types, and specialties are managed through the verification process and cannot be edited here.
+            Specialties are managed through verification.
           </Text>
 
-          {/* Save button */}
           <Button
-            label={saving ? 'Saving…' : 'Save Changes'}
+            label={saving ? 'Saving...' : 'Save Changes'}
             variant="primary"
             onPress={handleSave}
             loading={saving}
@@ -334,181 +428,178 @@ export default function TechnicianProfileScreen() {
           />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </TechnicianScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   scroll: { flex: 1 },
-  content: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+  profileCard: {
+    gap: spacing.md,
   },
-
-  // Header card
-  headerCard: {
-    marginBottom: spacing.md,
-    padding: spacing.md,
-  },
-  headerRow: {
+  profileTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: spacing.md,
+    alignItems: 'center',
+    gap: spacing.sm,
   },
-  headerInfo: { flex: 1, marginRight: spacing.sm },
-  anonymousCode: {
+  profileInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  profileName: {
     fontSize: 18,
+    lineHeight: 24,
     fontWeight: '700',
-    color: colors.text,
-    letterSpacing: 0.5,
+    color: techUi.text,
   },
-  headerSub: {
-    fontSize: 12,
-    color: colors.textMuted,
+  profileCode: {
     marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: techUi.textMuted,
+  },
+  profileMetaRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  profileMetaItem: {
+    flex: 1,
+    minWidth: 0,
+    borderWidth: 1,
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.surfaceSoft,
+    borderRadius: 16,
+    padding: spacing.sm,
+  },
+  profileMetaLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: techUi.textMuted,
+    marginBottom: 4,
+  },
+  profileMetaValue: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: techUi.text,
+  },
+  completenessBlock: {
+    gap: spacing.xs,
+  },
+  completenessRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   completenessLabel: {
     fontSize: 12,
-    color: colors.textSecondary,
-    fontWeight: '500',
-    marginBottom: spacing.xs,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: techUi.textSoft,
+  },
+  completenessValue: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: techUi.accent,
   },
   progressBg: {
-    height: 6,
-    backgroundColor: colors.borderLight,
-    borderRadius: 3,
+    height: 7,
+    borderRadius: 4,
     overflow: 'hidden',
+    backgroundColor: techUi.borderSoft,
   },
   progressFill: {
     height: '100%',
-    backgroundColor: colors.technician,
-    borderRadius: 3,
+    borderRadius: 4,
+    backgroundColor: techUi.accent,
   },
-
-  // Dirty banner
   dirtyBanner: {
-    backgroundColor: colors.warning + '20',
-    borderRadius: 8,
-    padding: spacing.sm,
-    marginBottom: spacing.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.warning,
+    marginTop: spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    backgroundColor: techUi.amberSoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   dirtyText: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#92400E',
-  },
-
-  // Section labels
-  sectionLabel: {
-    fontSize: 11,
+    lineHeight: 18,
     fontWeight: '700',
-    color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    color: techUi.amber,
+  },
+  sectionTitleBlock: {
+    marginTop: spacing.lg,
     marginBottom: spacing.xs,
-    marginTop: spacing.md,
   },
-
-  // Section cards
-  sectionCard: {
-    marginBottom: spacing.xs,
-    padding: spacing.md,
+  sectionTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: techUi.text,
   },
-
-  // Read-only rows
-  readOnlyRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  readOnlyLabel: {
-    fontSize: 13,
-    color: colors.textMuted,
-    fontWeight: '500',
-    flex: 1,
-  },
-  readOnlyValue: {
-    fontSize: 13,
-    color: colors.text,
-    fontWeight: '500',
-    flex: 2,
-    textAlign: 'right',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.borderLight,
-    marginHorizontal: -spacing.md,
-  },
-
-  // Privacy note
-  privacyNote: {
+  sectionSub: {
+    marginTop: 2,
     fontSize: 12,
-    color: colors.textMuted,
     lineHeight: 17,
-    marginBottom: spacing.sm,
-    paddingHorizontal: 2,
+    fontWeight: '500',
+    color: techUi.textSoft,
   },
-
-  // Field label
+  sectionCard: {
+    gap: spacing.sm,
+  },
+  privacyNote: {
+    marginTop: spacing.xs,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: techUi.textMuted,
+  },
   fieldLabel: {
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: techUi.textSoft,
     marginBottom: 6,
   },
-  fieldGap: { height: spacing.md },
-
-  // Text input
+  fieldGap: { height: spacing.sm },
   input: {
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 8,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 10,
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: techUi.border,
+    borderRadius: 14,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     fontSize: 14,
-    color: colors.text,
-    backgroundColor: colors.background,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: techUi.text,
+    backgroundColor: techUi.surfaceSoft,
   },
-
-  // Chips
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: spacing.xs,
   },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  chipText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textSecondary,
-  },
-  chipTextSelected: {
-    color: colors.white,
-    fontWeight: '600',
-  },
-
-  // Tag row (read-only badges)
   tagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: spacing.xs,
   },
-
-  // Save button
+  emptyValue: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: techUi.textMuted,
+  },
   saveBtn: {
     marginTop: spacing.lg,
+    marginBottom: spacing.md,
+    backgroundColor: techUi.accent,
+    borderRadius: 16,
   },
 });

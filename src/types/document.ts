@@ -2,7 +2,7 @@ import { DocumentStatus } from './enums'; // owned by enums.ts — not re-export
 
 export type DocumentType = 'license' | 'medical' | 'id' | 'training' | 'resume' | 'other';
 
-// V2 Document — adds storagePath, verifiedAt, verifiedBy, expiresAt
+// V2 Document — simple MVP review fields; no audit log, no reviewer identity, no auto-expiration
 export interface Document {
   id: string;
   technicianId: string;
@@ -11,8 +11,8 @@ export interface Document {
   storagePath: string; // local path in demo; Supabase Storage path later
   status: DocumentStatus;
   uploadedAt: string;
-  verifiedAt?: string;
-  verifiedBy?: string; // admin profile id
+  reviewedAt?: string;      // set when admin changes status (verified / rejected / expired)
+  rejectionReason?: string; // set when status becomes rejected; cleared on other transitions
   expiresAt?: string;
 }
 

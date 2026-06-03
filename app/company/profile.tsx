@@ -1,206 +1,648 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
 } from 'react-native';
-import { Stack } from 'expo-router';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
+import { BadgeCheck, Building2, Check, Pencil, X } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { Card } from '../../src/components/Card';
-import { Badge } from '../../src/components/Badge';
-import { MetricCard } from '../../src/components/MetricCard';
-import { SectionHeader } from '../../src/components/SectionHeader';
+import {
+  CompanyBadge,
+  CompanyCard,
+  CompanyPageHeader,
+  CompanyScreen,
+  IconBox,
+  InfoRow,
+  InitialAvatar,
+  companyStyles,
+  companyUi,
+} from '../../src/components/company/CompanyUI';
+import { CompanyTeamManagement } from '../../src/components/company/CompanyTeamManagement';
 import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
-import { colors, spacing, typography } from '../../src/theme';
+import { useCompanySession } from '../../src/state/SessionContext';
+import { companyRepositoryV2 } from '../../src/repositories/v2/companyRepositoryV2';
+import { canManageCompanySettings } from '../../src/utils/companyPermissionsV2';
+import { COMPANY_TYPES } from '../../src/constants/companyTypes';
+import { CountryPickerField, CityPickerField } from '../../src/components/LocationPicker';
+import type { CompanyProfileView } from '../../src/types/company';
+import type { CompanyTypeCode } from '../../src/types/catalog';
+import { spacing } from '../../src/theme';
 
-function ProfileRow({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.profileRow}>
-      <Text style={styles.profileLabel}>{label}</Text>
-      <Text style={styles.profileValue}>{value}</Text>
-    </View>
-  );
+type CompanyForm = {
+  name: string;
+  companyType: CompanyTypeCode;
+  locationCityId: string;
+  country: string;
+  city: string;
+  email: string;
+  phone: string;
+};
+
+function labelize(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function verificationTone(status: string) {
+  return status === 'verified' ? 'success' : 'warning';
+}
+
+function profileToForm(profile: CompanyProfileView): CompanyForm {
+  return {
+    name: profile.name,
+    companyType: profile.companyType,
+    locationCityId: profile.locationCityId,
+    country: profile.country,
+    city: profile.city,
+    email: profile.email,
+    phone: profile.phone ?? '',
+  };
 }
 
 export default function CompanyProfileScreen() {
-  const { company, requests, loading } = useCompanyDashboard();
+  const router = useRouter();
+  const { companyId, companyMemberRole } = useCompanySession();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 920;
+  const { company, requests, loading, refresh } = useCompanyDashboard();
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfileView | null>(null);
+  const [form, setForm] = useState<CompanyForm | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const canEditCompany = canManageCompanySettings(companyMemberRole);
 
-  if (loading || !company) {
-    return (
-      <>
-        <Stack.Screen options={{ title: 'Company Profile' }} />
-        <LoadingScreen color={colors.blue} role="company" />
-      </>
-    );
+  useEffect(() => {
+    let active = true;
+    companyRepositoryV2.getById(companyId).then((profile) => {
+      if (!active) return;
+      setCompanyProfile(profile);
+      if (profile) setForm(profileToForm(profile));
+    });
+    return () => {
+      active = false;
+    };
+  }, [companyId]);
+
+  function updateForm(patch: Partial<CompanyForm>) {
+    setForm((current) => (current ? { ...current, ...patch } : current));
   }
 
+  function handleCancelEdit() {
+    if (companyProfile) setForm(profileToForm(companyProfile));
+    setEditing(false);
+  }
+
+  async function handleSaveCompany() {
+    if (!form) return;
+
+    const name = form.name.trim();
+    const email = form.email.trim();
+    const phone = form.phone.trim();
+
+    if (!name || !form.locationCityId || !email) {
+      Alert.alert('Missing information', 'Company name, country, city and email are required.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const updated = await companyRepositoryV2.update(companyId, {
+        name,
+        companyType: form.companyType,
+        locationCityId: form.locationCityId,
+        email,
+        phone: phone || undefined,
+      });
+      if (updated) {
+        setCompanyProfile(updated);
+        setForm(profileToForm(updated));
+      }
+      await refresh();
+      setEditing(false);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not update company information.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading || !company) {
+    return <LoadingScreen color={companyUi.accent} role="company" />;
+  }
+
+  const displayName = companyProfile?.name ?? company.companyName;
+  const displayType = companyProfile?.companyType ?? company.companyType;
+  const displayCountry = companyProfile?.country ?? company.country;
+  const displayCity = companyProfile?.city ?? company.city;
+  const displayEmail = companyProfile?.email ?? company.contactEmail;
+  const displayPhone = companyProfile?.phone;
   const acceptedCount = requests.filter((r) => r.status === 'accepted').length;
   const sentCount = requests.filter((r) => r.status === 'sent').length;
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Company Profile' }} />
-      <DemoModeBanner role="company" />
+    <CompanyScreen>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero card */}
-        <Card style={styles.heroCard} elevated>
-          <View style={styles.heroHeader}>
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarInitial}>
-                {company.companyName.charAt(0)}
+        <CompanyPageHeader
+          eyebrow="Profile"
+          title="Company profile"
+          subtitle="Operator identity, contact details and marketplace status."
+          onBack={() => router.back()}
+        />
+
+        <View style={[styles.grid, isWide && styles.gridWide]}>
+          <View style={styles.mainColumn}>
+            <CompanyCard style={styles.heroCard}>
+              <View style={styles.heroTop}>
+                <InitialAvatar label={displayName} size={56} color={companyUi.navy} />
+                <View style={styles.heroInfo}>
+                  <Text style={styles.companyName}>{displayName}</Text>
+                  <Text style={styles.companyLocation}>
+                    {displayCity}, {displayCountry}
+                  </Text>
+                  <View style={styles.badgeRow}>
+                    <CompanyBadge label={labelize(displayType)} tone="navy" />
+                    <CompanyBadge
+                      label={labelize(company.verificationStatus)}
+                      tone={verificationTone(company.verificationStatus)}
+                    />
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.heroMetaGrid}>
+                <MetaTile icon={Building2} label="Operator type" value={labelize(displayType)} />
+                <MetaTile icon={BadgeCheck} label="Verification" value={labelize(company.verificationStatus)} />
+              </View>
+            </CompanyCard>
+
+            <CompanyCard style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <IconBox icon={Building2} color={companyUi.accent} backgroundColor={companyUi.accentSoft} />
+                <View style={styles.sectionCopy}>
+                  <Text style={styles.sectionTitle}>Company details</Text>
+                  <Text style={styles.sectionSub}>
+                    {canEditCompany ? 'Admin-editable operator profile data.' : 'Public operator profile data.'}
+                  </Text>
+                </View>
+                {canEditCompany ? (
+                  editing ? (
+                    <View style={styles.editActions}>
+                      <TouchableOpacity
+                        style={[styles.iconAction, styles.cancelAction]}
+                        onPress={handleCancelEdit}
+                        disabled={saving}
+                        activeOpacity={0.75}
+                      >
+                        <X color={companyUi.textSoft} size={16} strokeWidth={2.2} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.iconAction, styles.saveAction, saving && styles.disabled]}
+                        onPress={handleSaveCompany}
+                        disabled={saving}
+                        activeOpacity={0.75}
+                      >
+                        {saving ? (
+                          <ActivityIndicator size="small" color={companyUi.surface} />
+                        ) : (
+                          <Check color={companyUi.surface} size={16} strokeWidth={2.2} />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.editButton}
+                      onPress={() => setEditing(true)}
+                      activeOpacity={0.75}
+                    >
+                      <Pencil color={companyUi.accent} size={15} strokeWidth={2.2} />
+                      <Text style={styles.editButtonText}>Edit</Text>
+                    </TouchableOpacity>
+                  )
+                ) : null}
+              </View>
+              {editing && form ? (
+                <CompanyEditForm form={form} onChange={updateForm} />
+              ) : (
+                <View style={styles.infoStack}>
+                  <InfoRow label="Company name" value={displayName} />
+                  <InfoRow label="Type" value={labelize(displayType)} />
+                  <InfoRow label="Country" value={displayCountry} />
+                  <InfoRow label="City" value={displayCity} />
+                  <InfoRow label="Contact email" value={displayEmail || 'Not provided'} />
+                  <InfoRow label="Phone" value={displayPhone || 'Not provided'} />
+                </View>
+              )}
+            </CompanyCard>
+
+            <CompanyTeamManagement companyName={displayName} />
+          </View>
+
+          <View style={[styles.sideColumn, isWide && styles.sideColumnWide]}>
+            <CompanyCard style={styles.activityCard}>
+              <Text style={styles.sectionTitle}>Marketplace activity</Text>
+              <View style={styles.metricStack}>
+                <Metric value={requests.length} label="Requests sent" tone="info" />
+                <Metric value={acceptedCount} label="Accepted" tone="success" />
+                <Metric value={sentCount} label="Awaiting reply" tone="warning" />
+              </View>
+            </CompanyCard>
+
+            <CompanyCard style={styles.noticeCard}>
+              <Text style={styles.noticeTitle}>Demo profile</Text>
+              <Text style={styles.noticeText}>
+                Admin users can edit company profile data in demo mode. Changes are stored locally.
               </Text>
-            </View>
-            <View style={styles.heroInfo}>
-              <Text style={[typography.h3, styles.heroName]}>{company.companyName}</Text>
-              <Text style={styles.heroMeta}>{company.city}, {company.country}</Text>
-            </View>
+            </CompanyCard>
           </View>
-          <View style={styles.heroBadges}>
-            <Badge
-              label={company.companyType.charAt(0).toUpperCase() + company.companyType.slice(1)}
-              variant="navy"
-            />
-            <Badge
-              label={company.verificationStatus}
-              variant={company.verificationStatus === 'verified' ? 'success' : 'warning'}
-            />
-          </View>
-        </Card>
-
-        {/* Company details */}
-        <SectionHeader title="Company Details" />
-        <Card style={styles.detailsCard}>
-          <ProfileRow label="Company name" value={company.companyName} />
-          <View style={styles.divider} />
-          <ProfileRow label="Type" value={company.companyType} />
-          <View style={styles.divider} />
-          <ProfileRow label="Country" value={company.country} />
-          <View style={styles.divider} />
-          <ProfileRow label="City" value={company.city} />
-          <View style={styles.divider} />
-          <ProfileRow label="Contact email" value={company.contactEmail} />
-          <View style={styles.divider} />
-          <ProfileRow label="Website" value={company.website} />
-        </Card>
-
-        {/* Activity summary */}
-        <SectionHeader title="Activity" style={styles.sectionGap} />
-        <View style={styles.activityRow}>
-          <MetricCard value={requests.length} label="Requests sent" color={colors.blue} />
-          <View style={styles.activityGap} />
-          <MetricCard value={acceptedCount} label="Accepted" color={colors.success} />
-          <View style={styles.activityGap} />
-          <MetricCard value={sentCount} label="Awaiting reply" color={colors.warning} />
-        </View>
-
-        {/* Demo notice */}
-        <View style={styles.notice}>
-          <Text style={styles.noticeText}>
-            Demo mode · This profile represents {company.companyName} for demonstration
-            purposes. Profile editing will be available in a future release.
-          </Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </CompanyScreen>
+  );
+}
+
+function CompanyEditForm({
+  form,
+  onChange,
+}: {
+  form: CompanyForm;
+  onChange: (patch: Partial<CompanyForm>) => void;
+}) {
+  return (
+    <View style={styles.formStack}>
+      <EditableField
+        label="Company name"
+        value={form.name}
+        onChangeText={(name) => onChange({ name })}
+      />
+      <View style={styles.typeField}>
+        <Text style={styles.inputLabel}>Company type</Text>
+        <View style={styles.typeChips}>
+          {COMPANY_TYPES.map((type) => (
+            <TouchableOpacity
+              key={type.code}
+              style={[
+                styles.typeChip,
+                form.companyType === type.code && styles.typeChipActive,
+              ]}
+              onPress={() => onChange({ companyType: type.code })}
+              activeOpacity={0.75}
+            >
+              <Text
+                style={[
+                  styles.typeChipText,
+                  form.companyType === type.code && styles.typeChipTextActive,
+                ]}
+              >
+                {type.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+      <View style={styles.formRow}>
+        <View style={styles.formHalf}>
+          <CountryPickerField
+            label="Country"
+            value={form.country}
+            onChange={(country) => onChange({
+              country,
+              city: '',
+              locationCityId: '',
+            })}
+          />
+        </View>
+        <View style={styles.formHalf}>
+          <CityPickerField
+            label="City"
+            country={form.country}
+            value={form.city}
+            onChange={(city, _icao, entry) => onChange({
+              city,
+              locationCityId: entry.id,
+            })}
+          />
+        </View>
+      </View>
+      <EditableField
+        label="Contact email"
+        value={form.email}
+        onChangeText={(email) => onChange({ email })}
+        keyboardType="email-address"
+        autoCapitalize="none"
+      />
+      <EditableField
+        label="Phone"
+        value={form.phone}
+        onChangeText={(phone) => onChange({ phone })}
+        keyboardType="phone-pad"
+      />
+    </View>
+  );
+}
+
+function EditableField({
+  label,
+  value,
+  onChangeText,
+  keyboardType,
+  autoCapitalize,
+  style,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  keyboardType?: 'default' | 'email-address' | 'phone-pad';
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  style?: object;
+}) {
+  return (
+    <View style={[styles.inputGroup, style]}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <TextInput
+        style={styles.input}
+        value={value}
+        onChangeText={onChangeText}
+        placeholderTextColor={companyUi.textMuted}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        autoCorrect={false}
+      />
+    </View>
+  );
+}
+
+function MetaTile({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<any>;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.metaTile}>
+      <IconBox icon={icon} size={17} color={companyUi.accent} backgroundColor={companyUi.accentSoft} />
+      <Text style={styles.metaLabel}>{label}</Text>
+      <Text style={styles.metaValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function Metric({ value, label, tone }: { value: number; label: string; tone: 'info' | 'success' | 'warning' }) {
+  const color = tone === 'success' ? companyUi.green : tone === 'warning' ? companyUi.amber : companyUi.blue;
+  const backgroundColor = tone === 'success' ? companyUi.greenSoft : tone === 'warning' ? companyUi.amberSoft : companyUi.blueSoft;
+
+  return (
+    <View style={[styles.metric, { backgroundColor }]}>
+      <Text style={[styles.metricValue, { color }]}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
-  content: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
+  grid: { gap: 14 },
+  gridWide: { flexDirection: 'row', alignItems: 'flex-start' },
+  mainColumn: { flex: 1, gap: 14 },
+  sideColumn: { width: '100%', gap: 14 },
+  sideColumnWide: { width: 300 },
+  heroCard: { gap: 18 },
+  heroTop: {
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'flex-start',
   },
-  heroCard: {
-    marginBottom: spacing.lg,
-    padding: spacing.md,
+  heroInfo: { flex: 1, minWidth: 0 },
+  companyName: {
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
+    color: companyUi.text,
   },
-  heroHeader: {
+  companyLocation: {
+    marginTop: 3,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  badgeRow: {
+    marginTop: 11,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  heroMetaGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  metaTile: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+    backgroundColor: companyUi.surfaceSoft,
+    borderRadius: 18,
+    padding: 12,
+    minWidth: 0,
+  },
+  metaLabel: {
+    marginTop: 10,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+  },
+  metaValue: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  sectionCard: { gap: 16 },
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.md,
+    gap: 12,
   },
-  avatarPlaceholder: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: colors.navy,
+  sectionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  sectionSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  infoStack: {
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
+    paddingTop: 8,
+  },
+  editButton: {
+    minHeight: 36,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    backgroundColor: companyUi.accentSoft,
+    paddingHorizontal: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  editButtonText: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: companyUi.accent,
+  },
+  editActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  iconAction: {
+    width: 36,
+    height: 36,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: spacing.md,
+    borderWidth: 1,
   },
-  avatarInitial: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: colors.white,
+  cancelAction: {
+    backgroundColor: companyUi.surfaceSoft,
+    borderColor: companyUi.border,
   },
-  heroInfo: { flex: 1 },
-  heroName: { marginBottom: 2 },
-  heroMeta: {
-    fontSize: 13,
-    color: colors.textSecondary,
+  saveAction: {
+    backgroundColor: companyUi.accent,
+    borderColor: companyUi.accent,
   },
-  heroBadges: {
+  disabled: {
+    opacity: 0.55,
+  },
+  formStack: {
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
+    paddingTop: spacing.md,
+    gap: spacing.md,
+  },
+  formRow: {
     flexDirection: 'row',
-    gap: 6,
+    gap: spacing.sm,
   },
-  detailsCard: {
-    marginBottom: spacing.md,
-    padding: 0,
-    overflow: 'hidden',
-  },
-  profileRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-  },
-  profileLabel: {
-    fontSize: 13,
-    color: colors.textMuted,
-    fontWeight: '500',
+  formHalf: {
     flex: 1,
   },
-  profileValue: {
-    fontSize: 13,
-    color: colors.text,
-    fontWeight: '500',
-    flex: 2,
-    textAlign: 'right',
+  inputGroup: {
+    gap: 6,
   },
-  divider: {
-    height: 1,
-    backgroundColor: colors.borderLight,
-    marginHorizontal: spacing.md,
+  inputLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.textSoft,
   },
-  sectionGap: {
-    marginTop: spacing.md,
+  input: {
+    minHeight: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surfaceSoft,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: companyUi.text,
   },
-  activityRow: {
+  typeField: {
+    gap: spacing.sm,
+  },
+  typeChips: {
     flexDirection: 'row',
-    marginBottom: spacing.lg,
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
-  activityGap: {
-    width: spacing.sm,
+  typeChip: {
+    minHeight: 34,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surfaceSoft,
+    paddingHorizontal: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  notice: {
-    backgroundColor: colors.borderLight,
-    borderRadius: 10,
-    padding: spacing.md,
+  typeChipActive: {
+    borderColor: companyUi.accent,
+    backgroundColor: companyUi.accent,
+  },
+  typeChipText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  typeChipTextActive: {
+    color: companyUi.surface,
+  },
+  activityCard: { gap: 13 },
+  metricStack: { gap: 9 },
+  metric: {
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+  },
+  metricValue: {
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '700',
+  },
+  metricLabel: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: companyUi.textSoft,
+  },
+  noticeCard: {
+    backgroundColor: companyUi.surfaceSoft,
+  },
+  noticeTitle: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: companyUi.text,
   },
   noticeText: {
+    marginTop: 5,
     fontSize: 12,
-    color: colors.textMuted,
     lineHeight: 18,
-    textAlign: 'center',
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
 });

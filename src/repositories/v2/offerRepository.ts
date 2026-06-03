@@ -3,18 +3,79 @@ import { DB_KEYS } from '../../storage/localDatabase';
 import { Offer, OfferWithRequirements } from '../../types/offer';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
+import { resolveLocationSnapshot } from '../../constants/locationCities';
 
 interface OfferRequiredTechnicianType { id: string; offerId: string; technicianTypeCode: TechnicianTypeCode; }
 interface OfferRequiredLicense        { id: string; offerId: string; licenseCode: LicenseCode; }
 interface OfferRequiredAircraftType   { id: string; offerId: string; aircraftTypeCode: string; }
 
+type OfferLocationInput = {
+  locationCityId?: string;
+  locationCountry?: string;
+  locationCity?: string;
+  locationBaseAirport?: string;
+};
+
 function uuid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function normalizeOfferLocation<T extends Partial<Offer>>(offer: T): T {
+  const location = resolveLocationSnapshot({
+    locationCityId: offer.locationCityId,
+    country: offer.locationCountry,
+    city: offer.locationCity,
+    baseAirport: offer.locationBaseAirport,
+  });
+
+  if (!location) return offer;
+
+  return {
+    ...offer,
+    locationCityId: location.locationCityId,
+    locationCountry: location.country,
+    locationCity: location.city,
+    locationBaseAirport: location.baseAirport,
+  };
+}
+
+function hasOfferLocationPatch(patch: Partial<Offer>): boolean {
+  return (
+    patch.locationCityId !== undefined ||
+    patch.locationCountry !== undefined ||
+    patch.locationCity !== undefined ||
+    patch.locationBaseAirport !== undefined
+  );
+}
+
+function controlledOfferLocation(reference: OfferLocationInput): Pick<Offer, 'locationCityId' | 'locationCountry' | 'locationCity' | 'locationBaseAirport'> {
+  const location = resolveLocationSnapshot({
+    locationCityId: reference.locationCityId,
+    country: reference.locationCountry,
+    city: reference.locationCity,
+    baseAirport: reference.locationBaseAirport,
+  });
+
+  if (!location) {
+    throw new Error('Offer location must reference a valid catalog city.');
+  }
+
+  return {
+    locationCityId: location.locationCityId,
+    locationCountry: location.country,
+    locationCity: location.city,
+    locationBaseAirport: location.baseAirport,
+  };
+}
+
+export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible'> | null | undefined): boolean {
+  return Boolean(offer && offer.status === 'published' && offer.visible);
+}
+
 export const offerRepository = {
   async getAll(): Promise<Offer[]> {
-    return await storageAdapter.get<Offer[]>(DB_KEYS.v2Offers) ?? [];
+    const offers = await storageAdapter.get<Offer[]>(DB_KEYS.v2Offers) ?? [];
+    return offers.map(normalizeOfferLocation);
   },
 
   async getById(id: string): Promise<Offer | null> {
@@ -24,7 +85,7 @@ export const offerRepository = {
 
   async getPublished(): Promise<Offer[]> {
     const offers = await this.getAll();
-    return offers.filter((o) => o.status === 'published' && o.visible);
+    return offers.filter(isOfferOpenForTechnicians);
   },
 
   async getForCompany(companyId: string): Promise<Offer[]> {
@@ -57,7 +118,7 @@ export const offerRepository = {
 
   async getPublishedWithRequirements(): Promise<OfferWithRequirements[]> {
     const all = await this.getAllWithRequirements();
-    return all.filter((o) => o.status === 'published' && o.visible);
+    return all.filter(isOfferOpenForTechnicians);
   },
 
   async updateStatus(id: string, status: OfferStatus): Promise<Offer | null> {
@@ -65,7 +126,7 @@ export const offerRepository = {
     const idx = offers.findIndex((o) => o.id === id);
     if (idx === -1) return null;
 
-    const updated: Offer = { ...offers[idx], status, visible: status === 'published', updatedAt: new Date().toISOString() };
+    const updated: Offer = normalizeOfferLocation({ ...offers[idx], status, visible: status === 'published', updatedAt: new Date().toISOString() });
     const next = [...offers];
     next[idx] = updated;
     await storageAdapter.set(DB_KEYS.v2Offers, next);
@@ -77,7 +138,20 @@ export const offerRepository = {
     const idx = offers.findIndex((o) => o.id === id);
     if (idx === -1) return null;
 
-    const updated: Offer = { ...offers[idx], ...patch, updatedAt: new Date().toISOString() };
+    const merged = { ...offers[idx], ...patch, updatedAt: new Date().toISOString() };
+    const locationPatch = hasOfferLocationPatch(patch)
+      ? controlledOfferLocation(
+          patch.locationCityId !== undefined
+            ? {
+                locationCityId: patch.locationCityId,
+                locationCountry: patch.locationCountry,
+                locationCity: patch.locationCity,
+                locationBaseAirport: patch.locationBaseAirport,
+              }
+            : merged,
+        )
+      : {};
+    const updated: Offer = normalizeOfferLocation({ ...merged, ...locationPatch });
     const next = [...offers];
     next[idx] = updated;
     await storageAdapter.set(DB_KEYS.v2Offers, next);
@@ -89,8 +163,9 @@ export const offerRepository = {
     title: string;
     description: string;
     contractType: ContractTypeCode;
-    locationCountry: string;
-    locationCity: string;
+    locationCityId: string;
+    locationCountry?: string;
+    locationCity?: string;
     locationBaseAirport?: string;
     minYearsExperience: number;
     status?: OfferStatus;
@@ -102,6 +177,7 @@ export const offerRepository = {
     const now = new Date().toISOString();
     const id = `offer-${uuid()}`;
     const status = data.status ?? 'draft';
+    const location = controlledOfferLocation(data);
 
     const offer: Offer = {
       id,
@@ -109,9 +185,7 @@ export const offerRepository = {
       title: data.title,
       description: data.description,
       contractType: data.contractType,
-      locationCountry: data.locationCountry,
-      locationCity: data.locationCity,
-      locationBaseAirport: data.locationBaseAirport,
+      ...location,
       minYearsExperience: data.minYearsExperience,
       status,
       visible: status === 'published',

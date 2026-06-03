@@ -3,23 +3,35 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   RefreshControl,
   useWindowDimensions,
 } from 'react-native';
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
+import { ClipboardCheck, Clock, UserRound } from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { MatchBadge } from '../../../src/components/MatchBadge';
+import {
+  ActivityDot,
+  CompanyBadge,
+  CompanyCard,
+  CompanyChip,
+  CompanyPageHeader,
+  CompanyScreen,
+  EmptyPanel,
+  IconBox,
+  companyStyles,
+  companyUi,
+} from '../../../src/components/company/CompanyUI';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
 import { getSafeTechnicianPreview } from '../../../src/utils/privacyV2';
-import { DEMO_COMPANY_ID } from '../../../src/state/useCompanyDashboard';
+import { useCompanySession } from '../../../src/state/SessionContext';
 import { OfferApplication } from '../../../src/types/offerRequest';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { TechnicianWithRelations } from '../../../src/types/technician';
@@ -45,20 +57,20 @@ const TECH_TYPE_LABELS: Record<string, string> = {
 };
 
 function scoreColor(total: number): string {
-  if (total >= 80) return colors.success;
-  if (total >= 60) return colors.blue;
-  if (total >= 40) return colors.warning;
-  return colors.textMuted;
+  if (total >= 80) return companyUi.green;
+  if (total >= 60) return companyUi.blue;
+  if (total >= 40) return companyUi.amber;
+  return companyUi.textMuted;
 }
 
-function statusInfo(status: string): { label: string; color: string } {
+function statusInfo(status: string): { label: string; tone: 'success' | 'warning' | 'error' | 'muted' } {
   switch (status) {
-    case 'pending': return { label: 'Pending review', color: colors.warning };
-    case 'accepted': return { label: 'Accepted', color: colors.success };
-    case 'rejected': return { label: 'Rejected', color: colors.error };
-    case 'withdrawn': return { label: 'Withdrawn', color: colors.textMuted };
-    case 'expired': return { label: 'Expired', color: colors.textMuted };
-    default: return { label: status, color: colors.textMuted };
+    case 'pending': return { label: 'Needs review', tone: 'warning' };
+    case 'accepted': return { label: 'Accepted', tone: 'success' };
+    case 'rejected': return { label: 'Closed', tone: 'error' };
+    case 'withdrawn': return { label: 'Withdrawn', tone: 'muted' };
+    case 'expired': return { label: 'Expired', tone: 'muted' };
+    default: return { label: status, tone: 'muted' };
   }
 }
 
@@ -70,6 +82,7 @@ export default function ApplicationsListScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const { companyId } = useCompanySession();
 
   const [entries, setEntries] = useState<AppEntry[]>([]);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
@@ -78,7 +91,7 @@ export default function ApplicationsListScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   const load = useCallback(async () => {
-    const apps = await offerApplicationRepository.getForCompany(DEMO_COMPANY_ID);
+    const apps = await offerApplicationRepository.getForCompany(companyId);
 
     const allOffers = await offerRepository.getAllWithRequirements();
     const offersMap: Record<string, OfferWithRequirements> = {};
@@ -103,7 +116,7 @@ export default function ApplicationsListScreen() {
 
     const ids = await activityRepository.getUnreadEntityIds(
       'company',
-      DEMO_COMPANY_ID,
+      companyId,
       ['application_received'],
     );
 
@@ -120,7 +133,7 @@ export default function ApplicationsListScreen() {
 
     setUnreadIds(ids);
     setEntries(built);
-  }, []);
+  }, [companyId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -146,30 +159,28 @@ export default function ApplicationsListScreen() {
   if (loading) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Applications' }} />
+        <Stack.Screen options={{ headerShown: false }} />
         <LoadingScreen color={colors.blue} role="company" />
       </>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Incoming Applications' }} />
+    <CompanyScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, isWide && styles.contentWide]}
+        contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <Text style={styles.pageTitle}>Applications</Text>
-          <Text style={styles.pageSub}>
-            {entries.length} total · {pendingCount} pending review
-          </Text>
-        </View>
+        <CompanyPageHeader
+          eyebrow="Candidate review"
+          title="Applications"
+          subtitle={`${entries.length} total - ${pendingCount} pending review`}
+          onBack={() => router.back()}
+        />
 
-        {/* Status filter tabs */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -177,175 +188,173 @@ export default function ApplicationsListScreen() {
           contentContainerStyle={styles.filterContent}
         >
           {(['all', 'pending', 'accepted', 'rejected'] as StatusFilter[]).map((f) => (
-            <TouchableOpacity
+            <CompanyChip
               key={f}
-              style={[styles.filterPill, statusFilter === f && styles.filterPillActive]}
+              label={`${f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}${f === 'pending' && pendingCount > 0 ? ` (${pendingCount})` : ''}`}
+              selected={statusFilter === f}
               onPress={() => setStatusFilter(f)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.filterPillText, statusFilter === f && styles.filterPillTextActive]}>
-                {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                {f === 'pending' && pendingCount > 0 ? ` (${pendingCount})` : ''}
-              </Text>
-            </TouchableOpacity>
+            />
           ))}
         </ScrollView>
 
-        {/* Empty state */}
-        {filtered.length === 0 && (
-          <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📭</Text>
-            <Text style={styles.emptyTitle}>
-              {entries.length === 0 ? 'No applications yet' : 'No applications in this category'}
-            </Text>
-            <Text style={styles.emptySub}>
-              {entries.length === 0
-                ? 'When technicians apply to your offers, their applications will appear here.'
-                : 'Try switching to "All" to see all applications.'}
-            </Text>
-          </View>
-        )}
+        {filtered.length === 0 ? (
+          <EmptyPanel
+            title={entries.length === 0 ? 'No applications yet' : 'No applications in this category'}
+            subtitle={entries.length === 0
+              ? 'When technicians apply to your offers, their applications will appear here.'
+              : 'Try switching to All to see every application.'}
+          />
+        ) : null}
 
-        {/* Application cards */}
         {filtered.map(({ app, offer, safePreview, score }) => {
-          const { label: statusLabel, color: statusColor } = statusInfo(app.status);
-          const accent = score ? scoreColor(score.total) : colors.textMuted;
+          const status = statusInfo(app.status);
+          const accent = score ? scoreColor(score.total) : companyUi.textMuted;
           const isUnread = unreadIds.has(app.id);
 
           return (
             <TouchableOpacity
               key={app.id}
-              style={[styles.card, { borderLeftColor: accent }, isUnread && styles.cardUnread]}
               onPress={() => router.push(`/company/applications/${app.id}` as any)}
               activeOpacity={0.75}
             >
-              {isUnread && <View style={styles.unreadDot} />}
-              {/* Top row: offer title + score */}
-              <View style={styles.cardTop}>
-                <View style={styles.cardLeft}>
-                  <Text style={styles.offerTitle} numberOfLines={1}>
-                    {offer?.title ?? 'Unknown offer'}
-                  </Text>
-                  {safePreview && (
-                    <Text style={styles.applicantCode}>
-                      {safePreview.anonymousCode} · {TECH_TYPE_LABELS[safePreview.technicianType] ?? safePreview.technicianType} · {safePreview.age} yrs
-                    </Text>
-                  )}
-                  {safePreview && (
-                    <Text style={styles.applicantLocation}>
-                      {safePreview.city}, {safePreview.country}
-                      {safePreview.baseAirport ? ` · ${safePreview.baseAirport}` : ''}
-                    </Text>
-                  )}
+              <CompanyCard style={[styles.card, { borderLeftColor: accent }, isUnread && styles.cardUnread]}>
+                {isUnread ? <ActivityDot /> : null}
+                <View style={styles.cardTop}>
+                  <IconBox icon={ClipboardCheck} color={accent} backgroundColor={score && score.total >= 60 ? companyUi.blueSoft : companyUi.surfaceSoft} />
+                  <View style={styles.cardTitleBlock}>
+                    <Text style={styles.offerTitle} numberOfLines={2}>{offer?.title ?? 'Unknown offer'}</Text>
+                    {safePreview ? (
+                      <Text style={styles.applicantLine} numberOfLines={1}>
+                        {safePreview.anonymousCode} - {TECH_TYPE_LABELS[safePreview.technicianType] ?? safePreview.technicianType}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {score ? <MatchBadge score={score.total} context="match for this offer" /> : null}
                 </View>
-                {score && (
-                  <MatchBadge score={score.total} context="match for offer" />
-                )}
-              </View>
 
-              {/* Cover note snippet */}
-              {app.coverNote && (
-                <Text style={styles.coverNote} numberOfLines={2}>
-                  "{app.coverNote}"
-                </Text>
-              )}
+                {safePreview ? (
+                  <View style={styles.previewRow}>
+                    <CompanyBadge label={`${safePreview.city}, ${safePreview.country}`} tone="muted" small />
+                    <CompanyBadge label={safePreview.verificationStatus} tone={safePreview.verificationStatus === 'verified' ? 'success' : 'warning'} small />
+                    <CompanyBadge label={`${safePreview.age} yrs`} tone="muted" small />
+                  </View>
+                ) : null}
 
-              {/* Bottom row: status + date + CTA */}
-              <View style={styles.cardBottom}>
-                <View style={[styles.statusPill, { borderColor: statusColor + '60' }]}>
-                  <Text style={[styles.statusPillText, { color: statusColor }]}>{statusLabel}</Text>
+                {app.coverNote ? (
+                  <View style={styles.coverNote}>
+                    <Text style={styles.coverNoteText} numberOfLines={2}>{app.coverNote}</Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.cardBottom}>
+                  <CompanyBadge label={status.label} tone={status.tone} small />
+                  <View style={styles.dateWrap}>
+                    <Clock color={companyUi.textMuted} size={13} strokeWidth={2} />
+                    <Text style={styles.dateText}>{formatDate(app.createdAt)}</Text>
+                  </View>
+                  <View style={styles.reviewButton}>
+                    <UserRound color={colors.white} size={14} strokeWidth={2} />
+                    <Text style={styles.reviewButtonText}>Review</Text>
+                  </View>
                 </View>
-                <Text style={styles.dateText}>{formatDate(app.createdAt)}</Text>
-                <Text style={styles.reviewLink}>Review →</Text>
-              </View>
+              </CompanyCard>
             </TouchableOpacity>
           );
         })}
       </ScrollView>
-    </SafeAreaView>
+    </CompanyScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  contentWide: { maxWidth: 720, alignSelf: 'center', width: '100%' },
-  headerRow: { marginBottom: spacing.md },
-  pageTitle: { fontSize: 20, fontWeight: '700', color: colors.text, marginBottom: 2 },
-  pageSub: { fontSize: 12, color: colors.textSecondary },
-  filterRow: { marginBottom: spacing.md, flexGrow: 0 },
-  filterContent: { gap: spacing.xs, paddingRight: spacing.lg },
-  filterPill: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
-    backgroundColor: colors.surface,
+  filterRow: {
+    marginBottom: spacing.md,
+    flexGrow: 0,
   },
-  filterPillActive: { backgroundColor: colors.blue, borderColor: colors.blue },
-  filterPillText: { fontSize: 12, fontWeight: '500', color: colors.textSecondary },
-  filterPillTextActive: { color: colors.white },
-  empty: { alignItems: 'center', paddingVertical: spacing.xxxl },
-  emptyIcon: { fontSize: 40, marginBottom: spacing.md },
-  emptyTitle: { fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: spacing.xs },
-  emptySub: { fontSize: 13, color: colors.textSecondary, textAlign: 'center', maxWidth: 280 },
+  filterContent: {
+    gap: spacing.xs,
+    paddingRight: spacing.lg,
+  },
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: spacing.md,
+    marginBottom: spacing.md,
     borderLeftWidth: 4,
   },
   cardUnread: {
-    borderColor: colors.error + '60',
-  },
-  unreadDot: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.error,
+    borderColor: '#FECACA',
   },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: spacing.xs,
     gap: spacing.sm,
   },
-  cardLeft: { flex: 1 },
-  offerTitle: { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 2 },
-  applicantCode: { fontSize: 12, color: colors.textSecondary, marginBottom: 1 },
-  applicantLocation: { fontSize: 11, color: colors.textMuted },
-  coverNote: {
+  cardTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  offerTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  applicantLine: {
+    marginTop: 4,
     fontSize: 12,
-    color: colors.textSecondary,
-    fontStyle: 'italic',
-    lineHeight: 18,
-    marginBottom: spacing.xs,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: companyUi.textSoft,
+  },
+  previewRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  coverNote: {
+    borderLeftWidth: 3,
+    borderLeftColor: companyUi.border,
     paddingLeft: spacing.sm,
-    borderLeftWidth: 2,
-    borderLeftColor: colors.border,
+  },
+  coverNoteText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
   cardBottom: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    marginTop: spacing.xs,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
   },
-  statusPill: {
-    borderWidth: 1,
-    borderRadius: 6,
+  dateWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  dateText: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: companyUi.textMuted,
+  },
+  reviewButton: {
+    minHeight: 34,
+    borderRadius: 13,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    backgroundColor: companyUi.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
   },
-  statusPillText: { fontSize: 11, fontWeight: '700' },
-  dateText: { fontSize: 11, color: colors.textMuted, flex: 1 },
-  reviewLink: { fontSize: 13, fontWeight: '700', color: colors.blue },
+  reviewButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.white,
+  },
 });

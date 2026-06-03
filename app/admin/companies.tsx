@@ -1,58 +1,98 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
   FlatList,
-  TouchableOpacity,
   ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
 } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { Building2, Search } from 'lucide-react-native';
 import { DemoModeBanner } from '../../src/components/DemoModeBanner';
+import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { AdminCompanyCard } from '../../src/components/AdminCompanyCard';
-import { EmptyState } from '../../src/components/EmptyState';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import { Company, VerificationStatus } from '../../src/types';
-import { colors, spacing } from '../../src/theme';
+import type { Company, CompanyTypeCode, LegacyVerificationStatus } from '../../src/types';
+import { COMPANY_TYPES } from '../../src/constants/companyTypes';
+import {
+  AdminCard,
+  AdminChip,
+  AdminEmptyPanel,
+  AdminIconBox,
+  AdminPageHeader,
+  AdminScreen,
+  adminUi,
+} from '../../src/components/admin/AdminUI';
+import { spacing } from '../../src/theme';
 
-type StatusFilter = 'all' | VerificationStatus;
-type TypeFilter = 'all' | 'MRO' | 'airline' | 'recruitment_agency' | 'helicopter_operator' | 'other';
+type StatusFilter = 'all' | 'pending' | 'verified' | 'rejected';
+type TypeFilter = 'all' | CompanyTypeCode;
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'pending', label: 'Pending' },
   { key: 'verified', label: 'Verified' },
-  { key: 'unverified', label: 'Unverified' },
+  { key: 'rejected', label: 'Rejected' },
 ];
 
 const TYPE_OPTIONS: { key: TypeFilter; label: string }[] = [
   { key: 'all', label: 'All types' },
-  { key: 'airline', label: 'Airline' },
-  { key: 'MRO', label: 'MRO' },
-  { key: 'recruitment_agency', label: 'Recruitment Agency' },
-  { key: 'helicopter_operator', label: 'Helicopter Operator' },
-  { key: 'other', label: 'Other' },
+  ...COMPANY_TYPES.map((type): { key: TypeFilter; label: string } => ({ key: type.code, label: type.label })),
 ];
+
+// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
+function normalizedStatus(status: LegacyVerificationStatus): StatusFilter {
+  if (status === 'unverified') return 'pending';
+  return status;
+}
 
 function filterCompanies(
   companies: Company[],
   status: StatusFilter,
   type: TypeFilter,
+  query: string,
 ): Company[] {
   let result = companies;
-  if (status !== 'all') result = result.filter((c) => c.verificationStatus === status);
-  if (type !== 'all') result = result.filter((c) => (c.companyType as string) === type);
+  if (status !== 'all') result = result.filter((company) => normalizedStatus(company.verificationStatus) === status);
+  if (type !== 'all') result = result.filter((company) => String(company.companyType) === type);
+  if (query.trim()) {
+    const q = query.trim().toLowerCase();
+    result = result.filter((company) =>
+      [
+        company.companyName,
+        company.companyType,
+        company.city,
+        company.country,
+        company.contactEmail,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
+    );
+  }
   return [...result].sort((a, b) => {
-    const order = { pending: 0, unverified: 1, rejected: 2, verified: 3 };
-    return (order[a.verificationStatus] ?? 0) - (order[b.verificationStatus] ?? 0);
+    const order: Record<StatusFilter, number> = { pending: 0, rejected: 1, verified: 2, all: 3 };
+    return order[normalizedStatus(a.verificationStatus)] - order[normalizedStatus(b.verificationStatus)];
   });
 }
 
 export default function AdminCompaniesScreen() {
-  const { companies, loading, refresh, updateCompanyVerification } = useAdminDashboard();
+  const router = useRouter();
+  const {
+    companies,
+    companyMemberCounts,
+    companyProfileMap,
+    loading,
+    refresh,
+    updateCompanyVerification,
+  } = useAdminDashboard();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [query, setQuery] = useState('');
+  const { width } = useWindowDimensions();
+  const isWide = width >= 900;
 
   useFocusEffect(
     useCallback(() => {
@@ -61,152 +101,171 @@ export default function AdminCompaniesScreen() {
   );
 
   const filtered = useMemo(
-    () => filterCompanies(companies, statusFilter, typeFilter),
-    [companies, statusFilter, typeFilter],
+    () => filterCompanies(companies, statusFilter, typeFilter, query),
+    [companies, statusFilter, typeFilter, query],
   );
+  const pendingCount = companies.filter((company) => normalizedStatus(company.verificationStatus) === 'pending').length;
+
+  if (loading) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <LoadingScreen color={adminUi.accent} role="admin" />
+      </>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Companies' }} />
+    <AdminScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <DemoModeBanner role="admin" />
 
-      {/* Status tabs */}
-      <View style={styles.tabRow}>
-        {STATUS_TABS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.tab, statusFilter === key && styles.tabActive]}
-            onPress={() => setStatusFilter(key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.tabText, statusFilter === key && styles.tabTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <View style={[styles.topContent, isWide && styles.contentWide]}>
+        <AdminPageHeader
+          eyebrow="Organizations"
+          title="Company management"
+          subtitle="Audit buyer profiles, company category and membership footprint before verification."
+          onBack={() => router.back()}
+        />
 
-      {/* Type filter chips */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.typeScroll}
-        contentContainerStyle={styles.typeChips}
-      >
-        {TYPE_OPTIONS.map(({ key, label }) => (
-          <TouchableOpacity
-            key={key}
-            style={[styles.chip, typeFilter === key && styles.chipActive]}
-            onPress={() => setTypeFilter(key)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.chipText, typeFilter === key && styles.chipTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+        <AdminCard style={styles.controls}>
+          <View style={styles.searchShell}>
+            <Search size={18} color={adminUi.textMuted} strokeWidth={2.2} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search company, city, type or email"
+              placeholderTextColor={adminUi.textMuted}
+              value={query}
+              onChangeText={setQuery}
+              clearButtonMode="while-editing"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {STATUS_TABS.map(({ key, label }) => (
+              <AdminChip
+                key={key}
+                label={label}
+                selected={statusFilter === key}
+                onPress={() => setStatusFilter(key)}
+              />
+            ))}
+          </ScrollView>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+            {TYPE_OPTIONS.map(({ key, label }) => (
+              <AdminChip
+                key={key}
+                label={label}
+                selected={typeFilter === key}
+                onPress={() => setTypeFilter(key)}
+              />
+            ))}
+          </ScrollView>
+        </AdminCard>
+      </View>
 
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, isWide && styles.contentWide]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          !loading ? (
-            <Text style={styles.resultCount}>
-              {filtered.length} compan{filtered.length !== 1 ? 'ies' : 'y'}
-            </Text>
-          ) : null
+          <View style={styles.listHeader}>
+            <View>
+              <Text style={styles.resultCount}>
+                {filtered.length} compan{filtered.length !== 1 ? 'ies' : 'y'}
+              </Text>
+              <Text style={styles.resultSub}>
+                {pendingCount} pending verification
+              </Text>
+            </View>
+            <AdminIconBox icon={Building2} size={17} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+          </View>
         }
         ListEmptyComponent={
-          !loading ? (
-            <EmptyState
-              icon="🏢"
-              title="No companies found"
-              subtitle="Try adjusting your filters."
-            />
-          ) : null
+          <AdminEmptyPanel
+            title="No companies found"
+            subtitle="Adjust the company type, status or search terms."
+          />
         }
         renderItem={({ item }) => (
           <AdminCompanyCard
             company={item}
+            memberCount={companyMemberCounts[item.id]}
+            contactPhone={companyProfileMap[item.id]?.phone}
             onUpdateStatus={updateCompanyVerification}
           />
         )}
       />
-    </SafeAreaView>
+    </AdminScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  tabRow: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs,
+  topContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: 8,
+  contentWide: {
+    maxWidth: 920,
+    alignSelf: 'center',
+    width: '100%',
+    paddingHorizontal: spacing.lg,
+  },
+  controls: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  searchShell: {
+    minHeight: 44,
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  tabActive: {
-    backgroundColor: colors.admin,
-  },
-  tabText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  tabTextActive: {
-    color: colors.white,
-  },
-  typeScroll: {
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  typeChips: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs,
-  },
-  chip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    borderRadius: 20,
+    gap: spacing.sm,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    borderColor: adminUi.border,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
+    paddingHorizontal: spacing.md,
   },
-  chipActive: {
-    backgroundColor: colors.navy,
-    borderColor: colors.navy,
-  },
-  chipText: {
-    fontSize: 12,
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '500',
-    color: colors.textSecondary,
+    color: adminUi.text,
+    paddingVertical: spacing.sm,
   },
-  chipTextActive: {
-    color: colors.white,
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingRight: spacing.md,
   },
   list: {
-    padding: spacing.lg,
+    paddingHorizontal: spacing.md,
     paddingBottom: spacing.xxxl,
   },
-  resultCount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textMuted,
+  listHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
     marginBottom: spacing.sm,
+  },
+  resultCount: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: adminUi.text,
+  },
+  resultSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: adminUi.textMuted,
   },
 });

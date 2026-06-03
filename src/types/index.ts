@@ -3,7 +3,7 @@ export * from './enums';       // AppRole, UserStatus, VerificationStatus, Docum
 export * from './catalog';     // TechnicianTypeCode, LicenseCode, ContractTypeCode, CompanyTypeCode, catalog interfaces
 export * from './profile';     // Profile
 export * from './technician';  // TechnicianProfile, TechnicianWithRelations, TechnicianLicense, TechnicianHabilitation, TechnicianAircraftExperience, SocialLinks, Availability + V1 compat: Technician, SafeTechnicianView, AvailabilityStatus, ContractType
-export * from './privacy';     // SafeTechnicianPreview, UnlockedTechnicianView, TechnicianView, isUnlocked
+export * from './privacy';     // SafeTechnicianPreview, UnlockedTechnicianView, TechnicianView, isUnlocked, TechnicianPublicPreviewDTO, TechnicianUnlockedDTO
 export * from './company';     // CompanyProfile, CompanyMember + V1 compat: Company, CompanyType
 export * from './offer';       // Offer, OfferWithRequirements
 export * from './offerRequest'; // OfferRequest, OfferApplication, OfferInboxRecord, isDirectOffer, isApplication

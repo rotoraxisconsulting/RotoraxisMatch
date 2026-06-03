@@ -1,60 +1,96 @@
 // Legacy route kept for backward navigation only.
 // TODO: Remove this screen once all deep links to /company/requests are gone.
 import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
-import { Button } from '../../src/components/Button';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
-import { colors, spacing, typography } from '../../src/theme';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Stack, useRouter } from 'expo-router';
+import { BriefcaseBusiness, ClipboardCheck } from 'lucide-react-native';
+import {
+  CompanyCard,
+  CompanyPageHeader,
+  CompanyScreen,
+  IconBox,
+  companyUi,
+} from '../../src/components/company/CompanyUI';
 
 export default function CompanyRequestsLegacy() {
   const router = useRouter();
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Requests' }} />
-      <DemoModeBanner role="company" />
-      <View style={styles.content}>
-        <Text style={styles.icon}>📦</Text>
-        <Text style={[typography.h3, styles.title]}>Moved to new screens</Text>
-        <Text style={styles.body}>
-          Incoming applications and direct offer responses are now managed in separate dedicated screens.
-        </Text>
-        <Button
-          label="View Applications"
-          onPress={() => router.replace('/company/applications' as any)}
-          variant="primary"
-          fullWidth
-          style={styles.btn}
-        />
-        <Button
-          label="View Job Offers"
-          onPress={() => router.replace('/company/offers' as any)}
-          variant="outline"
-          fullWidth
-          style={styles.btn}
-        />
+    <CompanyScreen>
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={styles.wrap}>
+        <CompanyCard style={styles.card}>
+          <CompanyPageHeader
+            eyebrow="Legacy route"
+            title="Requests moved"
+            subtitle="Incoming applications and direct offer responses now live in dedicated company workspaces."
+            onBack={() => router.back()}
+          />
+
+          <TouchableOpacity
+            style={styles.routeCard}
+            onPress={() => router.replace('/company/applications' as any)}
+            activeOpacity={0.75}
+          >
+            <IconBox icon={ClipboardCheck} color={companyUi.blue} backgroundColor={companyUi.blueSoft} />
+            <View style={styles.routeCopy}>
+              <Text style={styles.routeTitle}>Applications</Text>
+              <Text style={styles.routeSub}>Review incoming applications and accepted technicians.</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.routeCard}
+            onPress={() => router.replace('/company/offers' as any)}
+            activeOpacity={0.75}
+          >
+            <IconBox icon={BriefcaseBusiness} color={companyUi.accent} backgroundColor={companyUi.accentSoft} />
+            <View style={styles.routeCopy}>
+              <Text style={styles.routeTitle}>Job offers</Text>
+              <Text style={styles.routeSub}>Manage published offers and direct-offer workflows.</Text>
+            </View>
+          </TouchableOpacity>
+        </CompanyCard>
       </View>
-    </SafeAreaView>
+    </CompanyScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  content: {
+  wrap: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.xl,
-    gap: spacing.md,
+    paddingHorizontal: 16,
+    paddingVertical: 24,
   },
-  icon: { fontSize: 48, marginBottom: spacing.sm },
-  title: { textAlign: 'center' },
-  body: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 21,
-    marginBottom: spacing.sm,
+  card: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    gap: 12,
   },
-  btn: { marginTop: spacing.xs },
+  routeCard: {
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    borderRadius: 18,
+    backgroundColor: companyUi.surfaceSoft,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  routeCopy: { flex: 1, minWidth: 0 },
+  routeTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  routeSub: {
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
 });

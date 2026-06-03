@@ -1,3 +1,26 @@
+/**
+ * Privacy DTO types for company-facing technician views.
+ *
+ * SECURITY NOTE: These DTOs prevent accidental private field access in React code.
+ * They are NOT the security boundary. The Supabase boundary enforces real access control:
+ *   - Row-level Security on technician_profiles (row access)
+ *   - technician_public_view (column-level privacy via CASE WHEN offer_accepted_between())
+ *   - get_unlocked_technician() RPC (requires accepted status, checked server-side)
+ *
+ * In the local demo the privacy gate is applied by getTechnicianViewForCompany()
+ * and technicianRepositoryV2.getViewForCompany(). When Supabase is live, the
+ * same DTOs will be populated by view/RPC responses — the React code changes
+ * minimally; only the data layer changes.
+ *
+ * Future Supabase mapping:
+ *   SafeTechnicianPreview / TechnicianPublicPreviewDTO  →  technician_public_view / search_technicians_public()
+ *   UnlockedTechnicianView / TechnicianUnlockedDTO      →  get_unlocked_technician() (requires accepted status)
+ *
+ * Company-facing code must NEVER consume TechnicianProfile or TechnicianWithRelations directly.
+ * Use getTechnicianViewForCompany() (privacyV2.ts) or technicianRepositoryV2.getViewForCompany()
+ * as the single entry-point so the privacy gate is always applied.
+ */
+
 import { TechnicianTypeCode, LicenseCode } from './catalog';
 import { VerificationStatus } from './enums';
 import {
@@ -15,9 +38,13 @@ export interface SafeTechnicianPreview {
   anonymousCode: string;
   age: number; // derived from birthDate
   technicianType: TechnicianTypeCode;
+  // Required: derived from the persisted locationCityId on the underlying TechnicianProfile.
+  locationCityId: string;
   country: string;
   city: string;
   baseAirport?: string;
+  latitude?: number;
+  longitude?: number;
   licenses: LicenseCode[];
   habilitations: TechnicianHabilitation[];
   aircraftExperience: TechnicianAircraftExperience[];
@@ -43,3 +70,18 @@ export type TechnicianView = SafeTechnicianPreview | UnlockedTechnicianView;
 export function isUnlocked(view: TechnicianView): view is UnlockedTechnicianView {
   return 'firstName' in view;
 }
+
+// ---------------------------------------------------------------------------
+// DTO name aliases — same types, names that make the intent explicit at call sites.
+//
+// TechnicianPublicPreviewDTO  — use this name when the context is "data the company
+//   receives from a search or listing before any acceptance".
+//
+// TechnicianUnlockedDTO — use this name when the context is "data the company
+//   receives after an accepted offer_request or offer_application".
+//
+// Both aliases are re-exported from src/types/index.ts so screens can import either
+// the canonical interface name or the DTO alias — whichever reads more clearly.
+// ---------------------------------------------------------------------------
+export type TechnicianPublicPreviewDTO = SafeTechnicianPreview;
+export type TechnicianUnlockedDTO = UnlockedTechnicianView;

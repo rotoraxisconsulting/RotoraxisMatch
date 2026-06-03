@@ -2,12 +2,15 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Technician,
   Company,
+  CompanyProfileView,
+  Document,
   TechnicianDocument,
+  TechnicianWithRelations,
   MatchRequest,
   VerificationStatus,
   DocumentStatus,
 } from '../types';
-import { Offer } from '../types/offer';
+import { OfferWithRequirements } from '../types/offer';
 import { OfferRequest, OfferApplication } from '../types/offerRequest';
 import { OfferStatus } from '../types/enums';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
@@ -45,10 +48,14 @@ export interface AdminMetrics {
 
 interface UseAdminDashboardReturn {
   technicians: Technician[];
+  technicianDetailsMap: Record<string, TechnicianWithRelations>;
   companies: Company[];
+  companyProfileMap: Record<string, CompanyProfileView>;
+  companyMemberCounts: Record<string, number>;
   documents: TechnicianDocument[];
+  documentDetailsMap: Record<string, Document>;
   requests: MatchRequest[];
-  offers: Offer[];
+  offers: OfferWithRequirements[];
   offerRequestsV2: OfferRequest[];
   offerApplicationsV2: OfferApplication[];
   metrics: AdminMetrics;
@@ -65,10 +72,14 @@ interface UseAdminDashboardReturn {
 
 export function useAdminDashboard(): UseAdminDashboardReturn {
   const [technicians, setTechnicians] = useState<Technician[]>([]);
+  const [technicianDetails, setTechnicianDetails] = useState<TechnicianWithRelations[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [companyProfiles, setCompanyProfiles] = useState<CompanyProfileView[]>([]);
+  const [companyMemberCounts, setCompanyMemberCounts] = useState<Record<string, number>>({});
   const [documents, setDocuments] = useState<TechnicianDocument[]>([]);
+  const [documentDetails, setDocumentDetails] = useState<Document[]>([]);
   const [requests, setRequests] = useState<MatchRequest[]>([]);
-  const [offers, setOffers] = useState<Offer[]>([]);
+  const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
   const [offerRequestsV2, setOfferRequestsV2] = useState<OfferRequest[]>([]);
   const [offerApplicationsV2, setOfferApplicationsV2] = useState<OfferApplication[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,13 +87,13 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const load = useCallback(async () => {
     setLoading(true);
 
-    const [profiles, companyProfiles, v2Docs, v2Requests, v2Offers, v2Applications] =
+    const [profiles, companyProfilesResult, v2Docs, v2Requests, v2Offers, v2Applications] =
       await Promise.all([
         technicianRepositoryV2.getAll(),
         companyRepositoryV2.getAll(),
         documentRepositoryV2.getAll(),
         offerRequestRepository.getAll(),
-        offerRepository.getAll(),
+        offerRepository.getAllWithRequirements(),
         offerApplicationRepository.getAll(),
       ]);
 
@@ -90,13 +101,23 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     const withRelationsAll = await Promise.all(
       profiles.map((p) => technicianRepositoryV2.getWithRelations(p.id)),
     );
-    setTechnicians(
-      withRelationsAll
-        .filter((t): t is NonNullable<typeof t> => t !== null)
-        .map(v2TechnicianToV1),
+    const technicianDetailsResult = withRelationsAll.filter(
+      (t): t is NonNullable<typeof t> => t !== null,
+    );
+    setTechnicianDetails(technicianDetailsResult);
+    setTechnicians(technicianDetailsResult.map(v2TechnicianToV1));
+
+    const memberCountEntries = await Promise.all(
+      companyProfilesResult.map(async (company) => {
+        const members = await companyRepositoryV2.getMembers(company.id);
+        return [company.id, members.length] as const;
+      }),
     );
 
-    setCompanies(companyProfiles.map(v2CompanyToV1));
+    setCompanyProfiles(companyProfilesResult);
+    setCompanyMemberCounts(Object.fromEntries(memberCountEntries));
+    setCompanies(companyProfilesResult.map(v2CompanyToV1));
+    setDocumentDetails(v2Docs);
     setDocuments(v2Docs.map(v2DocumentToV1));
     setRequests(v2Requests.map(v2OfferRequestToMatchRequest));
     setOffers(v2Offers);
@@ -109,6 +130,8 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     load();
   }, [load]);
 
+  // Admin writes verificationStatus directly — intentional admin-only action.
+  // Future Supabase: protected by admin-only RLS policy (is_admin()); no separate RPC needed.
   const updateTechnicianVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
       await technicianRepositoryV2.update(id, { verificationStatus: status });
@@ -119,6 +142,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     [],
   );
 
+  // Future Supabase: same admin-only RLS policy protects company verificationStatus writes.
   const updateCompanyVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
       await companyRepositoryV2.update(id, { verificationStatus: status });
@@ -130,8 +154,12 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   );
 
   const updateDocumentStatus = useCallback(async (id: string, status: DocumentStatus) => {
-    await documentRepositoryV2.updateStatus(id, status);
-    setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, status } : d)));
+    const updated = await documentRepositoryV2.updateStatus(id, status);
+    if (!updated) return;
+    // Update both the V1 compat list (for status badge / actions) and the V2 detail map
+    // (for reviewedAt and rejectionReason displayed in the card).
+    setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, status: updated.status } : d)));
+    setDocumentDetails((prev) => prev.map((d) => (d.id === id ? updated : d)));
   }, []);
 
   const updateOfferStatus = useCallback(async (id: string, status: OfferStatus) => {
@@ -161,16 +189,29 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const technicianMap: Record<string, Technician> = {};
   for (const t of technicians) technicianMap[t.id] = t;
 
+  const technicianDetailsMap: Record<string, TechnicianWithRelations> = {};
+  for (const t of technicianDetails) technicianDetailsMap[t.id] = t;
+
   const companyMap: Record<string, Company> = {};
   for (const c of companies) companyMap[c.id] = c;
+
+  const companyProfileMap: Record<string, CompanyProfileView> = {};
+  for (const c of companyProfiles) companyProfileMap[c.id] = c;
+
+  const documentDetailsMap: Record<string, Document> = {};
+  for (const d of documentDetails) documentDetailsMap[d.id] = d;
 
   const offerTitleMap: Record<string, string> = {};
   for (const o of offers) offerTitleMap[o.id] = o.title;
 
   return {
     technicians,
+    technicianDetailsMap,
     companies,
+    companyProfileMap,
+    companyMemberCounts,
     documents,
+    documentDetailsMap,
     requests,
     offers,
     offerRequestsV2,

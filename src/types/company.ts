@@ -20,6 +20,7 @@ export type CompanyType =
 export interface Company {
   id: string;
   companyName: string;
+  locationCityId?: string;
   country: string;
   city: string;
   website: string;
@@ -33,14 +34,23 @@ export interface Company {
 export interface CompanyProfile {
   id: string;
   name: string;
-  country: string;
-  city: string;
+  // Required: every persisted company must reference a valid location_airports entry.
+  locationCityId: string;
   phone?: string;
   email: string;
   companyType: CompanyTypeCode;
+  /** ADMIN-ONLY in Supabase — company cannot write this field; set via admin-only RLS policy */
   verificationStatus: VerificationStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CompanyProfileView extends CompanyProfile {
+  country: string;
+  city: string;
+  baseAirport?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface CompanyMember {

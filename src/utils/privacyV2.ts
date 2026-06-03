@@ -9,6 +9,16 @@
  * acceptance trigger). Never use those booleans alone as the gate — always check status.
  *
  * If a record has identityRevealed: true but status !== 'accepted', treat as locked.
+ *
+ * SECURITY BOUNDARY NOTE:
+ * These TypeScript utilities prevent ACCIDENTAL misuse in React code (e.g. a developer
+ * passing a TechnicianProfile directly to a company screen). They are NOT a substitute
+ * for Supabase RLS / views / RPCs.
+ *
+ * When Supabase is live, the real enforcement is:
+ *   - technician_public_view  — CASE WHEN offer_accepted_between() gates private columns
+ *   - get_unlocked_technician() RPC — returns unlocked shape only if accepted, checked server-side
+ * These functions will still be used to map API responses into the same DTO shapes.
  */
 
 import { OfferRequest, OfferApplication } from '../types/offerRequest';
@@ -18,6 +28,7 @@ import {
 import { SafeTechnicianPreview, UnlockedTechnicianView, TechnicianView } from '../types/privacy';
 import { Document } from '../types/document';
 import { LicenseCode } from '../types/catalog';
+import { resolveLocationSnapshot } from '../constants/locationCities';
 
 // ---------------------------------------------------------------------------
 // Age
@@ -98,19 +109,25 @@ export function canOpenChat(params: AcceptanceCheckParams): boolean {
  * Builds a SafeTechnicianPreview — the anonymous company view before acceptance.
  *
  * Includes: id, anonymousCode, age (derived), technicianType, country, city,
- *           baseAirport, licenses, habilitations, aircraftExperience, availability, verificationStatus.
+ *           baseAirport, location coordinates, licenses, habilitations,
+ *           aircraftExperience, availability, verificationStatus.
  *
  * Excludes: firstName, lastName, email, phone, birthDate, socialLinks, documents, matchingScore.
  */
 export function getSafeTechnicianPreview(technician: TechnicianWithRelations): SafeTechnicianPreview {
+  const location = resolveLocationSnapshot(technician);
+
   return {
     id: technician.id,
     anonymousCode: technician.anonymousCode,
     age: calculateAge(technician.birthDate),
     technicianType: technician.technicianType,
-    country: technician.country,
-    city: technician.city,
-    baseAirport: technician.baseAirport,
+    locationCityId: location?.locationCityId ?? technician.locationCityId,
+    country: location?.country ?? '',
+    city: location?.city ?? '',
+    baseAirport: location?.baseAirport,
+    latitude: location?.latitude,
+    longitude: location?.longitude,
     licenses: technician.licenses.map((l) => l.licenseCode as LicenseCode),
     habilitations: technician.habilitations,
     aircraftExperience: technician.aircraftExperience,
@@ -123,6 +140,13 @@ export function getSafeTechnicianPreview(technician: TechnicianWithRelations): S
  * Builds an UnlockedTechnicianView — the full company view after acceptance.
  * Extends SafeTechnicianPreview with identity fields and documents.
  * Only call this when canRevealIdentity() returns true.
+ *
+ * DOCUMENT CONTRACT: The `documents` parameter must be pre-filtered to verified-only
+ * for all company-facing calls. Use documentRepositoryV2.getVerifiedForTechnician().
+ * Technician and admin views may pass all documents regardless of status.
+ *
+ * MVP rule: Company sees only documents with status = 'verified'.
+ * Pending, rejected, and expired documents are technician/admin-only.
  */
 export function getUnlockedTechnicianView(
   technician: TechnicianWithRelations,

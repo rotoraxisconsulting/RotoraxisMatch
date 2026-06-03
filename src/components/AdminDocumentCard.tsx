@@ -1,59 +1,95 @@
 import React, { useState } from 'react';
 import {
-  View,
+  ActivityIndicator,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
+  View,
 } from 'react-native';
-import { TechnicianDocument, DocumentStatus, DocumentType } from '../types';
-import { Badge, BadgeVariant } from './Badge';
-import { Card } from './Card';
-import { colors, spacing } from '../theme';
+import { Calendar, CheckCircle, Clock, FileCheck, FileText, UserRound, XCircle } from 'lucide-react-native';
+import type { LucideProps } from 'lucide-react-native';
+import type { DocumentStatus, DocumentType, TechnicianDocument } from '../types';
+import {
+  AdminBadge,
+  AdminCard,
+  AdminIconBox,
+  adminUi,
+} from './admin/AdminUI';
+import type { AdminTone } from './admin/AdminUI';
+import { spacing } from '../theme';
 
 interface Props {
   document: TechnicianDocument;
   technicianName?: string;
+  expiresAt?: string;
+  reviewedAt?: string;
+  rejectionReason?: string;
   onUpdateStatus: (id: string, status: DocumentStatus) => Promise<void>;
 }
 
-const ACTIONS: { status: DocumentStatus; label: string; color: string }[] = [
-  { status: 'verified', label: 'Verify', color: colors.success },
-  { status: 'pending', label: 'Pending', color: colors.warning },
-  { status: 'rejected', label: 'Reject', color: colors.error },
+type ActionConfig = {
+  status: DocumentStatus;
+  label: string;
+  color: string;
+  icon: React.ComponentType<LucideProps>;
+};
+
+const ACTIONS: ActionConfig[] = [
+  { status: 'verified', label: 'Verify', color: adminUi.green, icon: CheckCircle },
+  { status: 'pending', label: 'Set pending', color: adminUi.amber, icon: Clock },
+  { status: 'rejected', label: 'Reject', color: adminUi.red, icon: XCircle },
+  { status: 'expired', label: 'Mark expired', color: adminUi.red, icon: Clock },
 ];
 
-function statusVariant(s: DocumentStatus): BadgeVariant {
-  if (s === 'verified') return 'success';
-  if (s === 'pending') return 'warning';
+function statusTone(status: DocumentStatus): AdminTone {
+  if (status === 'verified') return 'success';
+  if (status === 'pending') return 'warning';
+  if (status === 'rejected') return 'error';
   return 'error';
 }
 
-function typeVariant(t: DocumentType): BadgeVariant {
-  if (t === 'license') return 'navy';
-  if (t === 'medical') return 'info';
-  if (t === 'training') return 'cyan';
+function statusLabel(status: DocumentStatus): string {
+  if (status === 'verified') return 'Verified';
+  if (status === 'pending') return 'Pending review';
+  if (status === 'rejected') return 'Rejected';
+  return 'Expired';
+}
+
+function typeTone(type: DocumentType): AdminTone {
+  if (type === 'license') return 'navy';
+  if (type === 'medical') return 'info';
+  if (type === 'training') return 'cyan';
+  if (type === 'id') return 'warning';
   return 'muted';
 }
 
-function typeLabel(t: DocumentType): string {
+function typeLabel(type: DocumentType): string {
   const map: Record<DocumentType, string> = {
     license: 'License',
     medical: 'Medical',
     training: 'Training',
-    id: 'ID',
+    id: 'Identity',
     resume: 'Resume',
     other: 'Other',
   };
-  return map[t];
+  return map[type];
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+function formatDate(iso?: string): string {
+  if (!iso) return 'Not set';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return 'Not set';
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export function AdminDocumentCard({ document, technicianName, onUpdateStatus }: Props) {
+export function AdminDocumentCard({
+  document,
+  technicianName,
+  expiresAt,
+  reviewedAt,
+  rejectionReason,
+  onUpdateStatus,
+}: Props) {
   const [loadingStatus, setLoadingStatus] = useState<DocumentStatus | null>(null);
 
   async function handleAction(status: DocumentStatus) {
@@ -65,92 +101,215 @@ export function AdminDocumentCard({ document, technicianName, onUpdateStatus }: 
     }
   }
 
-  const availableActions = ACTIONS.filter((a) => a.status !== document.status);
+  const availableActions = ACTIONS.filter((action) => action.status !== document.status);
 
   return (
-    <Card style={styles.card}>
+    <AdminCard
+      style={[
+        styles.card,
+        document.status === 'pending' && styles.cardPending,
+        (document.status === 'rejected' || document.status === 'expired') && styles.cardRejected,
+      ]}
+    >
       <View style={styles.header}>
-        <View style={styles.typeBadgeRow}>
-          <Badge label={typeLabel(document.type)} variant={typeVariant(document.type)} small />
+        <View style={styles.titleBlock}>
+          <View style={styles.badgeRow}>
+            <AdminBadge label={typeLabel(document.type)} tone={typeTone(document.type)} small />
+            <AdminBadge label={statusLabel(document.status)} tone={statusTone(document.status)} small />
+          </View>
+          <Text style={styles.fileName}>{document.fileName}</Text>
         </View>
-        <Badge label={document.status} variant={statusVariant(document.status)} />
+        <AdminIconBox
+          icon={document.status === 'verified' ? FileCheck : FileText}
+          size={19}
+          color={document.status === 'pending' ? adminUi.amber : adminUi.accent}
+          backgroundColor={document.status === 'pending' ? adminUi.amberSoft : adminUi.accentSoft}
+        />
       </View>
 
-      <Text style={styles.fileName} numberOfLines={1}>
-        {document.fileName}
-      </Text>
+      <View style={styles.metaGrid}>
+        <InfoPill icon={UserRound} label={technicianName ?? document.technicianId} />
+        <InfoPill icon={Calendar} label={`Uploaded ${formatDate(document.uploadedAt)}`} />
+        {expiresAt ? <InfoPill icon={Clock} label={`Expires ${formatDate(expiresAt)}`} /> : null}
+        {reviewedAt ? <InfoPill icon={FileCheck} label={`Reviewed ${formatDate(reviewedAt)}`} /> : null}
+      </View>
 
-      <Text style={styles.meta}>
-        {technicianName ?? document.technicianId} · {formatDate(document.uploadedAt)}
-      </Text>
+      {document.status === 'rejected' && rejectionReason ? (
+        <View style={styles.rejectionNote}>
+          <Text style={styles.rejectionLabel}>Reason</Text>
+          <Text style={styles.rejectionText}>{rejectionReason}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.actions}>
-        {availableActions.map(({ status, label, color }) => (
-          <TouchableOpacity
-            key={status}
-            style={[
-              styles.actionBtn,
-              { borderColor: color },
-              loadingStatus !== null && styles.actionBtnDisabled,
-            ]}
-            onPress={() => handleAction(status)}
+        {availableActions.map((action) => (
+          <StatusActionButton
+            key={action.status}
+            action={action}
+            loading={loadingStatus === action.status}
             disabled={loadingStatus !== null}
-            activeOpacity={0.8}
-          >
-            {loadingStatus === status ? (
-              <ActivityIndicator size="small" color={color} />
-            ) : (
-              <Text style={[styles.actionBtnText, { color }]}>{label}</Text>
-            )}
-          </TouchableOpacity>
+            onPress={() => handleAction(action.status)}
+          />
         ))}
       </View>
-    </Card>
+    </AdminCard>
+  );
+}
+
+function InfoPill({
+  icon,
+  label,
+}: {
+  icon: React.ComponentType<LucideProps>;
+  label: string;
+}) {
+  return (
+    <View style={styles.infoPill}>
+      <AdminIconBox icon={icon} size={16} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+      <Text style={styles.infoText} numberOfLines={2}>{label}</Text>
+    </View>
+  );
+}
+
+function StatusActionButton({
+  action,
+  loading,
+  disabled,
+  onPress,
+}: {
+  action: ActionConfig;
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const Icon = action.icon;
+  return (
+    <TouchableOpacity
+      style={[
+        styles.actionBtn,
+        { borderColor: action.color + '55', backgroundColor: action.color + '0F' },
+        disabled && styles.actionBtnDisabled,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.78}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color={action.color} />
+      ) : (
+        <>
+          <Icon size={15} color={action.color} strokeWidth={2.2} />
+          <Text style={[styles.actionBtnText, { color: action.color }]}>{action.label}</Text>
+        </>
+      )}
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    padding: spacing.md,
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  cardPending: {
+    borderColor: '#FDE68A',
+    borderLeftWidth: 3,
+  },
+  cardRejected: {
+    borderColor: '#FECACA',
   },
   header: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    gap: spacing.md,
   },
-  typeBadgeRow: {
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.xs,
+  },
+  badgeRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
   },
   fileName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.text,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: adminUi.text,
   },
-  meta: {
-    fontSize: 12,
-    color: colors.textMuted,
+  metaGrid: {
+    gap: spacing.sm,
+  },
+  infoPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
+    borderWidth: 1,
+    borderColor: adminUi.borderSoft,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: adminUi.textSoft,
+  },
+  rejectionNote: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  rejectionLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: adminUi.red,
+    marginBottom: 3,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  rejectionText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: adminUi.textSoft,
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
-    marginTop: spacing.xs,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: adminUi.borderSoft,
   },
   actionBtn: {
-    flex: 1,
-    borderWidth: 1.5,
-    borderRadius: 8,
-    paddingVertical: 7,
+    flexGrow: 1,
+    flexBasis: 112,
+    minHeight: 38,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 34,
+    flexDirection: 'row',
+    gap: 6,
   },
   actionBtnDisabled: {
-    opacity: 0.5,
+    opacity: 0.55,
   },
   actionBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
   },
 });

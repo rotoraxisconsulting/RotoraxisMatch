@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
@@ -12,25 +11,36 @@ import {
   Alert,
   useWindowDimensions,
 } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
+import {
+  EmptyPanel,
+  InitialAvatar,
+  TechnicianBadge,
+  TechnicianCard,
+  TechnicianPageHeader,
+  TechnicianScreen,
+  techUi,
+} from '../../../src/components/technician/TechnicianUI';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { companyRepositoryV2 } from '../../../src/repositories/v2/companyRepositoryV2';
-import { DEMO_TECHNICIAN_ID } from '../../../src/state/useTechnicianDashboard';
+import { activityRepository } from '../../../src/repositories/v2/activityRepository';
+import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { ChatRoom, ChatMessage } from '../../../src/types/chat';
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) +
-    ' · ' + d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+  return `${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} - ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`;
 }
 
 export default function TechnicianChatDetailScreen() {
+  const { profileId, technicianId } = useTechnicianSession();
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const scrollRef = useRef<ScrollView>(null);
@@ -46,9 +56,14 @@ export default function TechnicianChatDetailScreen() {
 
   const load = useCallback(async () => {
     if (!id) return;
+    setLocked(false);
 
     const r = await chatRepository.getRoom(id);
-    if (!r) { setLocked(true); return; }
+    if (!r) {
+      setRoom(null);
+      setLocked(true);
+      return;
+    }
     setRoom(r);
 
     let isAccepted = false;
@@ -64,7 +79,10 @@ export default function TechnicianChatDetailScreen() {
       offerId = app?.offerId;
     }
 
-    if (!isAccepted) { setLocked(true); return; }
+    if (!isAccepted) {
+      setLocked(true);
+      return;
+    }
 
     const [company, offer, msgs] = await Promise.all([
       companyRepositoryV2.getById(r.companyId),
@@ -75,7 +93,8 @@ export default function TechnicianChatDetailScreen() {
     setHeaderTitle(company?.name ?? 'Company');
     setSubTitle(offer?.title ?? '');
     setMessages(msgs);
-  }, [id]);
+    await activityRepository.markChatRoomRead('technician', technicianId, id);
+  }, [id, technicianId]);
 
   useEffect(() => {
     setLoading(true);
@@ -93,7 +112,11 @@ export default function TechnicianChatDetailScreen() {
     if (!body || !id) return;
     setSending(true);
     try {
-      const msg = await chatRepository.sendMessage(id, DEMO_TECHNICIAN_ID, 'technician', body);
+      const msg = await chatRepository.sendMessage(id, {
+        senderUserId: profileId,
+        senderRole: 'technician',
+        body,
+      });
       setText('');
       setMessages((prev) => [...prev, msg]);
     } catch (e: any) {
@@ -106,7 +129,7 @@ export default function TechnicianChatDetailScreen() {
   if (loading) {
     return (
       <>
-        <Stack.Screen options={{ title: 'Chat' }} />
+        <Stack.Screen options={{ headerShown: false }} />
         <LoadingScreen color={colors.technician} role="technician" />
       </>
     );
@@ -114,160 +137,261 @@ export default function TechnicianChatDetailScreen() {
 
   if (locked || !room) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <Stack.Screen options={{ title: 'Chat' }} />
-        <View style={styles.locked}>
-          <Text style={styles.lockedIcon}>🔒</Text>
-          <Text style={styles.lockedTitle}>Chat unavailable</Text>
-          <Text style={styles.lockedSub}>
-            This chat is only accessible for accepted contacts.
-          </Text>
+      <TechnicianScreen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={[styles.lockedContent, isWide && styles.contentWide]}>
+          <TechnicianPageHeader
+            eyebrow="Chat"
+            title="Chat unavailable"
+            subtitle="This conversation is only accessible for accepted contacts."
+            onBack={() => router.back()}
+          />
+          <EmptyPanel
+            title="Accepted contact required"
+            subtitle="Open chat becomes available once the related application or direct offer is accepted."
+          />
         </View>
-      </SafeAreaView>
+      </TechnicianScreen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: headerTitle }} />
+    <TechnicianScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
+        keyboardVerticalOffset={72}
       >
-        {subTitle ? (
-          <View style={styles.chatHeader}>
-            <Text style={styles.chatHeaderSub} numberOfLines={1}>{subTitle}</Text>
-          </View>
-        ) : null}
+        <View style={[styles.headerContent, isWide && styles.contentWide]}>
+          <TechnicianPageHeader
+            eyebrow="Chat"
+            title={headerTitle}
+            subtitle={subTitle || 'Accepted contact'}
+            onBack={() => router.back()}
+          />
+
+          <TechnicianCard style={styles.contextCard}>
+            <InitialAvatar label={headerTitle} size={44} />
+            <View style={styles.contextText}>
+              <Text style={styles.contextName} numberOfLines={1}>{headerTitle}</Text>
+              <Text style={styles.contextSub} numberOfLines={1}>{subTitle || 'Accepted contact'}</Text>
+            </View>
+            <TechnicianBadge label="Active" tone="success" small />
+          </TechnicianCard>
+        </View>
 
         <ScrollView
           ref={scrollRef}
           style={styles.messages}
-          contentContainerStyle={[styles.messagesContent, isWide && styles.messagesWide]}
+          contentContainerStyle={[styles.messagesContent, isWide && styles.contentWide]}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
         >
           {messages.length === 0 && (
-            <View style={styles.noMessages}>
-              <Text style={styles.noMessagesText}>No messages yet. Say hello!</Text>
-            </View>
+            <TechnicianCard style={styles.noMessages}>
+              <Text style={styles.noMessagesText}>No messages yet. Start the conversation when ready.</Text>
+            </TechnicianCard>
           )}
+
           {messages.map((msg) => {
             const isMine = msg.senderRole === 'technician';
             return (
-              <View key={msg.id} style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                <Text style={[styles.bubbleText, isMine ? styles.bubbleTextMine : styles.bubbleTextTheirs]}>
-                  {msg.body}
-                </Text>
-                <Text style={[styles.bubbleTime, isMine ? styles.bubbleTimeMine : styles.bubbleTimeTheirs]}>
-                  {formatTime(msg.sentAt)}
-                </Text>
+              <View key={msg.id} style={[styles.messageRow, isMine && styles.messageRowMine]}>
+                <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
+                  <Text style={[styles.bubbleText, isMine ? styles.bubbleTextMine : styles.bubbleTextTheirs]}>
+                    {msg.body}
+                  </Text>
+                  <Text style={[styles.bubbleTime, isMine ? styles.bubbleTimeMine : styles.bubbleTimeTheirs]}>
+                    {formatTime(msg.sentAt)}
+                  </Text>
+                </View>
               </View>
             );
           })}
         </ScrollView>
 
-        <View style={styles.inputBar}>
-          <TextInput
-            style={styles.input}
-            value={text}
-            onChangeText={setText}
-            placeholder="Type a message…"
-            placeholderTextColor={colors.textMuted}
-            multiline
-            maxLength={1000}
-            returnKeyType="default"
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnDisabled]}
-            onPress={handleSend}
-            disabled={!text.trim() || sending}
-            activeOpacity={0.75}
-          >
-            <Text style={styles.sendBtnText}>Send</Text>
-          </TouchableOpacity>
+        <View style={styles.inputShell}>
+          <View style={[styles.inputBar, isWide && styles.inputWide]}>
+            <TextInput
+              style={styles.input}
+              value={text}
+              onChangeText={setText}
+              placeholder="Type a message..."
+              placeholderTextColor={techUi.textMuted}
+              multiline
+              maxLength={1000}
+              returnKeyType="default"
+            />
+            <TouchableOpacity
+              style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnDisabled]}
+              onPress={handleSend}
+              disabled={!text.trim() || sending}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.sendBtnText}>{sending ? 'Sending' : 'Send'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </TechnicianScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
-  locked: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  lockedIcon: { fontSize: 40, marginBottom: spacing.md },
-  lockedTitle: { fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: spacing.xs },
-  lockedSub: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', maxWidth: 280 },
-  chatHeader: {
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.xs + 2,
+  contentWide: {
+    maxWidth: 860,
+    alignSelf: 'center',
+    width: '100%',
   },
-  chatHeaderSub: { fontSize: 12, color: colors.technician, fontWeight: '600' },
-  messages: { flex: 1 },
-  messagesContent: { padding: spacing.md, paddingBottom: spacing.lg },
-  messagesWide: { maxWidth: 720, alignSelf: 'center', width: '100%' },
-  noMessages: { alignItems: 'center', paddingVertical: spacing.xl },
-  noMessagesText: { fontSize: 13, color: colors.textMuted },
-  bubble: {
-    maxWidth: '78%',
-    borderRadius: 16,
+  lockedContent: {
+    flex: 1,
+    padding: spacing.md,
+    justifyContent: 'center',
+  },
+  headerContent: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingTop: spacing.md,
+  },
+  contextCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
     marginBottom: spacing.sm,
   },
+  contextText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contextName: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: techUi.text,
+  },
+  contextSub: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: techUi.textSoft,
+  },
+  messages: {
+    flex: 1,
+  },
+  messagesContent: {
+    padding: spacing.md,
+    paddingBottom: spacing.lg,
+  },
+  noMessages: {
+    alignItems: 'center',
+    paddingVertical: spacing.lg,
+  },
+  noMessagesText: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: techUi.textSoft,
+    textAlign: 'center',
+  },
+  messageRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    marginBottom: spacing.sm,
+  },
+  messageRowMine: {
+    justifyContent: 'flex-end',
+  },
+  bubble: {
+    maxWidth: '82%',
+    borderRadius: 18,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   bubbleMine: {
-    backgroundColor: colors.technician,
-    alignSelf: 'flex-end',
-    borderBottomRightRadius: 4,
+    backgroundColor: techUi.accent,
+    borderBottomRightRadius: 6,
   },
   bubbleTheirs: {
-    backgroundColor: colors.surface,
-    alignSelf: 'flex-start',
+    backgroundColor: techUi.surface,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderBottomLeftRadius: 4,
+    borderColor: techUi.border,
+    borderBottomLeftRadius: 6,
   },
-  bubbleText: { fontSize: 14, lineHeight: 20 },
-  bubbleTextMine: { color: colors.white },
-  bubbleTextTheirs: { color: colors.text },
-  bubbleTime: { fontSize: 10, marginTop: 4 },
-  bubbleTimeMine: { color: colors.white + 'AA', textAlign: 'right' },
-  bubbleTimeTheirs: { color: colors.textMuted },
+  bubbleText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  bubbleTextMine: {
+    color: colors.white,
+  },
+  bubbleTextTheirs: {
+    color: techUi.text,
+  },
+  bubbleTime: {
+    marginTop: 5,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '600',
+  },
+  bubbleTimeMine: {
+    color: 'rgba(255,255,255,0.72)',
+    textAlign: 'right',
+  },
+  bubbleTimeTheirs: {
+    color: techUi.textMuted,
+  },
+  inputShell: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    backgroundColor: techUi.page,
+    borderTopWidth: 1,
+    borderTopColor: techUi.border,
+  },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: spacing.sm,
-    padding: spacing.md,
-    backgroundColor: colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    width: '100%',
+  },
+  inputWide: {
+    maxWidth: 860,
+    alignSelf: 'center',
   },
   input: {
     flex: 1,
-    backgroundColor: colors.background,
+    minHeight: 46,
+    maxHeight: 112,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
+    borderColor: techUi.border,
+    borderRadius: 18,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+    backgroundColor: techUi.surface,
     fontSize: 14,
-    color: colors.text,
-    maxHeight: 100,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: techUi.text,
   },
   sendBtn: {
-    backgroundColor: colors.technician,
-    borderRadius: 20,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
+    minHeight: 46,
+    minWidth: 76,
+    borderRadius: 18,
+    backgroundColor: techUi.accent,
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
+    paddingHorizontal: spacing.md,
   },
-  sendBtnDisabled: { opacity: 0.4 },
-  sendBtnText: { fontSize: 14, fontWeight: '700', color: colors.white },
+  sendBtnDisabled: {
+    opacity: 0.45,
+  },
+  sendBtnText: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: colors.white,
+  },
 });

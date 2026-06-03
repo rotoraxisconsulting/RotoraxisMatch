@@ -21,12 +21,14 @@
 
 ## 2. Company registration and team setup
 
-1. User selects "I am a company".
-2. Creates company account:
+1. Company account/member is created manually for the MVP (demo/platform admin operation).
+2. Company profile is completed with:
    - name, companyType, country, city, phone, email
-3. First user becomes company `admin`.
-4. Admin can invite additional users with `recruiter` or `viewer` role.
+3. First manually created member becomes company `admin`.
+4. Additional company members can be manually created with `recruiter` or `viewer` role.
 5. Company appears in the system after admin verification.
+
+No self-service company invitations, invite links, invite tokens, or email invite flows are part of the MVP.
 
 ---
 
@@ -73,26 +75,50 @@
 
 ## 5. Technician searches job offers
 
+**Browse Offers is for discovery only. My Applications is for history.**
+
+### 5a. Browse Offers (discovery)
 1. Technician navigates to "Browse Offers".
 2. Applies filters: contractType, requiredLicenses, requiredAircraftTypes, location.
-3. App calls `getOfferMatchesForTechnician(technicianId)` and shows offers ranked by match %.
+3. App calls `getOfferMatchesForTechnician(technicianId)` — **only `published` + `visible` offers are returned**.
 4. Each offer card shows **"X% match with your profile"** (score is offer-specific).
 5. Technician opens offer detail: title, description, requirements, location, contract type, **match score prominently displayed**.
 6. Technician applies:
    - Optional cover note.
    - OfferApplication created with `status: pending`.
-6. Company receives notification of application.
+   - **One application per technician per offer.** If an application already exists (any status), no second application can be created. Reapplication is out of scope for MVP.
+7. Company receives notification of application.
+
+> Closed, expired, and draft offers never appear in Browse Offers. Offer visibility controls discovery only — existing applications and accepted relationships are not affected when an offer closes.
+
+### 5b. My Applications (history)
+1. Technician navigates to "My Applications".
+2. Screen loads **all** offer applications for this technician via `getForTechnician()` — independent of offer status.
+3. Each entry shows: offer title, company name, application status, offer status (if not published), applied date.
+4. Technician can open the offer detail from history (shows historical context for closed/expired offers).
+5. Accepted applications show a direct "Open chat" link.
+6. Withdrawn/rejected/expired applications remain permanently in history — no reapplication.
+
+> My Applications is the canonical technician application history. It never disappears when a linked offer closes.
 
 ---
 
 ## 6. Technician reviews received direct offers
 
-1. Technician navigates to "My Offers" → "Received".
-2. Sees list of pending OfferRequests.
+1. Technician navigates to "Direct Offers".
+2. The list shows:
+   - **Pending** direct offers whose linked offer is still `published` + `visible` — shown as actionable.
+   - **Accepted** direct offers — always shown regardless of whether the linked offer is still active (established relationship, chat accessible).
+   - **Rejected / expired / withdrawn** — shown in history, sorted below pending and accepted.
+   - **Pending** direct offers whose linked offer is now closed/unpublished — hidden from the list (not actionable).
 3. Opens offer detail:
-   - Full offer information (including company name, position details).
-   - Company remains identified (companies are public entities).
-4. Technician accepts or rejects.
+   - Company name, position details, match score with profile.
+   - If the linked offer has been closed since the direct offer was sent, a "Offer closed" banner appears and Accept is disabled.
+   - For accepted offers (even if the linked offer has since closed), full offer details and match score are shown for historical context.
+4. Technician accepts or rejects (only for pending + linked offer still active).
+5. On acceptance: identity and admin-verified documents are unlocked for the company; a chat room is created.
+
+> **Visibility rule for direct offers:** only pending actionability is tied to the linked offer's current status. Accepted relationships persist regardless of offer lifecycle. Records are never deleted — admin and company history show all records.
 
 ---
 
@@ -113,7 +139,7 @@
 3. `documentsUnlocked` → `true`
 4. `ChatRoom` created and linked to the request.
 5. Company receives in-app notification.
-6. Company can now see: full name, email, phone, documents.
+6. Company can now see: full name, email, phone, and admin-verified documents (status = `verified`).
 7. Chat tab becomes accessible.
 
 ### When company accepts an OfferApplication:
@@ -122,7 +148,7 @@
 3. `documentsUnlocked` → `true`
 4. `ChatRoom` created and linked.
 5. Technician receives in-app notification.
-6. Company can now see full technician identity and documents.
+6. Company can now see full technician identity and admin-verified documents (status = `verified`).
 7. Chat opens for both parties.
 
 ---
@@ -152,8 +178,17 @@
 
 - Documents are locked by default — companies cannot see them.
 - On offer acceptance: `documentsUnlocked` → `true` automatically.
-- Company can view document list and statuses (pending / verified / rejected / expired).
-- Document files (URLs) are only accessible when `documentsUnlocked === true`.
+- `documentsUnlocked = true` means the company may access **eligible** documents — not every document row.
+- **Company sees only verified documents** (status = `verified`). Pending, rejected, and expired documents remain visible to the technician and admin only.
+- Document files (URLs) are only accessible for verified documents when `documentsUnlocked = true`.
+
+**Access by role:**
+| Document status | Technician (own) | Company (after accepted) | Admin |
+|----------------|-----------------|--------------------------|-------|
+| `verified` | ✅ visible | ✅ visible | ✅ visible |
+| `pending` | ✅ visible | ❌ not visible | ✅ visible |
+| `rejected` | ✅ visible (+ rejection reason) | ❌ not visible | ✅ visible |
+| `expired` | ✅ visible | ❌ not visible | ✅ visible |
 
 ---
 

@@ -3,16 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import { Stack, useRouter } from 'expo-router';
 import { colors, spacing } from '../src/theme';
 import { resetIntroSeen } from '../src/storage/introStorage';
 import { localDatabase } from '../src/storage/localDatabase';
 import { useDemoSession } from '../src/state/useDemoSession';
+import { CompanyPageHeader } from '../src/components/company/CompanyUI';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -40,10 +41,19 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <StatusBar style="dark" />
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
+        <CompanyPageHeader
+          eyebrow="Demo controls"
+          title="Settings"
+          subtitle="Manage the intro, session state and local demo data."
+          onBack={() => router.back()}
+        />
+
         {/* Intro experience */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Intro experience</Text>

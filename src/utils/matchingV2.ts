@@ -4,6 +4,7 @@ import { MatchScore, MatchLabel } from '../types/matching';
 import { offerRepository } from '../repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
 import { SafeTechnicianPreview } from '../types/privacy';
+import { resolveLocationSnapshot } from '../constants/locationCities';
 
 // A match score is always computed for a specific offer + technician pair.
 // Never store this value on a technician_profile row.
@@ -43,9 +44,18 @@ export function calculateOfferTechnicianMatch(
   }, 0);
   if (totalYears >= offer.minYearsExperience) experience = 10;
 
+  const technicianLocation = resolveLocationSnapshot(technician);
+  const offerLocation = resolveLocationSnapshot({
+    locationCityId: offer.locationCityId,
+    country: offer.locationCountry,
+    city: offer.locationCity,
+    baseAirport: offer.locationBaseAirport,
+  });
+
   if (
-    technician.city?.toLowerCase() === offer.locationCity?.toLowerCase() ||
-    (technician.baseAirport && offer.locationBaseAirport && technician.baseAirport === offer.locationBaseAirport)
+    (technicianLocation?.locationCityId && offerLocation?.locationCityId && technicianLocation.locationCityId === offerLocation.locationCityId) ||
+    (technicianLocation?.baseAirport && offerLocation?.baseAirport && technicianLocation.baseAirport === offerLocation.baseAirport) ||
+    (technicianLocation?.city && offerLocation?.city && technicianLocation.city.toLowerCase() === offerLocation.city.toLowerCase())
   ) {
     location = 5;
   }
@@ -78,16 +88,16 @@ export interface OfferMatchResult {
   score: MatchScore;
 }
 
-// Returns all verified technicians ranked by match % for a specific offer.
+// Returns all public technicians (active account + verified profile) ranked by match % for a specific offer.
 export async function getTechnicianMatchesForOffer(offerId: string): Promise<TechnicianMatchResult[]> {
   const offer = await offerRepository.getWithRequirements(offerId);
   if (!offer) return [];
 
-  const profiles = await technicianRepositoryV2.getAll();
+  const profiles = await technicianRepositoryV2.getPublicProfiles();
   const results: TechnicianMatchResult[] = [];
 
   for (const profile of profiles) {
-    const full = await technicianRepositoryV2.getWithRelations(profile.id);
+    const full = await technicianRepositoryV2.getPublicWithRelations(profile.id);
     if (!full) continue;
     const safeView = await technicianRepositoryV2.getSafeView(profile.id);
     if (!safeView) continue;

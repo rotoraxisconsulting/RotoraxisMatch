@@ -1,42 +1,86 @@
 import React, { useState } from 'react';
 import {
-  View,
+  ActivityIndicator,
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
+  View,
 } from 'react-native';
-import { Company, VerificationStatus } from '../types';
-import { Badge } from './Badge';
-import { Card } from './Card';
-import { colors, spacing } from '../theme';
+import { Building2, CheckCircle, Clock, Mail, MapPin, Users, XCircle } from 'lucide-react-native';
+import type { LucideProps } from 'lucide-react-native';
+import type { Company, LegacyVerificationStatus, VerificationStatus } from '../types';
+import { COMPANY_TYPES } from '../constants/companyTypes';
+import {
+  AdminBadge,
+  AdminCard,
+  AdminIconBox,
+  AdminInitialAvatar,
+  adminUi,
+} from './admin/AdminUI';
+import type { AdminTone } from './admin/AdminUI';
+import { spacing } from '../theme';
 
 interface Props {
   company: Company;
+  memberCount?: number;
+  contactPhone?: string;
   onUpdateStatus: (id: string, status: VerificationStatus) => Promise<void>;
 }
 
-const ACTIONS: { status: VerificationStatus; label: string; color: string }[] = [
-  { status: 'verified', label: 'Verify', color: colors.success },
-  { status: 'pending', label: 'Pending', color: colors.warning },
-  { status: 'unverified', label: 'Reject', color: colors.error },
+type ActionConfig = {
+  status: VerificationStatus;
+  label: string;
+  color: string;
+  icon: React.ComponentType<LucideProps>;
+};
+
+const ACTIONS: ActionConfig[] = [
+  { status: 'verified', label: 'Verify', color: adminUi.green, icon: CheckCircle },
+  { status: 'pending', label: 'Set pending', color: adminUi.amber, icon: Clock },
+  { status: 'rejected', label: 'Reject', color: adminUi.red, icon: XCircle },
 ];
 
-function verificationVariant(s: VerificationStatus) {
-  if (s === 'verified') return 'success' as const;
-  if (s === 'pending') return 'warning' as const;
-  return 'muted' as const;
+// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
+function normalizedStatus(status: LegacyVerificationStatus): VerificationStatus {
+  if (status === 'unverified') return 'pending';
+  return status;
 }
 
-function typeVariant(t: string) {
-  if (t === 'airline') return 'navy' as const;
-  if (t === 'mro') return 'blue' as const;
-  if (t === 'operator') return 'cyan' as const;
-  return 'muted' as const;
+function verificationTone(status: VerificationStatus): AdminTone {
+  const normalized = normalizedStatus(status);
+  if (normalized === 'verified') return 'success';
+  if (normalized === 'pending') return 'warning';
+  if (normalized === 'rejected') return 'error';
+  return 'muted';
 }
 
-export function AdminCompanyCard({ company, onUpdateStatus }: Props) {
+function statusLabel(status: VerificationStatus): string {
+  if (status === 'verified') return 'Verified';
+  if (status === 'pending') return 'Pending review';
+  if (status === 'rejected') return 'Rejected';
+  return 'Unverified';
+}
+
+function companyTypeLabel(type: string): string {
+  return COMPANY_TYPES.find((item) => item.code === type)?.label ?? type.replace(/_/g, ' ');
+}
+
+function companyTypeTone(type: string): AdminTone {
+  if (type === 'MRO') return 'cyan';
+  if (type === 'airline') return 'navy';
+  if (type === 'recruitment_agency') return 'info';
+  if (type === 'helicopter_operator') return 'warning';
+  return 'muted';
+}
+
+export function AdminCompanyCard({
+  company,
+  memberCount,
+  contactPhone,
+  onUpdateStatus,
+}: Props) {
   const [loadingStatus, setLoadingStatus] = useState<VerificationStatus | null>(null);
+  const currentStatus = normalizedStatus(company.verificationStatus);
 
   async function handleAction(status: VerificationStatus) {
     setLoadingStatus(status);
@@ -47,108 +91,191 @@ export function AdminCompanyCard({ company, onUpdateStatus }: Props) {
     }
   }
 
-  const availableActions = ACTIONS.filter(
-    (a) => a.status !== company.verificationStatus,
-  );
+  const availableActions = ACTIONS.filter((action) => action.status !== currentStatus);
 
   return (
-    <Card style={styles.card}>
+    <AdminCard
+      style={[
+        styles.card,
+        currentStatus === 'pending' && styles.cardPending,
+        currentStatus === 'rejected' && styles.cardRejected,
+      ]}
+    >
       <View style={styles.header}>
-        <Text style={styles.name} numberOfLines={1}>{company.companyName}</Text>
-        <Badge
-          label={company.verificationStatus}
-          variant={verificationVariant(company.verificationStatus)}
-        />
+        <View style={styles.identity}>
+          <AdminInitialAvatar label={company.companyName} color={adminUi.accent} />
+          <View style={styles.titleBlock}>
+            <Text style={styles.name}>{company.companyName}</Text>
+            <View style={styles.badgeRow}>
+              <AdminBadge label={companyTypeLabel(company.companyType)} tone={companyTypeTone(company.companyType)} small />
+              <AdminBadge label={statusLabel(company.verificationStatus)} tone={verificationTone(company.verificationStatus)} small />
+            </View>
+          </View>
+        </View>
       </View>
 
-      <View style={styles.metaRow}>
-        <Badge
-          label={company.companyType.charAt(0).toUpperCase() + company.companyType.slice(1)}
-          variant={typeVariant(company.companyType)}
-          small
-        />
-        <Text style={styles.location}>
-          {company.city}, {company.country}
-        </Text>
+      <View style={styles.metaGrid}>
+        <InfoPill icon={Building2} label={companyTypeLabel(company.companyType)} />
+        <InfoPill icon={MapPin} label={`${company.city}, ${company.country}`} />
+        {memberCount !== undefined ? (
+          <InfoPill icon={Users} label={`${memberCount} member${memberCount === 1 ? '' : 's'}`} />
+        ) : null}
+        <InfoPill icon={Mail} label={contactPhone ? `${company.contactEmail} - ${contactPhone}` : company.contactEmail} />
       </View>
-
-      <Text style={styles.email}>{company.contactEmail}</Text>
 
       <View style={styles.actions}>
-        {availableActions.map(({ status, label, color }) => (
-          <TouchableOpacity
-            key={status}
-            style={[
-              styles.actionBtn,
-              { borderColor: color },
-              loadingStatus !== null && styles.actionBtnDisabled,
-            ]}
-            onPress={() => handleAction(status)}
+        {availableActions.map((action) => (
+          <StatusActionButton
+            key={action.status}
+            action={action}
+            loading={loadingStatus === action.status}
             disabled={loadingStatus !== null}
-            activeOpacity={0.8}
-          >
-            {loadingStatus === status ? (
-              <ActivityIndicator size="small" color={color} />
-            ) : (
-              <Text style={[styles.actionBtnText, { color }]}>{label}</Text>
-            )}
-          </TouchableOpacity>
+            onPress={() => handleAction(action.status)}
+          />
         ))}
       </View>
-    </Card>
+    </AdminCard>
+  );
+}
+
+function InfoPill({
+  icon,
+  label,
+}: {
+  icon: React.ComponentType<LucideProps>;
+  label: string;
+}) {
+  return (
+    <View style={styles.infoPill}>
+      <AdminIconBox icon={icon} size={16} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />
+      <Text style={styles.infoText} numberOfLines={2}>{label}</Text>
+    </View>
+  );
+}
+
+function StatusActionButton({
+  action,
+  loading,
+  disabled,
+  onPress,
+}: {
+  action: ActionConfig;
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const Icon = action.icon;
+  return (
+    <TouchableOpacity
+      style={[
+        styles.actionBtn,
+        { borderColor: action.color + '55', backgroundColor: action.color + '0F' },
+        disabled && styles.actionBtnDisabled,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.78}
+    >
+      {loading ? (
+        <ActivityIndicator size="small" color={action.color} />
+      ) : (
+        <>
+          <Icon size={15} color={action.color} strokeWidth={2.2} />
+          <Text style={[styles.actionBtnText, { color: action.color }]}>{action.label}</Text>
+        </>
+      )}
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    padding: spacing.md,
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  cardPending: {
+    borderColor: '#FDE68A',
+    borderLeftWidth: 3,
+  },
+  cardRejected: {
+    borderColor: '#FECACA',
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: spacing.sm,
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
-  name: {
+  identity: {
     flex: 1,
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.text,
-  },
-  metaRow: {
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
   },
-  location: {
-    fontSize: 13,
-    color: colors.textSecondary,
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
-  email: {
-    fontSize: 12,
-    color: colors.textMuted,
+  name: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: adminUi.text,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  metaGrid: {
+    gap: spacing.sm,
+  },
+  infoPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: adminUi.surfaceSoft,
+    borderWidth: 1,
+    borderColor: adminUi.borderSoft,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: adminUi.textSoft,
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
-    marginTop: spacing.xs,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: adminUi.borderSoft,
   },
   actionBtn: {
-    flex: 1,
-    borderWidth: 1.5,
-    borderRadius: 8,
-    paddingVertical: 7,
+    flexGrow: 1,
+    flexBasis: 112,
+    minHeight: 38,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 34,
+    flexDirection: 'row',
+    gap: 6,
   },
   actionBtnDisabled: {
-    opacity: 0.5,
+    opacity: 0.55,
   },
   actionBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
   },
 });

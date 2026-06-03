@@ -2,8 +2,7 @@
   {
     "id": "comp-001",
     "name": "Delta Air Lines",
-    "country": "USA",
-    "city": "Atlanta",
+    "locationCityId": "airport:KATL",
     "phone": "+1-404-715-2600",
     "email": "mro.talent@delta.com",
     "companyType": "airline",
@@ -14,8 +13,7 @@
   {
     "id": "comp-002",
     "name": "Boeing Global Services",
-    "country": "USA",
-    "city": "Everett",
+    "locationCityId": "airport:KPAE",
     "phone": "+1-425-965-2121",
     "email": "services.talent@boeing.com",
     "companyType": "MRO",
@@ -26,8 +24,7 @@
   {
     "id": "comp-003",
     "name": "AAR Corp",
-    "country": "USA",
-    "city": "Wood Dale",
+    "locationCityId": "airport:KORD",
     "phone": "+1-630-227-2000",
     "email": "talent@aarcorp.com",
     "companyType": "MRO",
@@ -38,8 +35,7 @@
   {
     "id": "comp-004",
     "name": "Lufthansa Technik",
-    "country": "Germany",
-    "city": "Hamburg",
+    "locationCityId": "airport:EDDH",
     "phone": "+49-40-5070-0",
     "email": "recruiting@lufthansa-technik.de",
     "companyType": "MRO",
@@ -50,8 +46,7 @@
   {
     "id": "comp-005",
     "name": "StandardAero",
-    "country": "USA",
-    "city": "Scottsdale",
+    "locationCityId": "airport:KSDL",
     "phone": "+1-480-483-5600",
     "email": "hr@standardaero.com",
     "companyType": "MRO",
@@ -62,8 +57,7 @@
   {
     "id": "comp-006",
     "name": "HelicopAero International",
-    "country": "USA",
-    "city": "Dallas",
+    "locationCityId": "airport:KDFW",
     "phone": "+1-972-555-0160",
     "email": "ops@helicopaero.com",
     "companyType": "helicopter_operator",
@@ -74,8 +68,7 @@
   {
     "id": "comp-007",
     "name": "AviationStaff Pro",
-    "country": "UK",
-    "city": "London",
+    "locationCityId": "airport:EGLL",
     "phone": "+44-20-7946-0555",
     "email": "placements@aviationstaffpro.com",
     "companyType": "recruitment_agency",
@@ -86,8 +79,7 @@
   {
     "id": "comp-008",
     "name": "Emirates Engineering",
-    "country": "UAE",
-    "city": "Dubai",
+    "locationCityId": "airport:OMDB",
     "phone": "+971-4-299-5000",
     "email": "talent@emirates-engineering.ae",
     "companyType": "MRO",
@@ -98,8 +90,7 @@
   {
     "id": "comp-009",
     "name": "Nordic Aviation Partners",
-    "country": "Denmark",
-    "city": "Copenhagen",
+    "locationCityId": "airport:EKCH",
     "phone": "+45-33-55-0100",
     "email": "hr@nordicaviationpartners.dk",
     "companyType": "other",

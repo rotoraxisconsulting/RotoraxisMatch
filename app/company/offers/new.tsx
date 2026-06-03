@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TextInput,
   TouchableOpacity,
@@ -12,20 +11,33 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { colors, spacing, typography } from '../../../src/theme';
+import { FileText, MapPin, Minus, Plus, Send } from 'lucide-react-native';
+import { colors, spacing } from '../../../src/theme';
+import {
+  CompanyCard,
+  CompanyChip,
+  CompanyPageHeader,
+  CompanyScreen,
+  IconBox,
+  companyStyles,
+  companyUi,
+} from '../../../src/components/company/CompanyUI';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
-import { DEMO_COMPANY_ID } from '../../../src/state/useCompanyDashboard';
+import { useCompanySession } from '../../../src/state/SessionContext';
 import { TECHNICIAN_TYPES } from '../../../src/constants/technicianTypes';
 import { LICENSE_CATEGORIES } from '../../../src/constants/licenses';
-import { AIRCRAFT_TYPE_CATALOG } from '../../../src/constants/aircraftTypes';
+import { AIRPLANES, HELICOPTERS, inferAircraftCategory } from '../../../src/constants/aircraftTypes';
+import type { AircraftCategory } from '../../../src/constants/aircraftTypes';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
 import { OfferStatus } from '../../../src/types/enums';
+import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
 
 interface FormState {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  locationCityId: string;
   locationCountry: string;
   locationCity: string;
   locationBaseAirport: string;
@@ -43,8 +55,7 @@ function validate(form: FormState): string | null {
   if (!form.title.trim()) return 'Title is required.';
   if (form.title.trim().length < 3) return 'Title must be at least 3 characters.';
   if (!form.description.trim()) return 'Description is required.';
-  if (!form.locationCountry.trim()) return 'Country is required.';
-  if (!form.locationCity.trim()) return 'City is required.';
+  if (!form.locationCityId) return 'Country and city are required.';
   if (form.minYearsExperience < 0 || form.minYearsExperience > 30) return 'Years of experience must be between 0 and 30.';
   return null;
 }
@@ -53,11 +64,13 @@ export default function NewOfferScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const { companyId } = useCompanySession();
 
   const [form, setForm] = useState<FormState>({
     title: '',
     description: '',
     contractType: 'permanent',
+    locationCityId: '',
     locationCountry: '',
     locationCity: '',
     locationBaseAirport: '',
@@ -67,6 +80,7 @@ export default function NewOfferScreen() {
     requiredAircraftTypes: [],
   });
   const [saving, setSaving] = useState(false);
+  const [aircraftTab, setAircraftTab] = useState<AircraftCategory>('airplane');
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -79,13 +93,11 @@ export default function NewOfferScreen() {
     setSaving(true);
     try {
       await offerRepository.create({
-        companyId: DEMO_COMPANY_ID,
+        companyId,
         title: form.title.trim(),
         description: form.description.trim(),
         contractType: form.contractType,
-        locationCountry: form.locationCountry.trim(),
-        locationCity: form.locationCity.trim(),
-        locationBaseAirport: form.locationBaseAirport.trim() || undefined,
+        locationCityId: form.locationCityId,
         minYearsExperience: form.minYearsExperience,
         status,
         requiredTechnicianTypes: form.requiredTechnicianTypes,
@@ -101,30 +113,37 @@ export default function NewOfferScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'New Offer' }} />
+    <CompanyScreen>
+      <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, isWide && styles.contentWide]}
+        contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <FormSection label="Offer details">
-          <FormField label="Title *">
+        <CompanyPageHeader
+          eyebrow="Offer builder"
+          title="New Offer"
+          subtitle="Create a role technicians can match against."
+          onBack={() => router.back()}
+        />
+
+        <FormSection title="Offer details" subtitle="Describe the work clearly enough for match scoring." icon={FileText}>
+          <FormField label="Title">
             <TextInput
               style={styles.input}
               placeholder="e.g. B1.1 Line Maintenance Technician"
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor={companyUi.textMuted}
               value={form.title}
               onChangeText={(v) => set('title', v)}
             />
           </FormField>
 
-          <FormField label="Description *">
+          <FormField label="Description">
             <TextInput
               style={[styles.input, styles.textarea]}
-              placeholder="Describe the role, responsibilities and context…"
-              placeholderTextColor={colors.textMuted}
+              placeholder="Describe the role, responsibilities and context..."
+              placeholderTextColor={companyUi.textMuted}
               value={form.description}
               onChangeText={(v) => set('description', v)}
               multiline
@@ -133,19 +152,15 @@ export default function NewOfferScreen() {
             />
           </FormField>
 
-          <FormField label="Contract type *">
-            <View style={styles.segmented}>
+          <FormField label="Contract type">
+            <View style={styles.chipRow}>
               {CONTRACT_TYPES.map((ct) => (
-                <TouchableOpacity
+                <CompanyChip
                   key={ct.code}
-                  style={[styles.segBtn, form.contractType === ct.code && styles.segBtnActive]}
+                  label={ct.label}
+                  selected={form.contractType === ct.code}
                   onPress={() => set('contractType', ct.code as ContractTypeCode)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.segBtnText, form.contractType === ct.code && styles.segBtnTextActive]}>
-                    {ct.label}
-                  </Text>
-                </TouchableOpacity>
+                />
               ))}
             </View>
           </FormField>
@@ -153,267 +168,311 @@ export default function NewOfferScreen() {
           <FormField label="Minimum years of experience">
             <View style={styles.stepper}>
               <TouchableOpacity
-                style={styles.stepBtn}
+                style={styles.stepButton}
                 onPress={() => set('minYearsExperience', Math.max(0, form.minYearsExperience - 1))}
-                activeOpacity={0.7}
+                activeOpacity={0.75}
               >
-                <Text style={styles.stepBtnText}>−</Text>
+                <Minus color={companyUi.textSoft} size={17} strokeWidth={2} />
               </TouchableOpacity>
               <Text style={styles.stepValue}>{form.minYearsExperience} yrs</Text>
               <TouchableOpacity
-                style={styles.stepBtn}
+                style={styles.stepButton}
                 onPress={() => set('minYearsExperience', Math.min(30, form.minYearsExperience + 1))}
-                activeOpacity={0.7}
+                activeOpacity={0.75}
               >
-                <Text style={styles.stepBtnText}>+</Text>
+                <Plus color={companyUi.textSoft} size={17} strokeWidth={2} />
               </TouchableOpacity>
             </View>
           </FormField>
         </FormSection>
 
-        <FormSection label="Location">
-          <FormField label="Country *">
+        <FormSection title="Location" subtitle="Use the base airport when a precise operation point matters." icon={MapPin}>
+          <CountryPickerField
+            label="Country"
+            value={form.locationCountry}
+            onChange={(country) => {
+              set('locationCityId', '');
+              set('locationCountry', country);
+              set('locationCity', '');
+              set('locationBaseAirport', '');
+            }}
+          />
+          <CityPickerField
+            label="City"
+            country={form.locationCountry}
+            value={form.locationCity}
+            onChange={(city, _icao, entry) => {
+              set('locationCityId', entry.id);
+              set('locationCity', city);
+              set('locationBaseAirport', entry.iata || entry.icao);
+            }}
+          />
+          <FormField label="Base airport">
             <TextInput
-              style={styles.input}
-              placeholder="e.g. Spain"
-              placeholderTextColor={colors.textMuted}
-              value={form.locationCountry}
-              onChangeText={(v) => set('locationCountry', v)}
-            />
-          </FormField>
-          <FormField label="City *">
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. Madrid"
-              placeholderTextColor={colors.textMuted}
-              value={form.locationCity}
-              onChangeText={(v) => set('locationCity', v)}
-            />
-          </FormField>
-          <FormField label="Base airport (optional)">
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. MAD"
-              placeholderTextColor={colors.textMuted}
+              style={[styles.input, styles.readonlyInput]}
+              placeholder="e.g. LEMD"
+              placeholderTextColor={companyUi.textMuted}
               value={form.locationBaseAirport}
-              onChangeText={(v) => set('locationBaseAirport', v.toUpperCase())}
-              autoCapitalize="characters"
+              editable={false}
               maxLength={4}
             />
           </FormField>
         </FormSection>
 
-        <FormSection label="Required technician types">
-          <Text style={styles.sectionNote}>Leave empty to accept any type.</Text>
-          <View style={styles.pills}>
-            {TECHNICIAN_TYPES.filter((t) => t.isActive).map((t) => {
-              const selected = form.requiredTechnicianTypes.includes(t.code as TechnicianTypeCode);
-              return (
-                <TouchableOpacity
-                  key={t.code}
-                  style={[styles.pill, selected && styles.pillActive]}
-                  onPress={() => set('requiredTechnicianTypes', toggle(form.requiredTechnicianTypes, t.code as TechnicianTypeCode))}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.pillText, selected && styles.pillTextActive]}>{t.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </FormSection>
+        <ChoiceSection title="Required technician types" helper="Leave empty to accept any type.">
+          {TECHNICIAN_TYPES.filter((t) => t.isActive).map((t) => (
+            <CompanyChip
+              key={t.code}
+              label={t.label}
+              selected={form.requiredTechnicianTypes.includes(t.code as TechnicianTypeCode)}
+              onPress={() => set('requiredTechnicianTypes', toggle(form.requiredTechnicianTypes, t.code as TechnicianTypeCode))}
+            />
+          ))}
+        </ChoiceSection>
 
-        <FormSection label="Required licenses">
-          <Text style={styles.sectionNote}>Leave empty to accept any license.</Text>
-          <View style={styles.pills}>
-            {LICENSE_CATEGORIES.map((l) => {
-              const selected = form.requiredLicenses.includes(l.code as LicenseCode);
-              return (
-                <TouchableOpacity
-                  key={l.code}
-                  style={[styles.pill, selected && styles.pillActive]}
-                  onPress={() => set('requiredLicenses', toggle(form.requiredLicenses, l.code as LicenseCode))}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.pillText, selected && styles.pillTextActive]}>{l.code}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </FormSection>
+        <ChoiceSection title="Required licenses" helper="Leave empty to accept any license.">
+          {LICENSE_CATEGORIES.map((l) => (
+            <CompanyChip
+              key={l.code}
+              label={l.code}
+              selected={form.requiredLicenses.includes(l.code as LicenseCode)}
+              onPress={() => set('requiredLicenses', toggle(form.requiredLicenses, l.code as LicenseCode))}
+            />
+          ))}
+        </ChoiceSection>
 
-        <FormSection label="Required aircraft types">
-          <Text style={styles.sectionNote}>Leave empty to accept any aircraft type.</Text>
-          <View style={styles.pills}>
-            {AIRCRAFT_TYPE_CATALOG.map((a) => {
-              const selected = form.requiredAircraftTypes.includes(a.code);
-              return (
-                <TouchableOpacity
-                  key={a.code}
-                  style={[styles.pill, selected && styles.pillActive]}
-                  onPress={() => set('requiredAircraftTypes', toggle(form.requiredAircraftTypes, a.code))}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.pillText, selected && styles.pillTextActive]}>{a.code}</Text>
-                </TouchableOpacity>
-              );
-            })}
+        <ChoiceSection title="Required aircraft types" helper="Leave empty to accept any aircraft type.">
+          <View style={styles.categoryTabs}>
+            <CompanyChip label="Airplanes" selected={aircraftTab === 'airplane'} onPress={() => setAircraftTab('airplane')} />
+            <CompanyChip label="Helicopters" selected={aircraftTab === 'helicopter'} onPress={() => setAircraftTab('helicopter')} />
           </View>
-        </FormSection>
+          {(aircraftTab === 'airplane' ? AIRPLANES : HELICOPTERS).map((a) => (
+            <CompanyChip
+              key={a.code}
+              label={a.code}
+              selected={form.requiredAircraftTypes.includes(a.code)}
+              onPress={() => set('requiredAircraftTypes', toggle(form.requiredAircraftTypes, a.code))}
+            />
+          ))}
+          {form.requiredAircraftTypes.filter((c) => inferAircraftCategory([c]) !== aircraftTab).length > 0 && (
+            <Text style={styles.otherCategoryNote}>
+              +{form.requiredAircraftTypes.filter((c) => inferAircraftCategory([c]) !== aircraftTab).length} selected in other category
+            </Text>
+          )}
+        </ChoiceSection>
 
         <View style={styles.actions}>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.draftBtn, saving && styles.btnDisabled]}
+            style={[styles.secondaryButton, saving && styles.disabled]}
             onPress={() => handleSave('draft')}
             disabled={saving}
             activeOpacity={0.75}
           >
-            {saving ? <ActivityIndicator color={colors.text} size="small" /> : null}
-            <Text style={styles.draftBtnText}>Save as draft</Text>
+            {saving ? <ActivityIndicator color={companyUi.textSoft} size="small" /> : <FileText color={companyUi.textSoft} size={16} strokeWidth={2} />}
+            <Text style={styles.secondaryButtonText}>Save draft</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.publishBtn, saving && styles.btnDisabled]}
+            style={[styles.primaryButton, saving && styles.disabled]}
             onPress={() => handleSave('published')}
             disabled={saving}
             activeOpacity={0.75}
           >
-            {saving ? <ActivityIndicator color={colors.white} size="small" /> : null}
-            <Text style={styles.publishBtnText}>Publish</Text>
+            {saving ? <ActivityIndicator color={colors.white} size="small" /> : <Send color={colors.white} size={16} strokeWidth={2} />}
+            <Text style={styles.primaryButtonText}>Publish</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </CompanyScreen>
   );
 }
 
-function FormSection({ label, children }: { label: string; children: React.ReactNode }) {
+function FormSection({
+  title,
+  subtitle,
+  icon,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ComponentType<any>;
+  children: React.ReactNode;
+}) {
   return (
-    <View style={sectionStyles.wrap}>
-      <Text style={sectionStyles.label}>{label}</Text>
+    <CompanyCard style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <IconBox icon={icon} color={companyUi.accent} backgroundColor={companyUi.accentSoft} />
+        <View style={styles.sectionCopy}>
+          <Text style={styles.sectionTitle}>{title}</Text>
+          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+        </View>
+      </View>
       {children}
-    </View>
+    </CompanyCard>
+  );
+}
+
+function ChoiceSection({ title, helper, children }: { title: string; helper: string; children: React.ReactNode }) {
+  return (
+    <CompanyCard style={styles.section}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionSubtitle}>{helper}</Text>
+      <View style={styles.choiceWrap}>{children}</View>
+    </CompanyCard>
   );
 }
 
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <View style={fieldStyles.wrap}>
-      <Text style={fieldStyles.label}>{label}</Text>
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label}</Text>
       {children}
     </View>
   );
 }
 
-const sectionStyles = StyleSheet.create({
-  wrap: {
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.navy,
-    marginBottom: spacing.md,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-});
-
-const fieldStyles = StyleSheet.create({
-  wrap: { marginBottom: spacing.md },
-  label: { fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: spacing.xs },
-});
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
-  content: { padding: spacing.lg, paddingBottom: spacing.xxxl },
-  contentWide: { maxWidth: 720, alignSelf: 'center', width: '100%' },
+  section: {
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  sectionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  sectionSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  field: {
+    gap: 6,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
   input: {
-    backgroundColor: colors.background,
+    minHeight: 46,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
+    borderColor: companyUi.border,
+    borderRadius: 14,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
+    paddingVertical: spacing.sm,
     fontSize: 14,
-    color: colors.text,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: companyUi.text,
+    backgroundColor: companyUi.surfaceSoft,
+  },
+  readonlyInput: {
+    color: companyUi.textSoft,
   },
   textarea: {
-    minHeight: 96,
-    paddingTop: spacing.sm + 2,
+    minHeight: 104,
+    paddingTop: spacing.sm,
   },
-  sectionNote: {
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  choiceWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  categoryTabs: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+    paddingBottom: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: companyUi.borderSoft,
+  },
+  otherCategoryNote: {
     fontSize: 11,
-    color: colors.textMuted,
-    marginBottom: spacing.sm,
-    marginTop: -spacing.xs,
+    fontWeight: '600',
+    color: companyUi.textMuted,
+    marginTop: 2,
   },
-  segmented: { flexDirection: 'row', gap: spacing.xs },
-  segBtn: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  segBtnActive: {
-    backgroundColor: colors.blue,
-    borderColor: colors.blue,
-  },
-  segBtnText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  segBtnTextActive: { color: colors.white },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
   },
-  stepBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
+  stepButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: companyUi.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: companyUi.surfaceSoft,
   },
-  stepBtnText: { fontSize: 20, fontWeight: '300', color: colors.text, lineHeight: 24 },
-  stepValue: { fontSize: 16, fontWeight: '700', color: colors.text, minWidth: 60, textAlign: 'center' },
-  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  pill: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: spacing.xs,
-    backgroundColor: colors.background,
+  stepValue: {
+    minWidth: 70,
+    textAlign: 'center',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: companyUi.text,
   },
-  pillActive: { backgroundColor: colors.navy, borderColor: colors.navy },
-  pillText: { fontSize: 12, color: colors.textSecondary, fontWeight: '500' },
-  pillTextActive: { color: colors.white },
-  actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  actionBtn: {
-    flex: 1,
+  actions: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  secondaryButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surface,
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderRadius: 12,
+    justifyContent: 'center',
     gap: spacing.xs,
   },
-  draftBtn: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+  primaryButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 16,
+    backgroundColor: companyUi.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
   },
-  publishBtn: { backgroundColor: colors.blue },
-  btnDisabled: { opacity: 0.6 },
-  draftBtnText: { fontSize: 15, fontWeight: '700', color: colors.text },
-  publishBtnText: { fontSize: 15, fontWeight: '700', color: colors.white },
+  disabled: {
+    opacity: 0.6,
+  },
+  secondaryButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  primaryButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.white,
+  },
 });

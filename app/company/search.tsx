@@ -1,36 +1,194 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   ActivityIndicator,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
 } from 'react-native';
-import { Stack } from 'expo-router';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
-import { TechnicianCard } from '../../src/components/TechnicianCard';
-import { TechnicianFilters } from '../../src/components/TechnicianFilters';
-import { EmptyState } from '../../src/components/EmptyState';
-import { Button } from '../../src/components/Button';
+import {
+  BriefcaseBusiness,
+  Clock,
+  Lock,
+  MapPin,
+  Radar,
+  Search,
+  Send,
+  UserRound,
+} from 'lucide-react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { MatchBadge } from '../../src/components/MatchBadge';
 import { RequestContactModal } from '../../src/components/RequestContactModal';
+import {
+  CompanyBadge,
+  CompanyCard,
+  CompanyChip,
+  CompanyPageHeader,
+  CompanyScreen,
+  EmptyPanel,
+  IconBox,
+  InitialAvatar,
+  companyStyles,
+  companyUi,
+} from '../../src/components/company/CompanyUI';
 import { useTechnicianSearch } from '../../src/state/useTechnicianSearch';
 import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
+import { useCompanySession } from '../../src/state/SessionContext';
+import { isOfferOpenForTechnicians, offerRepository } from '../../src/repositories/v2/offerRepository';
+import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
+import { calculateOfferTechnicianMatch } from '../../src/utils/matchingV2';
+import { AIRPLANES, HELICOPTERS, inferAircraftCategory, AircraftCategory } from '../../src/constants/aircraftTypes';
+import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
+import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
+import { OfferWithRequirements } from '../../src/types/offer';
 import { SafeTechnicianView } from '../../src/types';
-import { colors, spacing } from '../../src/theme';
+import { MatchScore } from '../../src/types/matching';
+import { SafeTechnicianPreview } from '../../src/types/privacy';
+
+type PreviewMap = Record<string, SafeTechnicianPreview>;
+type ScoreMap = Record<string, MatchScore>;
+
+function labelize(value?: string): string {
+  if (!value) return 'Not specified';
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function availabilityLabel(tech: SafeTechnicianView): string {
+  const status = tech.availability.status;
+  if (status === 'available') return 'Available now';
+  if (status === 'open_to_offers') {
+    return tech.availability.availableFrom ? `Available ${tech.availability.availableFrom}` : 'Open to offers';
+  }
+  if (status === 'unavailable') return 'Unavailable';
+  if (tech.availability.immediately) return 'Available now';
+  if (tech.availability.availableFrom) return `Available ${tech.availability.availableFrom}`;
+  return 'Open to offers';
+}
+
+function verificationTone(status: string) {
+  return status === 'verified' ? 'success' : 'warning';
+}
+
+function requestTone(status: string) {
+  if (status === 'accepted') return 'success';
+  if (status === 'rejected') return 'error';
+  return 'warning';
+}
+
+function requestLabel(status: string): string {
+  if (status === 'sent') return 'Pending request';
+  return labelize(status);
+}
 
 export default function TechnicianSearchScreen() {
+  const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isWide = width >= 960;
   const { results, filters, loading, hasSearched, updateFilter, clearFilters, search } =
     useTechnicianSearch();
   const { requests, hasSentRequest, getRequestForTechnician, sendRequest } =
     useCompanyDashboard();
+  const { companyId } = useCompanySession();
 
+  const [aircraftCatFilter, setAircraftCatFilter] = useState<AircraftCategory | 'all'>('all');
+
+  const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<PreviewMap>({});
+  const [scores, setScores] = useState<ScoreMap>({});
   const [selectedTech, setSelectedTech] = useState<SafeTechnicianView | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [sending, setSending] = useState(false);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (hasSearched) search();
+    }, [hasSearched, search]),
+  );
+
+  useEffect(() => {
+    let active = true;
+    offerRepository.getAllWithRequirements().then((all) => {
+      if (!active) return;
+      setOffers(all.filter((offer) => offer.companyId === companyId && isOfferOpenForTechnicians(offer)));
+    });
+    return () => {
+      active = false;
+    };
+  }, [companyId]);
+
+  const selectedOffer = useMemo(
+    () => offers.find((offer) => offer.id === selectedOfferId) ?? null,
+    [offers, selectedOfferId],
+  );
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadPreviewData() {
+      if (!results.length) {
+        setPreviews({});
+        setScores({});
+        return;
+      }
+
+      const previewEntries = await Promise.all(
+        results.map(async (tech) => {
+          const preview = await technicianRepositoryV2.getSafeView(tech.id);
+          return [tech.id, preview] as const;
+        }),
+      );
+
+      const nextPreviews: PreviewMap = {};
+      previewEntries.forEach(([id, preview]) => {
+        if (preview) nextPreviews[id] = preview;
+      });
+
+      const nextScores: ScoreMap = {};
+      if (selectedOffer) {
+        const scoreEntries = await Promise.all(
+          results.map(async (tech) => {
+            const full = await technicianRepositoryV2.getWithRelations(tech.id);
+            if (!full) return [tech.id, null] as const;
+            return [tech.id, calculateOfferTechnicianMatch(selectedOffer, full)] as const;
+          }),
+        );
+        scoreEntries.forEach(([id, score]) => {
+          if (score) nextScores[id] = score;
+        });
+      }
+
+      if (!active) return;
+      setPreviews(nextPreviews);
+      setScores(nextScores);
+    }
+
+    loadPreviewData();
+    return () => {
+      active = false;
+    };
+  }, [results, selectedOffer]);
+
   async function handleSearch() {
     await search(requests);
+  }
+
+  const filteredResults = useMemo(() => {
+    if (aircraftCatFilter === 'all') return results;
+    const validCodes = new Set<string>(
+      (aircraftCatFilter === 'airplane' ? AIRPLANES : HELICOPTERS).map((a) => a.code),
+    );
+    return results.filter((tech) => tech.aircraftTypes.some((code) => validCodes.has(code)));
+  }, [results, aircraftCatFilter]);
+
+  function handleClearFilters() {
+    clearFilters();
+    setAircraftCatFilter('all');
+    setScores({});
+    setPreviews({});
   }
 
   function handleRequestContact(tech: SafeTechnicianView) {
@@ -54,68 +212,193 @@ export default function TechnicianSearchScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Stack.Screen options={{ title: 'Search Technicians' }} />
-      <DemoModeBanner role="company" />
-
+    <CompanyScreen>
       <FlatList
-        data={results}
+        data={filteredResults}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          <View>
-            <TechnicianFilters
-              filters={filters}
-              onChange={updateFilter}
-              onClear={clearFilters}
+          <View style={styles.headerStack}>
+            <CompanyPageHeader
+              eyebrow="Search"
+              title="Search technicians"
+              subtitle="Find privacy-safe technician profiles and calculate match quality only against a selected offer."
+              onBack={() => router.back()}
             />
-            <Button
-              label="Search Technicians"
-              variant="primary"
-              onPress={handleSearch}
-              loading={loading}
-              fullWidth
-              style={styles.searchBtn}
-            />
-            {hasSearched && !loading && (
-              <View style={styles.resultRow}>
-                <View style={styles.resultPill}>
-                  <Text style={styles.resultCount}>
-                    {results.length} {results.length === 1 ? 'result' : 'results'} found
-                  </Text>
+
+            <CompanyCard style={styles.searchPanel}>
+              <View style={styles.panelHeader}>
+                <IconBox icon={Radar} color={companyUi.accent} backgroundColor={companyUi.accentSoft} />
+                <View style={styles.panelCopy}>
+                  <Text style={styles.panelTitle}>Search criteria</Text>
+                  <Text style={styles.panelSub}>Use a few high-signal filters, then review profiles below.</Text>
                 </View>
               </View>
-            )}
-            {loading && (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator color={colors.blue} size="small" />
-                <Text style={styles.loadingText}>Searching…</Text>
+
+              <View style={styles.fieldGrid}>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>Country</Text>
+                  <TextInput
+                    value={filters.country ?? ''}
+                    onChangeText={(value) => updateFilter('country', value || undefined)}
+                    placeholder="Any country"
+                    placeholderTextColor={companyUi.textMuted}
+                    style={styles.input}
+                  />
+                </View>
+                <View style={styles.field}>
+                  <Text style={styles.fieldLabel}>City</Text>
+                  <TextInput
+                    value={filters.city ?? ''}
+                    onChangeText={(value) => updateFilter('city', value || undefined)}
+                    placeholder="Any city"
+                    placeholderTextColor={companyUi.textMuted}
+                    style={styles.input}
+                  />
+                </View>
               </View>
-            )}
+
+              <FilterGroup label="Availability">
+                <CompanyChip
+                  label="Any"
+                  selected={!filters.availabilityStatus}
+                  onPress={() => updateFilter('availabilityStatus', undefined)}
+                />
+                <CompanyChip
+                  label="Available now"
+                  selected={filters.availabilityStatus === 'available'}
+                  onPress={() => updateFilter('availabilityStatus', 'available')}
+                />
+              </FilterGroup>
+
+              <FilterGroup label="Verification">
+                <CompanyChip
+                  label="Any"
+                  selected={!filters.verificationStatus}
+                  onPress={() => updateFilter('verificationStatus', undefined)}
+                />
+                <CompanyChip
+                  label="Verified only"
+                  selected={filters.verificationStatus === 'verified'}
+                  onPress={() => updateFilter('verificationStatus', 'verified')}
+                />
+              </FilterGroup>
+
+              <FilterGroup label="License">
+                <CompanyChip
+                  label="Any"
+                  selected={!filters.licenseCategory}
+                  onPress={() => updateFilter('licenseCategory', undefined)}
+                />
+                {LICENSE_CATEGORIES.slice(0, 8).map((license) => (
+                  <CompanyChip
+                    key={license.code}
+                    label={license.code}
+                    selected={filters.licenseCategory === license.code}
+                    onPress={() => updateFilter('licenseCategory', license.code)}
+                  />
+                ))}
+              </FilterGroup>
+
+              <FilterGroup label="Aircraft category">
+                {(['all', 'airplane', 'helicopter'] as (AircraftCategory | 'all')[]).map((cat) => (
+                  <CompanyChip
+                    key={cat}
+                    label={cat === 'all' ? 'Any' : cat === 'airplane' ? 'Airplanes' : 'Helicopters'}
+                    selected={aircraftCatFilter === cat}
+                    onPress={() => setAircraftCatFilter(cat)}
+                  />
+                ))}
+              </FilterGroup>
+
+              <View style={styles.searchActions}>
+                <TouchableOpacity
+                  style={styles.secondaryAction}
+                  onPress={handleClearFilters}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.secondaryActionText}>Clear</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.primaryAction}
+                  onPress={handleSearch}
+                  activeOpacity={0.75}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color={companyUi.surface} />
+                  ) : (
+                    <>
+                      <Search color={companyUi.surface} size={16} strokeWidth={2} />
+                      <Text style={styles.primaryActionText}>Search technicians</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </CompanyCard>
+
+            <CompanyCard style={styles.offerPanel}>
+              <View style={styles.panelHeader}>
+                <IconBox icon={BriefcaseBusiness} color={companyUi.blue} backgroundColor={companyUi.blueSoft} />
+                <View style={styles.panelCopy}>
+                  <Text style={styles.panelTitle}>Match context</Text>
+                  <Text style={styles.panelSub}>Select an offer to calculate match percentages.</Text>
+                </View>
+              </View>
+              <View style={styles.chipWrap}>
+                <CompanyChip
+                  label="No offer selected"
+                  selected={!selectedOfferId}
+                  onPress={() => setSelectedOfferId(null)}
+                />
+                {offers.map((offer) => (
+                  <CompanyChip
+                    key={offer.id}
+                    label={offer.title}
+                    selected={selectedOfferId === offer.id}
+                    onPress={() => setSelectedOfferId(offer.id)}
+                  />
+                ))}
+              </View>
+            </CompanyCard>
+
+            {hasSearched && !loading ? (
+              <View style={styles.resultHeader}>
+                <Text style={styles.resultTitle}>
+                  {filteredResults.length} {filteredResults.length === 1 ? 'result' : 'results'}
+                  {filteredResults.length !== results.length ? ` of ${results.length}` : ''}
+                </Text>
+                <Text style={styles.resultSub}>
+                  {selectedOffer
+                    ? `Match shown for ${selectedOffer.title}.`
+                    : 'Select an offer to calculate match.'}
+                </Text>
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
           !loading ? (
             hasSearched ? (
-              <EmptyState
+              <EmptyPanel
                 title="No technicians found"
-                subtitle="Try adjusting your filters or search without filters to see all available technicians."
-                icon="✈️"
-                action={{ label: 'Clear filters', onPress: clearFilters }}
+                subtitle="Adjust filters or clear the criteria to broaden the search."
               />
             ) : (
-              <EmptyState
-                title="Set your search criteria"
-                subtitle="Use the filters above to find technicians that match your requirements, then tap Search."
-                icon="🔍"
+              <EmptyPanel
+                title="Start with search criteria"
+                subtitle="Search results will appear here as privacy-safe technician cards."
               />
             )
           ) : null
         }
         renderItem={({ item }) => (
-          <TechnicianCard
+          <TechnicianResultCard
             technician={item}
+            preview={previews[item.id]}
+            selectedOffer={selectedOffer}
+            score={scores[item.id]}
             requestStatus={getRequestForTechnician(item.id)?.status ?? null}
             onRequestContact={
               hasSentRequest(item.id) ? undefined : () => handleRequestContact(item)
@@ -131,46 +414,391 @@ export default function TechnicianSearchScreen() {
         onCancel={handleCancelModal}
         loading={sending}
       />
-    </SafeAreaView>
+    </CompanyScreen>
+  );
+}
+
+function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.filterGroup}>
+      <Text style={styles.filterLabel}>{label}</Text>
+      <View style={styles.chipWrap}>{children}</View>
+    </View>
+  );
+}
+
+/**
+ * TechnicianResultCard renders a company-safe technician preview card.
+ *
+ * `technician` is SafeTechnicianView (V1 compat). The `fullName` field is ONLY
+ * present when the company has an accepted offer record with this technician —
+ * this is enforced by the privacy gate in useTechnicianSearch (canRevealIdentity).
+ * Before acceptance: fullName === undefined → shows anonymousCode + "Identity locked".
+ * After acceptance: fullName is set → shows real name + "Identity unlocked".
+ *
+ * The `preview` prop (SafeTechnicianPreview / TechnicianPublicPreviewDTO) always has
+ * the V2 anonymous fields (technicianType, licenses, habilitations). It never exposes
+ * private fields regardless of acceptance state.
+ */
+function TechnicianResultCard({
+  technician,
+  preview,
+  selectedOffer,
+  score,
+  requestStatus,
+  onRequestContact,
+}: {
+  technician: SafeTechnicianView;
+  preview?: SafeTechnicianPreview;
+  selectedOffer: OfferWithRequirements | null;
+  score?: MatchScore;
+  requestStatus: string | null;
+  onRequestContact?: () => void;
+}) {
+  const displayName = technician.fullName ?? technician.anonymousCode;
+  const technicianType = preview?.technicianType
+    ? TECHNICIAN_TYPES.find((type) => type.code === preview.technicianType)?.label ?? labelize(preview.technicianType)
+    : 'Technician';
+  const licenseChips = preview?.licenses?.length ? preview.licenses : technician.licenseCategories;
+  const aircraftChips = preview?.habilitations?.length
+    ? [...new Set(preview.habilitations.map((h) => h.aircraftTypeCode))]
+    : technician.aircraftTypes;
+  const aircraftCat = aircraftChips.length > 0 ? inferAircraftCategory(aircraftChips) : null;
+
+  return (
+    <CompanyCard style={styles.resultCard}>
+      <View style={styles.resultTop}>
+        <InitialAvatar label={displayName} color={technician.fullName ? companyUi.accent : companyUi.navy} />
+        <View style={styles.resultInfo}>
+          <View style={styles.resultNameRow}>
+            <Text style={styles.techName} numberOfLines={1}>
+              {displayName}
+            </Text>
+            {requestStatus ? (
+              <CompanyBadge label={requestLabel(requestStatus)} tone={requestTone(requestStatus)} small />
+            ) : null}
+          </View>
+          <Text style={styles.techType}>{technicianType}</Text>
+          <View style={styles.metaRow}>
+            <View style={styles.metaItem}>
+              <MapPin color={companyUi.textMuted} size={13} strokeWidth={2} />
+              <Text style={styles.metaText} numberOfLines={1}>
+                {technician.city}, {technician.country}
+              </Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Clock color={companyUi.textMuted} size={13} strokeWidth={2} />
+              <Text style={styles.metaText} numberOfLines={1}>
+                {availabilityLabel(technician)}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.badgeLine}>
+        <CompanyBadge
+          label={labelize(technician.verificationStatus)}
+          tone={verificationTone(technician.verificationStatus)}
+          small
+        />
+        <CompanyBadge label={`${technician.yearsExperience} years experience`} tone="muted" small />
+        {aircraftCat === 'airplane' && <CompanyBadge label="Airplane" tone="info" small />}
+        {aircraftCat === 'helicopter' && <CompanyBadge label="Helicopter" tone="info" small />}
+        {aircraftCat === 'mixed' && <CompanyBadge label="Mixed" tone="warning" small />}
+        {!technician.fullName ? (
+          <View style={styles.lockBadge}>
+            <Lock color={companyUi.textSoft} size={12} strokeWidth={2} />
+            <Text style={styles.lockText}>Identity locked</Text>
+          </View>
+        ) : (
+          <CompanyBadge label="Identity unlocked" tone="success" small />
+        )}
+      </View>
+
+      <View style={styles.chipBlock}>
+        <Text style={styles.smallLabel}>Licenses</Text>
+        <View style={styles.chipWrap}>
+          {licenseChips.length ? (
+            licenseChips.slice(0, 5).map((license) => <CompanyChip key={license} label={license} />)
+          ) : (
+            <Text style={styles.mutedText}>No licenses listed</Text>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.chipBlock}>
+        <Text style={styles.smallLabel}>Aircraft</Text>
+        <View style={styles.chipWrap}>
+          {aircraftChips.length ? (
+            aircraftChips.slice(0, 5).map((aircraft) => <CompanyChip key={aircraft} label={aircraft} />)
+          ) : (
+            <Text style={styles.mutedText}>No aircraft listed</Text>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.resultFooter}>
+        <View style={styles.matchArea}>
+          {selectedOffer ? (
+            score ? (
+              <MatchBadge score={score.total} context="for selected offer" />
+            ) : (
+              <Text style={styles.matchHint}>Calculating match...</Text>
+            )
+          ) : (
+            <Text style={styles.matchHint}>Select an offer to calculate match.</Text>
+          )}
+        </View>
+        {onRequestContact ? (
+          <TouchableOpacity style={styles.requestButton} onPress={onRequestContact} activeOpacity={0.75}>
+            <Send color={companyUi.surface} size={15} strokeWidth={2} />
+            <Text style={styles.requestButtonText}>Request contact</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.requestStatic}>
+            <UserRound color={companyUi.textSoft} size={15} strokeWidth={2} />
+            <Text style={styles.requestStaticText}>Contact requested</Text>
+          </View>
+        )}
+      </View>
+    </CompanyCard>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  content: {
-    padding: spacing.lg,
-    paddingBottom: spacing.xxxl,
-  },
-  searchBtn: {
-    marginBottom: spacing.sm,
-  },
-  resultRow: {
+  headerStack: { gap: 14, marginBottom: 14 },
+  searchPanel: { gap: 16 },
+  panelHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.sm,
+    gap: 12,
   },
-  resultPill: {
-    backgroundColor: colors.blue + '12',
-    borderRadius: 20,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: colors.blue + '30',
+  panelCopy: { flex: 1, minWidth: 0 },
+  panelTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: companyUi.text,
   },
-  resultCount: {
+  panelSub: {
+    marginTop: 2,
     fontSize: 12,
-    color: colors.blue,
-    fontWeight: '600',
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
-  loadingRow: {
+  fieldGrid: {
+    gap: 10,
+  },
+  field: { gap: 7 },
+  fieldLabel: {
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  input: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    borderRadius: 15,
+    paddingHorizontal: 13,
+    fontSize: 14,
+    fontWeight: '600',
+    color: companyUi.text,
+    backgroundColor: companyUi.surfaceSoft,
+  },
+  filterGroup: { gap: 8 },
+  filterLabel: {
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  searchActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryAction: {
+    minHeight: 44,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surface,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryActionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  primaryAction: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 15,
+    backgroundColor: companyUi.accent,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  primaryActionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.surface,
+  },
+  offerPanel: { gap: 14 },
+  resultHeader: { gap: 2 },
+  resultTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  resultSub: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  resultCard: {
+    gap: 14,
+    marginBottom: 12,
+  },
+  resultTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  resultInfo: { flex: 1, minWidth: 0 },
+  resultNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  techName: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  techType: {
+    marginTop: 3,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: companyUi.textSoft,
+  },
+  metaRow: {
+    marginTop: 9,
+    gap: 7,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  metaText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  badgeLine: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  lockBadge: {
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+    backgroundColor: companyUi.surfaceSoft,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  lockText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  chipBlock: { gap: 7 },
+  smallLabel: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+  },
+  mutedText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: companyUi.textMuted,
+  },
+  resultFooter: {
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
+    paddingTop: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  matchArea: { flex: 1, minWidth: 0 },
+  matchHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: companyUi.textSoft,
+  },
+  requestButton: {
+    minHeight: 40,
+    borderRadius: 14,
+    backgroundColor: companyUi.accent,
+    paddingHorizontal: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.lg,
-    gap: spacing.sm,
+    gap: 7,
   },
-  loadingText: {
+  requestButtonText: {
     fontSize: 13,
-    color: colors.textMuted,
-    fontWeight: '500',
+    fontWeight: '700',
+    color: companyUi.surface,
+  },
+  requestStatic: {
+    minHeight: 40,
+    borderRadius: 14,
+    backgroundColor: companyUi.surfaceSoft,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  requestStaticText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: companyUi.textSoft,
   },
 });
