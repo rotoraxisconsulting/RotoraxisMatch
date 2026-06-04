@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,31 +8,25 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import type { ViewStyle } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import {
   BadgeCheck,
   BriefcaseBusiness,
   Building2,
-  ChevronRight,
   ClipboardCheck,
+  Inbox,
   MapPin,
   MessageCircle,
   Search,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { useDemoSession } from '../../src/state/useDemoSession';
-import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
-import { useCompanySession } from '../../src/state/SessionContext';
-import { offerApplicationRepository } from '../../src/repositories/v2/offerApplicationRepository';
-import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
-import { chatRepository } from '../../src/repositories/v2/chatRepository';
-import { offerRepository } from '../../src/repositories/v2/offerRepository';
-import { companyRepositoryV2 } from '../../src/repositories/v2/companyRepositoryV2';
-import { activityRepository } from '../../src/repositories/v2/activityRepository';
+import { useAuth } from '../../src/auth/AuthContext';
+import { useCompanySession, useSession } from '../../src/state/SessionContext';
+import { supabase } from '../../src/lib/supabase';
 import { canManageCompanyMembers } from '../../src/utils/companyPermissionsV2';
+import { activityRepository } from '../../src/repositories/v2/activityRepository';
 import {
-  ActivityDot,
   CompanyBadge,
   CompanyCard,
   CompanyPageHeader,
@@ -42,11 +36,11 @@ import {
   companyUi,
 } from '../../src/components/company/CompanyUI';
 import { colors, spacing } from '../../src/theme';
-import type { Company, Offer } from '../../src/types';
 
 type DashboardIconKind =
   | 'offers'
   | 'applications'
+  | 'directOffers'
   | 'search'
   | 'map'
   | 'chats'
@@ -60,17 +54,20 @@ type Metric = {
   icon: DashboardIconKind;
   tone: string;
   softTone: string;
-  hasActivity?: boolean;
 };
 
-type OfferActivityCounts = {
-  applications: number;
-  directOffers: number;
+type SupabaseCompany = {
+  id: string;
+  name: string;
+  email: string;
+  companyType: string;
+  verificationStatus: string;
 };
 
 const DASHBOARD_ICONS: Record<DashboardIconKind, React.ComponentType<LucideProps>> = {
   offers: BriefcaseBusiness,
   applications: ClipboardCheck,
+  directOffers: Inbox,
   search: Search,
   map: MapPin,
   chats: MessageCircle,
@@ -81,24 +78,14 @@ const DASHBOARD_ICONS: Record<DashboardIconKind, React.ComponentType<LucideProps
 const COMPANY_TYPE_LABELS: Record<string, string> = {
   airline: 'Airline',
   mro: 'MRO',
+  MRO: 'MRO',
   operator: 'Operator',
   contractor: 'Contractor',
   recruiter: 'Recruiter',
-  MRO: 'MRO',
   recruitment_agency: 'Recruitment Agency',
   helicopter_operator: 'Helicopter Operator',
   other: 'Other',
 };
-
-const CONTRACT_LABELS: Record<string, string> = {
-  permanent: 'Permanent',
-  long_term: 'Long-term',
-  short_term: 'Short-term',
-};
-
-function roleLabel(role: string): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
 
 function verificationTone(status: string): 'success' | 'warning' | 'error' | 'muted' {
   if (status === 'verified') return 'success';
@@ -107,102 +94,112 @@ function verificationTone(status: string): 'success' | 'warning' | 'error' | 'mu
   return 'muted';
 }
 
-function offerStatusTone(status: Offer['status']): 'success' | 'warning' | 'error' | 'navy' {
-  if (status === 'published') return 'success';
-  if (status === 'draft') return 'warning';
-  if (status === 'expired') return 'error';
-  return 'navy';
-}
-
-function offerTimestamp(offer: Offer): number {
-  const value = Date.parse(offer.updatedAt || offer.createdAt);
-  return Number.isNaN(value) ? 0 : value;
-}
-
-function formatOfferLocation(offer: Offer): string {
-  const location = [offer.locationCity, offer.locationCountry].filter(Boolean).join(', ');
-  return location || 'Location pending';
-}
-
-function formatOfferDate(value?: string): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(date);
-}
-
-function compactCount(count: number, label: string): string {
-  return `${count} ${label}${count === 1 ? '' : 's'}`;
+function roleLabel(role: string): string {
+  return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 export default function CompanyDashboard() {
   const router = useRouter();
+  const { profile, loading: authLoading } = useAuth();
   const { companyId, companyMemberRole } = useCompanySession();
-  const { clearSession } = useDemoSession();
-  const { company, loading } = useCompanyDashboard();
+  const { sessionLoading } = useSession();
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
   const isNarrow = width < 390;
   const canViewTeam = canManageCompanyMembers(companyMemberRole);
 
+  const [supabaseCompany, setSupabaseCompany] = useState<SupabaseCompany | null>(null);
   const [pendingApplications, setPendingApplications] = useState(0);
   const [chatCount, setChatCount] = useState(0);
   const [pendingDirectOffers, setPendingDirectOffers] = useState(0);
   const [publishedOffers, setPublishedOffers] = useState(0);
+  const [publishedOffersList, setPublishedOffersList] = useState<{ id: string; title: string; contractType: string }[]>([]);
   const [teamMembers, setTeamMembers] = useState(0);
+
+  // Unread activity badges for NavCards
   const [unreadApplications, setUnreadApplications] = useState(0);
-  const [unreadJobOffers, setUnreadJobOffers] = useState(0);
+  const [unreadDirectOffers, setUnreadDirectOffers] = useState(0);
   const [unreadChats, setUnreadChats] = useState(0);
-  const [recentOffers, setRecentOffers] = useState<Offer[]>([]);
-  const [offerActivityCounts, setOfferActivityCounts] = useState<Record<string, OfferActivityCounts>>({});
 
   useEffect(() => {
-    Promise.all([
-      offerApplicationRepository.getForCompany(companyId),
-      offerRequestRepository.getForCompany(companyId),
-      offerRepository.getForCompany(companyId),
-    ]).then(([apps, reqs, offers]) => {
-      setPendingApplications(apps.filter((a) => a.status === 'pending').length);
-      setPendingDirectOffers(reqs.filter((r) => r.status === 'pending').length);
-      setPublishedOffers(offers.filter((o) => o.status === 'published').length);
+    if (!authLoading && !profile) {
+      router.replace('/auth/login' as any);
+    }
+  }, [authLoading, profile]);
 
-      const sortedOffers = [...offers].sort((a, b) => offerTimestamp(b) - offerTimestamp(a));
-      const nextCounts: Record<string, OfferActivityCounts> = {};
-      sortedOffers.forEach((offer) => {
-        nextCounts[offer.id] = {
-          applications: apps.filter((app) => app.offerId === offer.id).length,
-          directOffers: reqs.filter((req) => req.offerId === offer.id).length,
-        };
+  useEffect(() => {
+    if (!authLoading && profile?.status === 'pending_verification') {
+      router.replace('/auth/pending-verification' as any);
+    }
+  }, [authLoading, profile]);
+
+  useEffect(() => {
+    if (!companyId) return;
+
+    supabase
+      .from('companies')
+      .select('id, name, email, company_type, verification_status')
+      .eq('id', companyId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setSupabaseCompany({
+            id: data.id,
+            name: data.name,
+            email: data.email,
+            companyType: data.company_type,
+            verificationStatus: data.verification_status,
+          });
+        }
       });
-      setRecentOffers(sortedOffers.slice(0, 3));
-      setOfferActivityCounts(nextCounts);
+
+    Promise.all([
+      supabase.from('offer_applications').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'pending'),
+      supabase.from('offer_requests').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'pending'),
+      supabase.from('offers').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'published'),
+      supabase.from('chat_rooms').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
+      supabase.from('company_members').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
+      supabase.from('offers').select('id, title, contract_type').eq('company_id', companyId).eq('status', 'published').eq('visible', true).order('created_at', { ascending: false }),
+    ]).then(([apps, reqs, offers, chats, members, offersList]) => {
+      setPendingApplications(apps.count ?? 0);
+      setPendingDirectOffers(reqs.count ?? 0);
+      setPublishedOffers(offers.count ?? 0);
+      setChatCount(chats.count ?? 0);
+      setTeamMembers(members.count ?? 0);
+      setPublishedOffersList(
+        ((offersList.data ?? []) as any[]).map((o) => ({
+          id: o.id,
+          title: o.title,
+          contractType: o.contract_type,
+        })),
+      );
     });
-    chatRepository.getRoomsForCompany(companyId).then((rooms) => {
-      setChatCount(rooms.length);
-    });
-    companyRepositoryV2.getMembers(companyId).then((members) => {
-      setTeamMembers(members.length);
-    });
-    activityRepository.getUnreadCount('company', companyId, ['application_received']).then(setUnreadApplications);
-    activityRepository.getUnreadCount('company', companyId, ['direct_offer_accepted', 'direct_offer_rejected']).then(setUnreadJobOffers);
-    activityRepository.getUnreadCount('company', companyId, ['chat_message_received']).then(setUnreadChats);
   }, [companyId]);
 
-  async function handleSwitchRole() {
-    await clearSession();
-    router.replace('/');
-  }
+  useFocusEffect(
+    useCallback(() => {
+      if (!companyId) return;
+      Promise.all([
+        activityRepository.getUnreadCount('company', companyId, ['application_received']),
+        activityRepository.getUnreadCount('company', companyId, ['direct_offer_accepted', 'direct_offer_rejected']),
+        activityRepository.getUnreadCount('company', companyId, ['chat_message_received']),
+      ]).then(([apps, directOffers, chats]) => {
+        setUnreadApplications(apps);
+        setUnreadDirectOffers(directOffers);
+        setUnreadChats(chats);
+      });
+    }, [companyId]),
+  );
 
-  if (loading) {
+  if (authLoading || sessionLoading) {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
-        <LoadingScreen color={colors.blue} role="company" />
+        <LoadingScreen color={colors.blue} />
       </>
     );
   }
 
-  const unreadTotal = unreadApplications + unreadJobOffers + unreadChats;
   const metrics: Metric[] = [
     {
       label: 'Published offers',
@@ -211,7 +208,6 @@ export default function CompanyDashboard() {
       icon: 'offers',
       tone: companyUi.accent,
       softTone: companyUi.accentSoft,
-      hasActivity: unreadJobOffers > 0,
     },
     {
       label: 'Applications',
@@ -220,7 +216,14 @@ export default function CompanyDashboard() {
       icon: 'applications',
       tone: pendingApplications > 0 ? companyUi.amber : companyUi.blue,
       softTone: pendingApplications > 0 ? companyUi.amberSoft : companyUi.blueSoft,
-      hasActivity: unreadApplications > 0,
+    },
+    {
+      label: 'Sent Direct Offers',
+      value: pendingDirectOffers,
+      detail: 'Awaiting response',
+      icon: 'directOffers',
+      tone: pendingDirectOffers > 0 ? companyUi.amber : companyUi.accent,
+      softTone: pendingDirectOffers > 0 ? companyUi.amberSoft : companyUi.accentSoft,
     },
     {
       label: 'Chats',
@@ -229,7 +232,6 @@ export default function CompanyDashboard() {
       icon: 'chats',
       tone: companyUi.blue,
       softTone: companyUi.blueSoft,
-      hasActivity: unreadChats > 0,
     },
   ];
 
@@ -247,40 +249,35 @@ export default function CompanyDashboard() {
           eyebrow="Operator Dashboard"
           title="Company operations"
           subtitle="Manage offers, applications and technician outreach."
-          right={unreadTotal > 0 ? (
-            <View style={styles.activityChip}>
-              <View style={styles.activityChipDot} />
-              <Text style={styles.activityChipText}>{unreadTotal} new</Text>
-            </View>
-          ) : null}
         />
 
         <View style={[styles.shell, isWide && styles.shellWide]}>
           <View style={[styles.sideColumn, isWide && styles.sideColumnWide]}>
-            {company ? (
+            {supabaseCompany ? (
               <CompanyProfilePanel
-                company={company}
+                company={supabaseCompany}
                 teamMembers={teamMembers}
                 canViewTeam={canViewTeam}
                 companyMemberRole={companyMemberRole}
                 onProfilePress={() => router.push('/company/profile' as any)}
               />
+            ) : !sessionLoading && companyId ? (
+              <CompanyLoadingCard />
+            ) : !sessionLoading && !companyId ? (
+              <EmptyCompanyCard />
             ) : null}
 
             {isWide ? (
-              <>
-                <ActionPanel
-                  rail
-                  router={router}
-                  unreadApplications={unreadApplications}
-                  unreadJobOffers={unreadJobOffers}
-                  unreadChats={unreadChats}
-                  pendingApplications={pendingApplications}
-                  chatCount={chatCount}
-                  cardWidthStyle={styles.actionFull}
-                />
-                <SwitchRoleButton onPress={handleSwitchRole} />
-              </>
+              <ActionPanel
+                rail
+                router={router}
+                pendingApplications={pendingApplications}
+                chatCount={chatCount}
+                cardWidthStyle={styles.actionFull}
+                unreadApplications={unreadApplications}
+                unreadDirectOffers={unreadDirectOffers}
+                unreadChats={unreadChats}
+              />
             ) : null}
           </View>
 
@@ -301,100 +298,50 @@ export default function CompanyDashboard() {
             {!isWide ? (
               <ActionPanel
                 router={router}
-                unreadApplications={unreadApplications}
-                unreadJobOffers={unreadJobOffers}
-                unreadChats={unreadChats}
                 pendingApplications={pendingApplications}
                 chatCount={chatCount}
                 cardWidthStyle={cardWidthStyle}
+                unreadApplications={unreadApplications}
+                unreadDirectOffers={unreadDirectOffers}
+                unreadChats={unreadChats}
               />
             ) : null}
 
             <CompanyCard style={styles.directOfferPanel}>
-              <SectionTitle label="Direct offer activity" value={`${pendingDirectOffers} pending`} />
+              <SectionTitle label="Send a direct offer" value={`${publishedOffersList.length} available`} />
               <Text style={styles.directOfferHelper}>
-                Recent offers ready for technician outreach and direct-offer follow-up.
+                Select an offer below and go to Search to send it directly to a technician.
               </Text>
-              {recentOffers.length > 0 ? (
-                <View style={styles.recentOfferList}>
-                  {recentOffers.map((offer, index) => (
-                    <RecentOfferRow
-                      key={offer.id}
-                      offer={offer}
-                      counts={offerActivityCounts[offer.id] ?? { applications: 0, directOffers: 0 }}
-                      showDivider={index > 0}
-                      onPress={() => router.push(`/company/offers/${offer.id}` as any)}
-                    />
-                  ))}
+              {publishedOffersList.length === 0 ? (
+                <View style={styles.directOfferEmpty}>
+                  <Text style={styles.directOfferEmptyTitle}>No published offers yet</Text>
+                  <TouchableOpacity onPress={() => router.push('/company/offers/new' as any)}>
+                    <Text style={styles.directOfferCreateLink}>Create an offer →</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
-                <View style={styles.directOfferEmpty}>
-                  <Text style={styles.directOfferEmptyTitle}>No recent offers yet</Text>
-                  <Text style={styles.directOfferEmptyText}>
-                    Create a job offer to start sending direct offers.
-                  </Text>
+                <View style={styles.directOfferList}>
+                  {publishedOffersList.map((offer) => (
+                    <TouchableOpacity
+                      key={offer.id}
+                      style={styles.directOfferRow}
+                      onPress={() => router.push(`/company/search?offerId=${offer.id}` as any)}
+                      activeOpacity={0.75}
+                    >
+                      <View style={styles.directOfferRowInfo}>
+                        <Text style={styles.directOfferRowTitle} numberOfLines={1}>{offer.title}</Text>
+                        <Text style={styles.directOfferRowMeta}>{offer.contractType}</Text>
+                      </View>
+                      <Text style={styles.directOfferRowArrow}>Send offer →</Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               )}
-
             </CompanyCard>
-
-            {!isWide ? (
-              <SwitchRoleButton onPress={handleSwitchRole} />
-            ) : null}
           </View>
         </View>
       </ScrollView>
     </CompanyScreen>
-  );
-}
-
-function RecentOfferRow({
-  offer,
-  counts,
-  showDivider,
-  onPress,
-}: {
-  offer: Offer;
-  counts: OfferActivityCounts;
-  showDivider: boolean;
-  onPress: () => void;
-}) {
-  const updatedDate = formatOfferDate(offer.updatedAt || offer.createdAt);
-  const meta = [
-    formatOfferLocation(offer),
-    CONTRACT_LABELS[offer.contractType] ?? offer.contractType,
-    compactCount(counts.directOffers, 'direct offer'),
-    counts.applications > 0 ? compactCount(counts.applications, 'application') : null,
-    updatedDate ? `Updated ${updatedDate}` : null,
-  ].filter(Boolean) as string[];
-
-  return (
-    <TouchableOpacity
-      style={[styles.recentOfferRow, showDivider && styles.recentOfferDivider]}
-      onPress={onPress}
-      activeOpacity={0.76}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${offer.title}`}
-    >
-      <View style={styles.recentOfferCopy}>
-        <View style={styles.recentOfferTitleRow}>
-          <Text style={styles.recentOfferTitle} numberOfLines={1}>{offer.title}</Text>
-          <CompanyBadge label={offer.status} tone={offerStatusTone(offer.status)} small />
-        </View>
-        <View style={styles.recentOfferMetaRow}>
-          {meta.map((item, index) => (
-            <React.Fragment key={item}>
-              {index > 0 ? <View style={styles.metaDot} /> : null}
-              <Text style={styles.recentOfferMeta} numberOfLines={1}>{item}</Text>
-            </React.Fragment>
-          ))}
-        </View>
-      </View>
-      <View style={styles.recentOfferAction}>
-        <Text style={styles.recentOfferActionText}>Open</Text>
-        <ChevronRight color={companyUi.accent} size={15} strokeWidth={2.3} />
-      </View>
-    </TouchableOpacity>
   );
 }
 
@@ -405,7 +352,7 @@ function CompanyProfilePanel({
   companyMemberRole,
   onProfilePress,
 }: {
-  company: Company;
+  company: SupabaseCompany;
   teamMembers: number;
   canViewTeam: boolean;
   companyMemberRole: string;
@@ -419,11 +366,10 @@ function CompanyProfilePanel({
           <Building2 color={colors.white} size={24} strokeWidth={2} />
         </View>
         <View style={styles.profileIdentity}>
-          <Text style={styles.companyName} numberOfLines={1}>{company.companyName}</Text>
+          <Text style={styles.companyName} numberOfLines={1}>{company.name}</Text>
           <Text style={styles.companyMeta} numberOfLines={1}>
             {COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType}
           </Text>
-          <Text style={styles.companyLocation}>{company.city}, {company.country}</Text>
         </View>
       </View>
 
@@ -434,13 +380,13 @@ function CompanyProfilePanel({
           small
         />
         {canViewTeam ? (
-          <CompanyBadge label={`${teamMembers} team member${teamMembers !== 1 ? 's' : ''}`} tone="muted" small />
+          <CompanyBadge label={`${teamMembers} member${teamMembers !== 1 ? 's' : ''}`} tone="muted" small />
         ) : null}
       </View>
 
       <View style={styles.profileFacts}>
         <Fact label="Role" value={roleLabel(companyMemberRole)} />
-        <Fact label="Email" value={company.contactEmail || 'Not set'} />
+        <Fact label="Email" value={company.email || 'Not set'} />
       </View>
 
       <View style={styles.profileActions}>
@@ -452,6 +398,28 @@ function CompanyProfilePanel({
           softAccent={companyUi.accentSoft}
           onPress={onProfilePress}
         />
+      </View>
+    </CompanyCard>
+  );
+}
+
+function CompanyLoadingCard() {
+  return (
+    <CompanyCard style={styles.profileCard}>
+      <SectionTitle label="Operator profile" value="Loading…" />
+    </CompanyCard>
+  );
+}
+
+function EmptyCompanyCard() {
+  return (
+    <CompanyCard style={styles.profileCard}>
+      <SectionTitle label="Operator profile" value="Company" />
+      <View style={styles.directOfferEmpty}>
+        <Text style={styles.directOfferEmptyTitle}>No company linked</Text>
+        <Text style={styles.directOfferEmptyText}>
+          Your account is not yet linked to a company profile.
+        </Text>
       </View>
     </CompanyCard>
   );
@@ -494,22 +462,22 @@ function ProfileAction({
 
 function ActionPanel({
   router,
-  unreadApplications,
-  unreadJobOffers,
-  unreadChats,
   pendingApplications,
   chatCount,
   cardWidthStyle,
   rail = false,
+  unreadApplications = 0,
+  unreadDirectOffers = 0,
+  unreadChats = 0,
 }: {
   router: ReturnType<typeof useRouter>;
-  unreadApplications: number;
-  unreadJobOffers: number;
-  unreadChats: number;
   pendingApplications: number;
   chatCount: number;
   cardWidthStyle: ViewStyle;
   rail?: boolean;
+  unreadApplications?: number;
+  unreadDirectOffers?: number;
+  unreadChats?: number;
 }) {
   return (
     <CompanyCard style={[styles.actionPanel, rail && styles.railPanel]}>
@@ -521,7 +489,6 @@ function ActionPanel({
           icon="offers"
           accent={companyUi.accent}
           softAccent={companyUi.accentSoft}
-          unreadCount={unreadJobOffers}
           onPress={() => router.push('/company/offers' as any)}
           style={rail ? styles.actionFull : cardWidthStyle}
         />
@@ -531,9 +498,19 @@ function ActionPanel({
           icon="applications"
           accent={pendingApplications > 0 ? companyUi.amber : companyUi.blue}
           softAccent={pendingApplications > 0 ? companyUi.amberSoft : companyUi.blueSoft}
-          unreadCount={unreadApplications}
           onPress={() => router.push('/company/applications' as any)}
           style={rail ? styles.actionFull : cardWidthStyle}
+          badge={unreadApplications > 0}
+        />
+        <ActionCard
+          title="Sent Direct Offers"
+          subtitle="Track technician responses"
+          icon="directOffers"
+          accent={unreadDirectOffers > 0 ? companyUi.amber : companyUi.accent}
+          softAccent={unreadDirectOffers > 0 ? companyUi.amberSoft : companyUi.accentSoft}
+          onPress={() => router.push('/company/direct-offers' as any)}
+          style={rail ? styles.actionFull : cardWidthStyle}
+          badge={unreadDirectOffers > 0}
         />
         <ActionCard
           title="Search Technicians"
@@ -559,9 +536,9 @@ function ActionPanel({
           icon="chats"
           accent={companyUi.blue}
           softAccent={companyUi.blueSoft}
-          unreadCount={unreadChats}
           onPress={() => router.push('/company/chats' as any)}
           style={rail ? styles.actionFull : cardWidthStyle}
+          badge={unreadChats > 0}
         />
       </View>
     </CompanyCard>
@@ -575,8 +552,8 @@ function ActionCard({
   accent,
   softAccent,
   onPress,
-  unreadCount = 0,
   style,
+  badge = false,
 }: {
   title: string;
   subtitle: string;
@@ -584,14 +561,16 @@ function ActionCard({
   accent: string;
   softAccent: string;
   onPress: () => void;
-  unreadCount?: number;
   style?: ViewStyle;
+  badge?: boolean;
 }) {
   const Icon = DASHBOARD_ICONS[icon];
   return (
     <TouchableOpacity style={[styles.actionCard, style]} onPress={onPress} activeOpacity={0.78}>
-      {unreadCount > 0 ? <ActivityDot /> : null}
-      <IconBox icon={Icon} color={accent} backgroundColor={softAccent} />
+      <View style={styles.iconWrapper}>
+        <IconBox icon={Icon} color={accent} backgroundColor={softAccent} />
+        {badge ? <View style={styles.navBadgeDot} /> : null}
+      </View>
       <View style={styles.actionCopy}>
         <Text style={styles.actionTitle} numberOfLines={1}>{title}</Text>
         <Text style={styles.actionSubtitle} numberOfLines={2}>{subtitle}</Text>
@@ -605,20 +584,11 @@ function MetricTile({ metric, style }: { metric: Metric; style?: ViewStyle }) {
   const Icon = DASHBOARD_ICONS[metric.icon];
   return (
     <View style={[styles.metricTile, style]}>
-      {metric.hasActivity ? <ActivityDot /> : null}
       <IconBox icon={Icon} color={metric.tone} backgroundColor={metric.softTone} />
       <Text style={[styles.metricValue, { color: metric.tone }]}>{metric.value}</Text>
       <Text style={styles.metricLabel}>{metric.label}</Text>
       <Text style={styles.metricDetail}>{metric.detail}</Text>
     </View>
-  );
-}
-
-function SwitchRoleButton({ onPress }: { onPress: () => void }) {
-  return (
-    <TouchableOpacity style={styles.switchButton} onPress={onPress} activeOpacity={0.75}>
-      <Text style={styles.switchButtonText}>Switch role</Text>
-    </TouchableOpacity>
   );
 }
 
@@ -648,38 +618,12 @@ const styles = StyleSheet.create({
     width: '100%',
     paddingHorizontal: spacing.lg,
   },
-  activityChip: {
-    minHeight: 34,
-    borderRadius: 17,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: companyUi.surface,
-    borderWidth: 1,
-    borderColor: companyUi.border,
-  },
-  activityChipDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: companyUi.red,
-  },
-  activityChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: companyUi.textSoft,
-  },
-  shell: {
-    gap: spacing.md,
-  },
+  shell: { gap: spacing.md },
   shellWide: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
-  sideColumn: {
-    gap: spacing.md,
-  },
+  sideColumn: { gap: spacing.md },
   sideColumnWide: {
     width: 336,
     flexShrink: 0,
@@ -688,9 +632,7 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.md,
   },
-  profileCard: {
-    gap: spacing.md,
-  },
+  profileCard: { gap: spacing.md },
   profileTop: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -704,10 +646,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  profileIdentity: {
-    flex: 1,
-    minWidth: 0,
-  },
+  profileIdentity: { flex: 1, minWidth: 0 },
   companyName: {
     fontSize: 19,
     lineHeight: 24,
@@ -720,13 +659,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '600',
     color: companyUi.textSoft,
-  },
-  companyLocation: {
-    marginTop: 3,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    color: companyUi.textMuted,
   },
   statusRow: {
     flexDirection: 'row',
@@ -761,9 +693,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 8,
   },
-  profileActionCopy: {
-    minWidth: 0,
-  },
+  profileActionCopy: { minWidth: 0 },
   profileActionTitle: {
     fontSize: 12,
     lineHeight: 15,
@@ -810,7 +740,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: companyUi.borderSoft,
     padding: 14,
-    position: 'relative',
   },
   metricHalf: { width: '48.5%' },
   metricFull: { width: '100%' },
@@ -834,20 +763,14 @@ const styles = StyleSheet.create({
     color: companyUi.textSoft,
     marginTop: 2,
   },
-  actionPanel: {
-    gap: spacing.sm,
-  },
-  railPanel: {
-    padding: 14,
-  },
+  actionPanel: { gap: spacing.sm },
+  railPanel: { padding: 14 },
   actionGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
-  railActions: {
-    gap: spacing.sm,
-  },
+  railActions: { gap: spacing.sm },
   actionHalf: { width: '48.5%' },
   actionFull: { width: '100%' },
   actionCard: {
@@ -860,12 +783,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 11,
-    position: 'relative',
   },
-  actionCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
+  actionCopy: { flex: 1, minWidth: 0 },
   actionTitle: {
     fontSize: 14,
     lineHeight: 18,
@@ -902,86 +821,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: companyUi.textMuted,
   },
-  directOfferPanel: {
-    gap: spacing.sm,
-  },
+  directOfferPanel: { gap: spacing.sm },
   directOfferHelper: {
     marginTop: -6,
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '500',
     color: companyUi.textSoft,
-  },
-  recentOfferList: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: companyUi.borderSoft,
-    backgroundColor: companyUi.surface,
-    overflow: 'hidden',
-  },
-  recentOfferRow: {
-    minHeight: 72,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  recentOfferDivider: {
-    borderTopWidth: 1,
-    borderTopColor: companyUi.borderSoft,
-  },
-  recentOfferCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 6,
-  },
-  recentOfferTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-  },
-  recentOfferTitle: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-    color: companyUi.text,
-  },
-  recentOfferMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    rowGap: 4,
-    columnGap: 6,
-  },
-  recentOfferMeta: {
-    maxWidth: '100%',
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '600',
-    color: companyUi.textSoft,
-  },
-  metaDot: {
-    width: 3,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: companyUi.textMuted,
-  },
-  recentOfferAction: {
-    minHeight: 34,
-    paddingLeft: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    flexShrink: 0,
-  },
-  recentOfferActionText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: companyUi.accent,
   },
   directOfferEmpty: {
     borderRadius: 16,
@@ -1004,30 +850,64 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: companyUi.textSoft,
   },
-  inlineLink: {
-    alignSelf: 'flex-start',
-    minHeight: 36,
-    justifyContent: 'center',
-  },
-  inlineLinkText: {
+  directOfferCreateLink: {
+    marginTop: 6,
     fontSize: 13,
     fontWeight: '700',
     color: companyUi.accent,
   },
-  switchButton: {
-    minHeight: 42,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: companyUi.border,
-    backgroundColor: companyUi.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
+  directOfferList: {
+    gap: 2,
   },
-  switchButtonText: {
+  directOfferRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+    backgroundColor: companyUi.surfaceSoft,
+    gap: spacing.sm,
+  },
+  directOfferRowInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  directOfferRowTitle: {
     fontSize: 13,
-    lineHeight: 17,
+    lineHeight: 18,
     fontWeight: '700',
-    color: companyUi.textSoft,
+    color: companyUi.text,
+  },
+  directOfferRowMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '500',
+    color: companyUi.textMuted,
+    textTransform: 'capitalize',
+  },
+  directOfferRowArrow: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: companyUi.accent,
+    flexShrink: 0,
+  },
+  iconWrapper: {
+    position: 'relative',
+  },
+  navBadgeDot: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#DC2626',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    zIndex: 10,
   },
 });

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Text,
   StyleSheet,
   TouchableOpacity,
@@ -86,6 +87,11 @@ export function AdminCompanyCard({
     setLoadingStatus(status);
     try {
       await onUpdateStatus(company.id, status);
+    } catch (error) {
+      Alert.alert(
+        'Company verification failed',
+        error instanceof Error ? error.message : 'Could not update company verification.',
+      );
     } finally {
       setLoadingStatus(null);
     }

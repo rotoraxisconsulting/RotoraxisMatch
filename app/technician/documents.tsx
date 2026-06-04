@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+﻿import React, { useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Button } from '../../src/components/Button';
 import {
@@ -145,7 +144,6 @@ export default function TechnicianDocumentsScreen() {
   return (
     <TechnicianScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="technician" />
 
       <ScrollView
         style={styles.scroll}

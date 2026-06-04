@@ -1,38 +1,52 @@
-import { storageAdapter } from '../../storage/asyncStorageAdapter';
-import { DB_KEYS } from '../../storage/localDatabase';
+import { supabase } from '../../lib/supabase';
 import { ActivityItem, ActivityType } from '../../types/activity';
-import { ChatMessage } from '../../types/chat';
 
-async function getAll(): Promise<ActivityItem[]> {
-  return (await storageAdapter.get<ActivityItem[]>(DB_KEYS.v2Activities)) ?? [];
-}
-
-async function saveAll(items: ActivityItem[]): Promise<void> {
-  await storageAdapter.set(DB_KEYS.v2Activities, items);
-}
+// Activity events are created by database triggers (migration 005).
+// Clients only READ events and write activity_reads (mark-as-read).
 
 export const activityRepository = {
-  /**
-   * Local simulation of the server-side activity event trigger.
-   * Called only from repository methods (offerRequestRepository, offerApplicationRepository, chatRepository).
-   * Do NOT call directly from UI screens or hooks.
-   * Future Supabase: events are inserted by SECURITY DEFINER trigger functions on status transitions.
-   */
+  // No-op: triggers handle writes server-side.
   async create(fields: {
     type: ActivityType;
     recipientRole: 'technician' | 'company';
     recipientId: string;
     entityId: string;
   }): Promise<ActivityItem> {
-    const items = await getAll();
-    const item: ActivityItem = {
-      ...fields,
-      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    await saveAll([...items, item]);
-    return item;
+    return { ...fields, id: '', read: false, createdAt: new Date().toISOString() };
+  },
+
+  // Returns the set of entity_ids (offer_application_id / offer_request_id / chat_room_id)
+  // for which there are unread activity_events of the given types.
+  async getUnreadEntityIds(
+    recipientRole: 'technician' | 'company',
+    recipientId: string,
+    types: ActivityType[],
+  ): Promise<Set<string>> {
+    const scopeField = recipientRole === 'technician'
+      ? 'recipient_technician_id'
+      : 'recipient_company_id';
+
+    const { data: events, error } = await supabase
+      .from('activity_events')
+      .select('id, entity_id')
+      .eq('recipient_scope', recipientRole)
+      .eq(scopeField, recipientId)
+      .in('type', types);
+
+    if (error || !events?.length) return new Set();
+
+    // RLS on activity_reads filters to auth.uid() automatically.
+    const { data: reads } = await supabase
+      .from('activity_reads')
+      .select('activity_event_id')
+      .in('activity_event_id', events.map((e) => e.id));
+
+    const readIds = new Set((reads ?? []).map((r: any) => r.activity_event_id as string));
+    return new Set(
+      events
+        .filter((e) => !readIds.has(e.id))
+        .map((e) => e.entity_id as string),
+    );
   },
 
   async getUnreadCount(
@@ -40,116 +54,55 @@ export const activityRepository = {
     recipientId: string,
     types: ActivityType[],
   ): Promise<number> {
-    const items = await getAll();
-    return items.filter(
-      (i) =>
-        !i.read &&
-        i.recipientRole === recipientRole &&
-        i.recipientId === recipientId &&
-        types.includes(i.type),
-    ).length;
+    const ids = await this.getUnreadEntityIds(recipientRole, recipientId, types);
+    return ids.size;
   },
 
-  async getUnreadEntityIds(
-    recipientRole: 'technician' | 'company',
-    recipientId: string,
-    types: ActivityType[],
-  ): Promise<Set<string>> {
-    const items = await getAll();
-    const set = new Set<string>();
-    for (const i of items) {
-      if (
-        !i.read &&
-        i.recipientRole === recipientRole &&
-        i.recipientId === recipientId &&
-        types.includes(i.type)
-      ) {
-        set.add(i.entityId);
-      }
-    }
-    return set;
-  },
-
+  // Marks all unread events for a given entityId as read for the current user.
   async markRead(
     recipientRole: 'technician' | 'company',
     recipientId: string,
     entityId: string,
   ): Promise<void> {
-    const items = await getAll();
-    const updated = items.map((i) =>
-      i.recipientRole === recipientRole &&
-      i.recipientId === recipientId &&
-      i.entityId === entityId
-        ? { ...i, read: true }
-        : i,
-    );
-    await saveAll(updated);
+    const { data: { session } } = await supabase.auth.getSession();
+    const profileId = session?.user?.id;
+    if (!profileId) return;
+
+    const scopeField = recipientRole === 'technician'
+      ? 'recipient_technician_id'
+      : 'recipient_company_id';
+
+    const { data: events } = await supabase
+      .from('activity_events')
+      .select('id')
+      .eq('recipient_scope', recipientRole)
+      .eq(scopeField, recipientId)
+      .eq('entity_id', entityId);
+
+    if (!events?.length) return;
+
+    await supabase
+      .from('activity_reads')
+      .upsert(
+        events.map((e) => ({ activity_event_id: e.id, profile_id: profileId })),
+        { onConflict: 'activity_event_id,profile_id', ignoreDuplicates: true },
+      );
   },
 
-  /**
-   * Local demo only — returns chat rooms with unread messages via chat_message_received activity.
-   * Future Supabase: replace with a Realtime subscription or per-message read state.
-   * chat_message_received activity is not required for Phase 1 Supabase migration.
-   */
+  // Returns chat room IDs that have at least one unread message event.
   async getUnreadChatRoomIds(
     recipientRole: 'technician' | 'company',
     recipientId: string,
   ): Promise<Set<string>> {
-    const [items, messages] = await Promise.all([
-      getAll(),
-      storageAdapter.get<ChatMessage[]>(DB_KEYS.v2ChatMessages).then((value) => value ?? []),
-    ]);
-    const roomByMessageId = new Map(
-      (messages as ChatMessage[]).map((message) => [message.id, message.chatRoomId]),
-    );
-    const roomIds = new Set<string>();
-
-    for (const item of items) {
-      if (
-        item.read ||
-        item.type !== 'chat_message_received' ||
-        item.recipientRole !== recipientRole ||
-        item.recipientId !== recipientId
-      ) {
-        continue;
-      }
-
-      const roomId = roomByMessageId.get(item.entityId) ?? item.entityId;
-      if (roomId) roomIds.add(roomId);
-    }
-
-    return roomIds;
+    return this.getUnreadEntityIds(recipientRole, recipientId, ['chat_message_received']);
   },
 
-  /**
-   * Local demo only — marks chat_message_received activity items as read for a room.
-   * Future Supabase: replace with per-message activity_reads rows or Realtime read receipts.
-   * chat_message_received activity is not required for Phase 1 Supabase migration.
-   */
+  // Marks all unread chat_message_received events for a room as read.
   async markChatRoomRead(
     recipientRole: 'technician' | 'company',
     recipientId: string,
     chatRoomId: string,
   ): Promise<void> {
-    const [items, messages] = await Promise.all([
-      getAll(),
-      storageAdapter.get<ChatMessage[]>(DB_KEYS.v2ChatMessages).then((value) => value ?? []),
-    ]);
-    const messageIds = new Set(
-      (messages as ChatMessage[])
-        .filter((message) => message.chatRoomId === chatRoomId)
-        .map((message) => message.id),
-    );
-
-    const updated = items.map((item) =>
-      item.recipientRole === recipientRole &&
-      item.recipientId === recipientId &&
-      item.type === 'chat_message_received' &&
-      (messageIds.has(item.entityId) || item.entityId === chatRoomId)
-        ? { ...item, read: true }
-        : item,
-    );
-
-    await saveAll(updated);
+    return this.markRead(recipientRole, recipientId, chatRoomId);
   },
 };

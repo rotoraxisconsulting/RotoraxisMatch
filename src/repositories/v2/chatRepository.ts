@@ -1,12 +1,7 @@
-import { storageAdapter } from '../../storage/asyncStorageAdapter';
-import { DB_KEYS } from '../../storage/localDatabase';
+import { supabase } from '../../lib/supabase';
 import { ChatRoom, ChatMessage } from '../../types/chat';
 import { SenderRole } from '../../types/enums';
-import { activityRepository } from './activityRepository';
-
-function uuid(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
+import { mapChatMessageRow, mapChatRoomRow, throwIfError } from './supabaseMappers';
 
 interface CreateRoomInput {
   offerRequestId?: string;
@@ -22,103 +17,88 @@ interface SendMessageInput {
   body: string;
 }
 
-type StoredChatMessage = ChatMessage & {
-  senderId?: string;
-};
-
-function normalizeMessage(message: StoredChatMessage): ChatMessage {
-  return {
-    id: message.id,
-    chatRoomId: message.chatRoomId,
-    senderUserId: message.senderUserId ?? message.senderId ?? '',
-    senderCompanyMemberId: message.senderCompanyMemberId,
-    senderRole: message.senderRole,
-    body: message.body,
-    sentAt: message.sentAt,
-  };
-}
+const ROOM_FIELDS = 'id, offer_request_id, offer_application_id, technician_id, company_id, created_at';
+const MESSAGE_FIELDS = 'id, chat_room_id, sender_user_id, sender_company_member_id, sender_role, body, sent_at';
 
 export const chatRepository = {
   async getRoom(id: string): Promise<ChatRoom | null> {
-    const rooms = await storageAdapter.get<ChatRoom[]>(DB_KEYS.v2ChatRooms) ?? [];
-    return rooms.find((r) => r.id === id) ?? null;
+    const { data, error } = await supabase
+      .from('chat_rooms')
+      .select(ROOM_FIELDS)
+      .eq('id', id)
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapChatRoomRow(data as any) : null;
   },
 
   async getRoomsForTechnician(technicianId: string): Promise<ChatRoom[]> {
-    const rooms = await storageAdapter.get<ChatRoom[]>(DB_KEYS.v2ChatRooms) ?? [];
-    return rooms.filter((r) => r.technicianId === technicianId);
+    const { data, error } = await supabase
+      .from('chat_rooms')
+      .select(ROOM_FIELDS)
+      .eq('technician_id', technicianId)
+      .order('created_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapChatRoomRow);
   },
 
   async getRoomsForCompany(companyId: string): Promise<ChatRoom[]> {
-    const rooms = await storageAdapter.get<ChatRoom[]>(DB_KEYS.v2ChatRooms) ?? [];
-    return rooms.filter((r) => r.companyId === companyId);
+    const { data, error } = await supabase
+      .from('chat_rooms')
+      .select(ROOM_FIELDS)
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapChatRoomRow);
   },
 
-  /**
-   * Local simulation of the server-side chat room creation trigger.
-   * Called only from offerRequestRepository.updateStatus() and offerApplicationRepository.updateStatus().
-   * Do NOT call directly from UI screens or hooks.
-   * Future Supabase: room is created by handle_offer_relation_status_transition() (SECURITY DEFINER trigger).
-   */
   async getOrCreateRoom(input: CreateRoomInput): Promise<ChatRoom> {
-    const rooms = await storageAdapter.get<ChatRoom[]>(DB_KEYS.v2ChatRooms) ?? [];
+    const query = supabase.from('chat_rooms').select(ROOM_FIELDS);
+    const existingQuery = input.offerRequestId
+      ? query.eq('offer_request_id', input.offerRequestId)
+      : input.offerApplicationId
+        ? query.eq('offer_application_id', input.offerApplicationId)
+        : query.eq('technician_id', input.technicianId).eq('company_id', input.companyId);
+    const { data: existing, error: existingError } = await existingQuery.maybeSingle();
+    throwIfError(existingError);
+    if (existing) return mapChatRoomRow(existing as any);
 
-    const existing = rooms.find((r) => {
-      if (input.offerRequestId) return r.offerRequestId === input.offerRequestId;
-      if (input.offerApplicationId) return r.offerApplicationId === input.offerApplicationId;
-      return r.technicianId === input.technicianId && r.companyId === input.companyId;
-    });
-
-    if (existing) return existing;
-
-    const newRoom: ChatRoom = {
-      id: `room-${uuid()}`,
-      offerRequestId: input.offerRequestId,
-      offerApplicationId: input.offerApplicationId,
-      technicianId: input.technicianId,
-      companyId: input.companyId,
-      createdAt: new Date().toISOString(),
-    };
-
-    await storageAdapter.set(DB_KEYS.v2ChatRooms, [...rooms, newRoom]);
-    return newRoom;
+    const { data, error } = await supabase
+      .from('chat_rooms')
+      .insert({
+        offer_request_id: input.offerRequestId ?? null,
+        offer_application_id: input.offerApplicationId ?? null,
+        technician_id: input.technicianId,
+        company_id: input.companyId,
+      })
+      .select(ROOM_FIELDS)
+      .single();
+    throwIfError(error);
+    return mapChatRoomRow(data as any);
   },
 
   async getMessages(chatRoomId: string): Promise<ChatMessage[]> {
-    const messages = await storageAdapter.get<StoredChatMessage[]>(DB_KEYS.v2ChatMessages) ?? [];
-    return messages
-      .map(normalizeMessage)
-      .filter((m) => m.chatRoomId === chatRoomId)
-      .sort((a, b) => a.sentAt.localeCompare(b.sentAt));
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select(MESSAGE_FIELDS)
+      .eq('chat_room_id', chatRoomId)
+      .order('sent_at', { ascending: true });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapChatMessageRow);
   },
 
   async sendMessage(chatRoomId: string, input: SendMessageInput): Promise<ChatMessage> {
-    const rooms = await storageAdapter.get<ChatRoom[]>(DB_KEYS.v2ChatRooms) ?? [];
-    const room = rooms.find((r) => r.id === chatRoomId);
-    if (!room) throw new Error('Chat room not found.');
-
-    const messages = await storageAdapter.get<StoredChatMessage[]>(DB_KEYS.v2ChatMessages) ?? [];
-    const msg: ChatMessage = {
-      id: `msg-${uuid()}`,
-      chatRoomId,
-      senderUserId: input.senderUserId,
-      senderCompanyMemberId: input.senderCompanyMemberId,
-      senderRole: input.senderRole,
-      body: input.body,
-      sentAt: new Date().toISOString(),
-    };
-    await storageAdapter.set(DB_KEYS.v2ChatMessages, [...messages.map(normalizeMessage), msg]);
-
-    // Local demo: creates chat_message_received activity for unread chat dot badges.
-    // Future Supabase: this is NOT a Phase 1 MVP requirement.
-    // Replace with Realtime subscription or per-message read receipts post-launch.
-    await activityRepository.create({
-      type: 'chat_message_received',
-      recipientRole: input.senderRole === 'company' ? 'technician' : 'company',
-      recipientId: input.senderRole === 'company' ? room.technicianId : room.companyId,
-      entityId: msg.id,
-    });
-
-    return msg;
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({
+        chat_room_id: chatRoomId,
+        sender_user_id: input.senderUserId,
+        sender_company_member_id: input.senderCompanyMemberId ?? null,
+        sender_role: input.senderRole,
+        body: input.body,
+      })
+      .select(MESSAGE_FIELDS)
+      .single();
+    throwIfError(error);
+    return mapChatMessageRow(data as any);
   },
 };

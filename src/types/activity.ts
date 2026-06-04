@@ -5,9 +5,8 @@
  *   application_received, application_accepted, application_rejected
  *   direct_offer_received, direct_offer_accepted, direct_offer_rejected
  *
- * Future scope (not Phase 1):
- *   chat_message_received — local demo uses this for chat unread indicators.
- *   Supabase Realtime or a polling mechanism replaces this post-launch.
+ * Future scope:
+ *   chat_message_received - chat unread indicator when read state is implemented.
  */
 export type ActivityType =
   | 'application_received'
@@ -16,8 +15,6 @@ export type ActivityType =
   | 'direct_offer_received'
   | 'direct_offer_accepted'
   | 'direct_offer_rejected'
-  // Future scope — not required for Phase 1 Supabase migration.
-  // Local demo emits this for chat unread dots. Replace with Realtime post-launch.
   | 'chat_message_received';
 
 export type ActivityRecipientScope = 'technician' | 'company';

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -11,32 +11,21 @@ import { StatusBar } from 'expo-status-bar';
 import { Stack, useRouter } from 'expo-router';
 import { colors, spacing } from '../src/theme';
 import { resetIntroSeen } from '../src/storage/introStorage';
-import { localDatabase } from '../src/storage/localDatabase';
-import { useDemoSession } from '../src/state/useDemoSession';
+import { useAuth } from '../src/auth/AuthContext';
 import { CompanyPageHeader } from '../src/components/company/CompanyUI';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { session, clearSession } = useDemoSession();
-  const [resetting, setResetting] = useState(false);
+  const { profile, signOut } = useAuth();
 
   async function handleShowIntroAgain() {
     await resetIntroSeen();
     router.replace('/intro' as any);
   }
 
-  async function handleResetDemoData() {
-    setResetting(true);
-    try {
-      await localDatabase.resetToSeeds();
-    } finally {
-      setResetting(false);
-    }
-  }
-
-  async function handleClearSession() {
-    await clearSession();
-    router.replace('/');
+  async function handleSignOut() {
+    await signOut();
+    router.replace('/' as any);
   }
 
   return (
@@ -48,19 +37,18 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <CompanyPageHeader
-          eyebrow="Demo controls"
+          eyebrow="App"
           title="Settings"
-          subtitle="Manage the intro, session state and local demo data."
+          subtitle="Manage intro experience and account."
           onBack={() => router.back()}
         />
 
-        {/* Intro experience */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Intro experience</Text>
           <View style={styles.card}>
             <Text style={styles.cardLabel}>First-launch introduction</Text>
             <Text style={styles.cardDescription}>
-              Replay the animated RotoraxisMatch introduction that plays on first launch.
+              Replay the RotoraxisMatch introduction that plays on first launch.
             </Text>
             <TouchableOpacity
               onPress={handleShowIntroAgain}
@@ -72,52 +60,29 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Demo session */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Demo session</Text>
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Current role</Text>
-            <Text style={styles.cardDescription}>
-              {session
-                ? `Active demo session as ${session.role.charAt(0).toUpperCase() + session.role.slice(1)}.`
-                : 'No active session. Select a role from the home screen.'}
-            </Text>
-            {session && (
+        {profile && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Account</Text>
+            <View style={styles.card}>
+              <View style={styles.aboutRow}>
+                <Text style={styles.aboutKey}>Role</Text>
+                <Text style={styles.aboutValue}>{profile.role}</Text>
+              </View>
+              <View style={[styles.aboutRow, styles.aboutRowLast]}>
+                <Text style={styles.aboutKey}>Status</Text>
+                <Text style={styles.aboutValue}>{profile.status}</Text>
+              </View>
               <TouchableOpacity
-                onPress={handleClearSession}
-                style={[styles.btn, styles.btnSecondary]}
+                onPress={handleSignOut}
+                style={[styles.btn, styles.btnDanger]}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.btnText, styles.btnTextSecondary]}>
-                  Clear session
-                </Text>
+                <Text style={[styles.btnText, styles.btnTextDanger]}>Sign out</Text>
               </TouchableOpacity>
-            )}
+            </View>
           </View>
-        </View>
+        )}
 
-        {/* Demo data */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Demo data</Text>
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Reset to seed data</Text>
-            <Text style={styles.cardDescription}>
-              Restore all technicians, companies, requests and documents to their original demo state.
-            </Text>
-            <TouchableOpacity
-              onPress={handleResetDemoData}
-              style={[styles.btn, styles.btnDanger]}
-              activeOpacity={0.8}
-              disabled={resetting}
-            >
-              <Text style={[styles.btnText, styles.btnTextDanger]}>
-                {resetting ? 'Resetting…' : 'Reset demo data'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* About */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.card}>
@@ -127,7 +92,7 @@ export default function SettingsScreen() {
             </View>
             <View style={[styles.aboutRow, styles.aboutRowLast]}>
               <Text style={styles.aboutKey}>Mode</Text>
-              <Text style={styles.aboutValue}>Demo · No real data</Text>
+              <Text style={styles.aboutValue}>Live · Supabase</Text>
             </View>
           </View>
         </View>
@@ -176,11 +141,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
-  },
-  btnSecondary: {
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    marginTop: spacing.md,
   },
   btnDanger: {
     backgroundColor: 'transparent',
@@ -191,9 +152,6 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 14,
     fontWeight: '600',
-  },
-  btnTextSecondary: {
-    color: colors.textSecondary,
   },
   btnTextDanger: {
     color: colors.error,

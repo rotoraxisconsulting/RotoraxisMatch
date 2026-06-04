@@ -186,7 +186,7 @@ export interface GetTechnicianViewParams extends AcceptanceCheckParams {
  *
  * @example
  * // Unlocked (accepted offer exists):
- * //   { id, anonymousCode, age: 34, ..., firstName: 'Carlos', lastName: 'Rivera', email: '...', documents: [...] }
+ * //   { id, anonymousCode, age: 34, ..., firstName: 'First', lastName: 'Last', email: '...', documents: [...] }
  */
 export function getTechnicianViewForCompany(params: GetTechnicianViewParams): TechnicianView {
   const { technicianWithRelations, documents, ...checkParams } = params;

@@ -32,9 +32,6 @@ interface CompanyDashboardState {
   requests: MatchRequest[];
   technicianMap: Record<string, SafeTechnicianView>;
   loading: boolean;
-  sendRequest: (technicianId: string, message: string) => Promise<MatchRequest[]>;
-  hasSentRequest: (technicianId: string) => boolean;
-  getRequestForTechnician: (technicianId: string) => MatchRequest | undefined;
   refresh: () => Promise<void>;
 }
 
@@ -111,50 +108,11 @@ export function useCompanyDashboard(): CompanyDashboardState {
     loadData();
   }, [loadData]);
 
-  const sendRequest = useCallback(
-    async (technicianId: string, message: string): Promise<MatchRequest[]> => {
-      await offerRequestRepository.create({
-        companyId,
-        technicianId,
-        message,
-      });
-      const v2Requests = await offerRequestRepository.getForCompany(companyId);
-      const compatRequests = v2Requests.map(v2OfferRequestToMatchRequest);
-      setRequests(compatRequests);
-      setTechnicianMap(await buildTechnicianMapV2(companyId, v2Requests, v2Requests));
-      return compatRequests;
-    },
-    [companyId],
-  );
-
-  // Only active (sent=pending, accepted) requests block sending a new direct offer.
-  // Rejected, expired, and withdrawn are historical records and must not block new sends.
-  const hasSentRequest = useCallback(
-    (technicianId: string) => requests.some(
-      (r) => r.technicianId === technicianId && (r.status === 'sent' || r.status === 'accepted'),
-    ),
-    [requests],
-  );
-
-  // Return the active request if one exists, otherwise the most recent historical one.
-  const getRequestForTechnician = useCallback(
-    (technicianId: string) => {
-      const active = requests.find(
-        (r) => r.technicianId === technicianId && (r.status === 'sent' || r.status === 'accepted'),
-      );
-      return active ?? requests.find((r) => r.technicianId === technicianId);
-    },
-    [requests],
-  );
-
   return {
     company,
     requests,
     technicianMap,
     loading,
-    sendRequest,
-    hasSentRequest,
-    getRequestForTechnician,
     refresh: loadData,
   };
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   ScrollView,
@@ -21,7 +21,6 @@ import {
   XCircle,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
 import { chatRepository } from '../../src/repositories/v2/chatRepository';
@@ -178,7 +177,6 @@ export default function AdminRequestsScreen() {
   return (
     <AdminScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="admin" />
 
       <View style={[styles.topContent, isWide && styles.contentWide]}>
         <AdminPageHeader

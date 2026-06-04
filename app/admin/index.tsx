@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -24,10 +24,10 @@ import {
   XCircle,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { useDemoSession } from '../../src/state/useDemoSession';
-import { useAdminDashboard } from '../../src/state/useAdminDashboard';
+import { useAuth } from '../../src/auth/AuthContext';
+import { useSession } from '../../src/state/SessionContext';
+import { supabase } from '../../src/lib/supabase';
 import {
   AdminBadge,
   AdminCard,
@@ -59,50 +59,104 @@ type ActionConfig = {
   onPress: () => void;
 };
 
+type SupabaseAdminMetrics = {
+  totalProfiles: number;
+  pendingProfiles: number;
+  activeProfiles: number;
+  totalTechnicians: number;
+  pendingTechnicians: number;
+  verifiedTechnicians: number;
+  totalCompanies: number;
+  pendingCompanies: number;
+  verifiedCompanies: number;
+};
+
 export default function AdminDashboard() {
   const router = useRouter();
-  const { clearSession } = useDemoSession();
-  const { metrics, technicians, companies, documents, offers, loading } = useAdminDashboard();
+  const { profile, loading: authLoading, signOut } = useAuth();
+  const { sessionLoading } = useSession();
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
   const isNarrow = width < 430;
 
-  async function handleSwitchRole() {
-    await clearSession();
+  const [supaMetrics, setSupaMetrics] = useState<SupabaseAdminMetrics>({
+    totalProfiles: 0,
+    pendingProfiles: 0,
+    activeProfiles: 0,
+    totalTechnicians: 0,
+    pendingTechnicians: 0,
+    verifiedTechnicians: 0,
+    totalCompanies: 0,
+    pendingCompanies: 0,
+    verifiedCompanies: 0,
+  });
+  const [metricsLoading, setMetricsLoading] = useState(true);
+
+  useEffect(() => {
+    if (!authLoading && !profile) {
+      router.replace('/auth/login' as any);
+    }
+  }, [authLoading, profile]);
+
+  useEffect(() => {
+    if (!authLoading && profile?.status === 'pending_verification') {
+      router.replace('/auth/pending-verification' as any);
+    }
+  }, [authLoading, profile]);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    Promise.all([
+      supabase.from('profiles').select('id', { count: 'exact', head: true }),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'pending_verification'),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'technician'),
+      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
+      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified'),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'company_user'),
+      supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
+      supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified'),
+    ]).then(([total, pending, active, techTotal, techPending, techVerified, compTotal, compPending, compVerified]) => {
+      setSupaMetrics({
+        totalProfiles: total.count ?? 0,
+        pendingProfiles: pending.count ?? 0,
+        activeProfiles: active.count ?? 0,
+        totalTechnicians: techTotal.count ?? 0,
+        pendingTechnicians: techPending.count ?? 0,
+        verifiedTechnicians: techVerified.count ?? 0,
+        totalCompanies: compTotal.count ?? 0,
+        pendingCompanies: compPending.count ?? 0,
+        verifiedCompanies: compVerified.count ?? 0,
+      });
+      setMetricsLoading(false);
+    });
+  }, [profile?.id]);
+
+  async function handleSignOut() {
+    await signOut();
     router.replace('/');
   }
 
-  if (loading) {
+  if (authLoading || sessionLoading) {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
-        <LoadingScreen color={adminUi.accent} role="admin" />
+        <LoadingScreen color={adminUi.accent} />
       </>
     );
   }
 
-  const pendingWorkload =
-    metrics.pendingTechnicians +
-    metrics.pendingCompanies +
-    metrics.pendingDocuments +
-    metrics.pendingOfferRequests +
-    metrics.pendingApplications;
-  const draftOffers = offers.filter((offer) => offer.status === 'draft').length;
-  const verifiedDocuments = documents.filter((document) => document.status === 'verified').length;
-  const rejectedOrExpiredDocuments = documents.filter(
-    (document) => document.status === 'rejected' || document.status === 'expired',
-  ).length;
-  const rejectedTechnicians = technicians.filter(
-    (technician) => technician.verificationStatus === 'rejected',
-  ).length;
-  const rejectedCompanies = companies.filter(
-    (company) => company.verificationStatus === 'rejected',
-  ).length;
+  const pendingWorkload = supaMetrics.pendingProfiles;
+  const rejectedTechnicians = 0;
+  const rejectedCompanies = 0;
+  const draftOffers = 0;
+  const verifiedDocuments = 0;
+  const rejectedOrExpiredDocuments = 0;
 
   const technicianMetrics: MetricConfig[] = [
     {
       label: 'Total technicians',
-      value: metrics.totalTechnicians,
+      value: supaMetrics.totalTechnicians,
       detail: 'Registered profiles',
       icon: Users,
       tone: adminUi.blue,
@@ -110,16 +164,16 @@ export default function AdminDashboard() {
     },
     {
       label: 'Pending technicians',
-      value: metrics.pendingTechnicians,
+      value: supaMetrics.pendingTechnicians,
       detail: 'Need verification',
       icon: Clock,
-      tone: metrics.pendingTechnicians > 0 ? adminUi.amber : adminUi.textSoft,
-      softTone: metrics.pendingTechnicians > 0 ? adminUi.amberSoft : adminUi.surfaceSoft,
-      urgent: metrics.pendingTechnicians > 0,
+      tone: supaMetrics.pendingTechnicians > 0 ? adminUi.amber : adminUi.textSoft,
+      softTone: supaMetrics.pendingTechnicians > 0 ? adminUi.amberSoft : adminUi.surfaceSoft,
+      urgent: supaMetrics.pendingTechnicians > 0,
     },
     {
       label: 'Verified technicians',
-      value: metrics.verifiedTechnicians,
+      value: supaMetrics.verifiedTechnicians,
       detail: 'Active supply',
       icon: ShieldCheck,
       tone: adminUi.green,
@@ -130,16 +184,15 @@ export default function AdminDashboard() {
       value: rejectedTechnicians,
       detail: 'Not cleared',
       icon: XCircle,
-      tone: rejectedTechnicians > 0 ? adminUi.red : adminUi.textSoft,
-      softTone: rejectedTechnicians > 0 ? adminUi.redSoft : adminUi.surfaceSoft,
-      urgent: rejectedTechnicians > 0,
+      tone: adminUi.textSoft,
+      softTone: adminUi.surfaceSoft,
     },
   ];
 
   const companyMetrics: MetricConfig[] = [
     {
       label: 'Total companies',
-      value: metrics.totalCompanies,
+      value: supaMetrics.totalCompanies,
       detail: 'Marketplace buyers',
       icon: Building2,
       tone: adminUi.accent,
@@ -147,16 +200,16 @@ export default function AdminDashboard() {
     },
     {
       label: 'Pending companies',
-      value: metrics.pendingCompanies,
+      value: supaMetrics.pendingCompanies,
       detail: 'Awaiting review',
       icon: Clock,
-      tone: metrics.pendingCompanies > 0 ? adminUi.amber : adminUi.textSoft,
-      softTone: metrics.pendingCompanies > 0 ? adminUi.amberSoft : adminUi.surfaceSoft,
-      urgent: metrics.pendingCompanies > 0,
+      tone: supaMetrics.pendingCompanies > 0 ? adminUi.amber : adminUi.textSoft,
+      softTone: supaMetrics.pendingCompanies > 0 ? adminUi.amberSoft : adminUi.surfaceSoft,
+      urgent: supaMetrics.pendingCompanies > 0,
     },
     {
       label: 'Verified companies',
-      value: metrics.verifiedCompanies,
+      value: supaMetrics.verifiedCompanies,
       detail: 'Cleared buyers',
       icon: ShieldCheck,
       tone: adminUi.green,
@@ -167,16 +220,15 @@ export default function AdminDashboard() {
       value: rejectedCompanies,
       detail: 'Not cleared',
       icon: XCircle,
-      tone: rejectedCompanies > 0 ? adminUi.red : adminUi.textSoft,
-      softTone: rejectedCompanies > 0 ? adminUi.redSoft : adminUi.surfaceSoft,
-      urgent: rejectedCompanies > 0,
+      tone: adminUi.textSoft,
+      softTone: adminUi.surfaceSoft,
     },
   ];
 
   const marketplaceMetrics: MetricConfig[] = [
     {
       label: 'Published offers',
-      value: metrics.activeOffers,
+      value: 0,
       detail: 'Visible roles',
       icon: BriefcaseBusiness,
       tone: adminUi.green,
@@ -192,33 +244,30 @@ export default function AdminDashboard() {
     },
     {
       label: 'Pending applications',
-      value: metrics.pendingApplications,
+      value: 0,
       detail: 'Technician initiated',
       icon: ClipboardCheck,
-      tone: metrics.pendingApplications > 0 ? adminUi.amber : adminUi.accent,
-      softTone: metrics.pendingApplications > 0 ? adminUi.amberSoft : adminUi.accentSoft,
-      urgent: metrics.pendingApplications > 0,
+      tone: adminUi.accent,
+      softTone: adminUi.accentSoft,
     },
     {
       label: 'Pending direct offers',
-      value: metrics.pendingOfferRequests,
+      value: 0,
       detail: 'Company initiated',
       icon: Inbox,
-      tone: metrics.pendingOfferRequests > 0 ? adminUi.amber : adminUi.blue,
-      softTone: metrics.pendingOfferRequests > 0 ? adminUi.amberSoft : adminUi.blueSoft,
-      urgent: metrics.pendingOfferRequests > 0,
+      tone: adminUi.blue,
+      softTone: adminUi.blueSoft,
     },
   ];
 
   const complianceMetrics: MetricConfig[] = [
     {
       label: 'Pending documents',
-      value: metrics.pendingDocuments,
+      value: 0,
       detail: 'Review queue',
       icon: Clock,
-      tone: metrics.pendingDocuments > 0 ? adminUi.amber : adminUi.textSoft,
-      softTone: metrics.pendingDocuments > 0 ? adminUi.amberSoft : adminUi.surfaceSoft,
-      urgent: metrics.pendingDocuments > 0,
+      tone: adminUi.textSoft,
+      softTone: adminUi.surfaceSoft,
     },
     {
       label: 'Verified documents',
@@ -233,43 +282,41 @@ export default function AdminDashboard() {
       value: rejectedOrExpiredDocuments,
       detail: 'Compliance attention',
       icon: XCircle,
-      tone: rejectedOrExpiredDocuments > 0 ? adminUi.red : adminUi.textSoft,
-      softTone: rejectedOrExpiredDocuments > 0 ? adminUi.redSoft : adminUi.surfaceSoft,
-      urgent: rejectedOrExpiredDocuments > 0,
+      tone: adminUi.textSoft,
+      softTone: adminUi.surfaceSoft,
     },
   ];
 
   const actions: ActionConfig[] = [
     {
       label: 'Technicians',
-      subtitle: `${metrics.totalTechnicians} profiles - ${metrics.pendingTechnicians} pending`,
+      subtitle: `${supaMetrics.totalTechnicians} profiles — ${supaMetrics.pendingTechnicians} pending`,
       icon: Users,
       tone: adminUi.blue,
       softTone: adminUi.blueSoft,
-      badge: metrics.pendingTechnicians,
+      badge: supaMetrics.pendingTechnicians,
       onPress: () => router.push('/admin/technicians' as any),
     },
     {
       label: 'Companies',
-      subtitle: `${metrics.totalCompanies} organizations - ${metrics.pendingCompanies} pending`,
+      subtitle: `${supaMetrics.totalCompanies} organizations — ${supaMetrics.pendingCompanies} pending`,
       icon: Building2,
       tone: adminUi.accent,
       softTone: adminUi.accentSoft,
-      badge: metrics.pendingCompanies,
+      badge: supaMetrics.pendingCompanies,
       onPress: () => router.push('/admin/companies' as any),
     },
     {
       label: 'Documents',
-      subtitle: `${metrics.totalDocuments} records - ${metrics.pendingDocuments} pending`,
+      subtitle: 'Review uploaded documents',
       icon: Files,
       tone: adminUi.amber,
       softTone: adminUi.amberSoft,
-      badge: metrics.pendingDocuments,
       onPress: () => router.push('/admin/documents' as any),
     },
     {
       label: 'Offers',
-      subtitle: `${metrics.totalOffers} offers - ${metrics.activeOffers} published`,
+      subtitle: 'Moderate marketplace offers',
       icon: BriefcaseBusiness,
       tone: adminUi.navy,
       softTone: adminUi.surfaceSoft,
@@ -277,11 +324,10 @@ export default function AdminDashboard() {
     },
     {
       label: 'Requests & Applications',
-      subtitle: `${metrics.totalDirectOffers} direct - ${metrics.totalApplicationsV2} applications`,
+      subtitle: 'Direct offers and applications',
       icon: ClipboardCheck,
       tone: adminUi.green,
       softTone: adminUi.greenSoft,
-      badge: metrics.pendingOfferRequests + metrics.pendingApplications,
       onPress: () => router.push('/admin/requests' as any),
     },
   ];
@@ -289,7 +335,6 @@ export default function AdminDashboard() {
   return (
     <AdminScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="admin" />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, isWide && styles.contentWide]}
@@ -319,14 +364,14 @@ export default function AdminDashboard() {
             <View style={styles.summaryTextBlock}>
               <Text style={styles.summaryTitle}>Marketplace supervision</Text>
               <Text style={styles.summaryText}>
-                Local demo data is active. Review queues are grouped by users, marketplace flow and compliance state.
+                Live Supabase data. Review queues grouped by users, marketplace flow and compliance state.
               </Text>
             </View>
           </View>
           <View style={styles.summaryStats}>
-            <SummaryPill label="Workload" value={pendingWorkload} tone={pendingWorkload > 0 ? 'warning' : 'success'} />
-            <SummaryPill label="Published" value={metrics.activeOffers} tone="success" />
-            <SummaryPill label="Accepted" value={metrics.acceptedRequests} tone="info" />
+            <SummaryPill label="Pending" value={supaMetrics.pendingProfiles} tone={supaMetrics.pendingProfiles > 0 ? 'warning' : 'success'} />
+            <SummaryPill label="Active" value={supaMetrics.activeProfiles} tone="success" />
+            <SummaryPill label="Total" value={supaMetrics.totalProfiles} tone="info" />
           </View>
         </AdminCard>
 
@@ -351,8 +396,12 @@ export default function AdminDashboard() {
           ))}
         </View>
 
-        <TouchableOpacity style={styles.switchButton} onPress={handleSwitchRole} activeOpacity={0.76}>
-          <Text style={styles.switchText}>Switch role</Text>
+        <TouchableOpacity
+          style={styles.signOutBtn}
+          onPress={handleSignOut}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.signOutBtnText}>Sign out</Text>
         </TouchableOpacity>
       </ScrollView>
     </AdminScreen>
@@ -760,5 +809,21 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '700',
     color: adminUi.textSoft,
+  },
+  signOutBtn: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    backgroundColor: adminUi.redSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  signOutBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: adminUi.red,
   },
 });

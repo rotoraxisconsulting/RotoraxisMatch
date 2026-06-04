@@ -7,7 +7,7 @@
  *   - technician_public_view (column-level privacy via CASE WHEN offer_accepted_between())
  *   - get_unlocked_technician() RPC (requires accepted status, checked server-side)
  *
- * In the local demo the privacy gate is applied by getTechnicianViewForCompany()
+ * In the live app the privacy gate is applied by getTechnicianViewForCompany()
  * and technicianRepositoryV2.getViewForCompany(). When Supabase is live, the
  * same DTOs will be populated by view/RPC responses — the React code changes
  * minimally; only the data layer changes.

@@ -1,20 +1,11 @@
-import { storageAdapter } from '../../storage/asyncStorageAdapter';
-import { DB_KEYS } from '../../storage/localDatabase';
+import { supabase } from '../../lib/supabase';
 import { CompanyProfile, CompanyMember, CompanyProfileView } from '../../types/company';
 import { CompanyMemberRole } from '../../types/enums';
-import { resolveLocationSnapshot } from '../../constants/locationCities';
+import { mapCompanyMemberRow, mapCompanyRow, throwIfError } from './supabaseMappers';
 
 export interface CompanyWithMembers extends CompanyProfileView {
   members: CompanyMember[];
 }
-
-type LegacyCompanyProfile = CompanyProfile & {
-  country?: string;
-  city?: string;
-  baseAirport?: string;
-  latitude?: number;
-  longitude?: number;
-};
 
 type CompanyProfilePatch = Partial<Omit<CompanyProfile, 'id' | 'createdAt'>> & {
   country?: string;
@@ -24,68 +15,64 @@ type CompanyProfilePatch = Partial<Omit<CompanyProfile, 'id' | 'createdAt'>> & {
   longitude?: number;
 };
 
-async function getStoredCompanies(): Promise<LegacyCompanyProfile[]> {
-  return await storageAdapter.get<LegacyCompanyProfile[]>(DB_KEYS.v2Companies) ?? [];
-}
-
-function normalizeCompanyStorage(company: LegacyCompanyProfile): CompanyProfile {
-  const location = resolveLocationSnapshot({
-    locationCityId: company.locationCityId,
-    country: company.country,
-    city: company.city,
-    baseAirport: company.baseAirport,
-  });
-  const { country, city, baseAirport, latitude, longitude, ...stored } = company;
-
+function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
   return {
-    ...stored,
-    locationCityId: location?.locationCityId ?? company.locationCityId,
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
+    ...(patch.email !== undefined ? { email: patch.email } : {}),
+    ...(patch.companyType !== undefined ? { company_type: patch.companyType } : {}),
+    ...(patch.verificationStatus !== undefined ? { verification_status: patch.verificationStatus } : {}),
+    ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
   };
-}
-
-function toCompanyView(company: LegacyCompanyProfile): CompanyProfileView {
-  const stored = normalizeCompanyStorage(company);
-  const location = resolveLocationSnapshot({
-    locationCityId: stored.locationCityId,
-    country: company.country,
-    city: company.city,
-    baseAirport: company.baseAirport,
-  });
-
-  return {
-    ...stored,
-    country: location?.country ?? company.country ?? '',
-    city: location?.city ?? company.city ?? '',
-    baseAirport: location?.baseAirport ?? company.baseAirport,
-    latitude: location?.latitude ?? company.latitude,
-    longitude: location?.longitude ?? company.longitude,
-  };
-}
-
-function storedPatch(patch: CompanyProfilePatch): Partial<Omit<CompanyProfile, 'id' | 'createdAt'>> {
-  const { country, city, baseAirport, latitude, longitude, ...companyPatch } = patch;
-  return companyPatch;
 }
 
 export const companyRepositoryV2 = {
   async getAll(): Promise<CompanyProfileView[]> {
-    const companies = await getStoredCompanies();
-    return companies.map(toCompanyView);
+    const { data, error } = await supabase
+      .from('companies')
+      .select(`
+        id, name, location_city_id, phone, email, company_type,
+        verification_status, created_at, updated_at,
+        location_airports ( country_name, city, iata, icao, latitude, longitude )
+      `)
+      .order('created_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapCompanyRow);
   },
 
   async getById(id: string): Promise<CompanyProfileView | null> {
-    const companies = await this.getAll();
-    return companies.find((c) => c.id === id) ?? null;
+    const { data, error } = await supabase
+      .from('companies')
+      .select(`
+        id, name, location_city_id, phone, email, company_type,
+        verification_status, created_at, updated_at,
+        location_airports ( country_name, city, iata, icao, latitude, longitude )
+      `)
+      .eq('id', id)
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapCompanyRow(data as any) : null;
   },
 
   async getMembers(companyId: string): Promise<CompanyMember[]> {
-    const members = await storageAdapter.get<CompanyMember[]>(DB_KEYS.v2CompanyMembers) ?? [];
-    return members.filter((m) => m.companyId === companyId);
+    const { data, error } = await supabase
+      .from('company_members')
+      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: true });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapCompanyMemberRow);
   },
 
   async getMemberByUserId(companyId: string, userId: string): Promise<CompanyMember | null> {
-    const members = await this.getMembers(companyId);
-    return members.find((m) => m.userId === userId) ?? null;
+    const { data, error } = await supabase
+      .from('company_members')
+      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
+      .eq('company_id', companyId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapCompanyMemberRow(data as any) : null;
   },
 
   async getWithMembers(id: string): Promise<CompanyWithMembers | null> {
@@ -96,98 +83,105 @@ export const companyRepositoryV2 = {
   },
 
   async getCompanyForUser(userId: string): Promise<{ company: CompanyProfileView; member: CompanyMember } | null> {
-    const allMembers = await storageAdapter.get<CompanyMember[]>(DB_KEYS.v2CompanyMembers) ?? [];
-    const member = allMembers.find((m) => m.userId === userId);
-    if (!member) return null;
+    const { data: memberRow, error } = await supabase
+      .from('company_members')
+      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
+      .eq('user_id', userId)
+      .maybeSingle();
+    throwIfError(error);
+    if (!memberRow) return null;
+    const member = mapCompanyMemberRow(memberRow as any);
     const company = await this.getById(member.companyId);
     if (!company) return null;
     return { company, member };
   },
 
   async addMember(
+    _companyId: string,
+    email: string,
+    role: CompanyMemberRole,
+    name?: string,
+  ): Promise<CompanyMember> {
+    const body: Record<string, unknown> = { email, role };
+    if (name?.trim()) body.name = name.trim();
+    const { data, error } = await supabase.functions.invoke('invite-company-member', { body });
+
+    if (error) {
+      const functionError = error as { message?: string; context?: Response };
+      const body = await functionError.context?.json().catch(() => null);
+      throw new Error(body?.error ?? functionError.message ?? 'Could not invite company member.');
+    }
+    if (!data?.member) {
+      throw new Error(data?.error ?? 'Could not invite company member.');
+    }
+
+    return mapCompanyMemberRow(data.member as any);
+  },
+
+  async updateMemberRole(
     companyId: string,
-    userId: string,
+    memberId: string,
     role: CompanyMemberRole,
   ): Promise<CompanyMember> {
-    const members = await storageAdapter.get<CompanyMember[]>(DB_KEYS.v2CompanyMembers) ?? [];
-    const existing = members.find((m) => m.userId === userId);
-    if (existing?.companyId === companyId) throw new Error('This user is already a member of this company.');
-    if (existing) throw new Error('This user already belongs to a company in the MVP.');
-
-    const newMember: CompanyMember = {
-      id: `cm-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      companyId,
-      userId,
-      role,
-      createdAt: new Date().toISOString(),
-    };
-    await storageAdapter.set(DB_KEYS.v2CompanyMembers, [...members, newMember]);
-    return newMember;
+    const { data, error } = await supabase
+      .from('company_members')
+      .update({ role })
+      .eq('id', memberId)
+      .eq('company_id', companyId)
+      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
+      .maybeSingle();
+    throwIfError(error);
+    if (!data) {
+      throw new Error('Member role could not be updated. Check your admin permissions and company membership.');
+    }
+    return mapCompanyMemberRow(data as any);
   },
 
-  async updateMemberRole(memberId: string, role: CompanyMemberRole): Promise<CompanyMember | null> {
-    const members = await storageAdapter.get<CompanyMember[]>(DB_KEYS.v2CompanyMembers) ?? [];
-    const idx = members.findIndex((m) => m.id === memberId);
-    if (idx === -1) return null;
-
-    const member = members[idx];
-    // Prevent demoting the last admin
-    if (member.role === 'admin' && role !== 'admin') {
-      const adminCount = members.filter(
-        (m) => m.companyId === member.companyId && m.role === 'admin',
-      ).length;
-      if (adminCount <= 1) throw new Error('Cannot demote the last admin of this company.');
+  async updateMemberName(
+    companyId: string,
+    memberId: string,
+    displayName: string,
+  ): Promise<CompanyMember> {
+    const { data, error } = await supabase
+      .from('company_members')
+      .update({ display_name: displayName.trim() || null })
+      .eq('id', memberId)
+      .eq('company_id', companyId)
+      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
+      .maybeSingle();
+    throwIfError(error);
+    if (!data) {
+      throw new Error('Member name could not be updated. Check your admin permissions and company membership.');
     }
-
-    const updated: CompanyMember = { ...member, role };
-    const next = [...members];
-    next[idx] = updated;
-    await storageAdapter.set(DB_KEYS.v2CompanyMembers, next);
-    return updated;
+    return mapCompanyMemberRow(data as any);
   },
 
-  async removeMember(memberId: string): Promise<void> {
-    const members = await storageAdapter.get<CompanyMember[]>(DB_KEYS.v2CompanyMembers) ?? [];
-    const member = members.find((m) => m.id === memberId);
-    if (!member) throw new Error('Member not found.');
-
-    // Prevent removing the last admin
-    if (member.role === 'admin') {
-      const adminCount = members.filter(
-        (m) => m.companyId === member.companyId && m.role === 'admin',
-      ).length;
-      if (adminCount <= 1) throw new Error('Cannot remove the last admin of this company.');
+  async removeMember(companyId: string, memberId: string): Promise<void> {
+    const { data, error } = await supabase
+      .from('company_members')
+      .delete()
+      .eq('id', memberId)
+      .eq('company_id', companyId)
+      .select('id')
+      .maybeSingle();
+    throwIfError(error);
+    if (!data) {
+      throw new Error('Member could not be removed. Check your admin permissions and company membership.');
     }
-
-    await storageAdapter.set(
-      DB_KEYS.v2CompanyMembers,
-      members.filter((m) => m.id !== memberId),
-    );
   },
 
   async update(id: string, patch: CompanyProfilePatch): Promise<CompanyProfileView | null> {
-    const companies = await getStoredCompanies();
-    const storedCompanies = companies.map(normalizeCompanyStorage);
-    const idx = storedCompanies.findIndex((c) => c.id === id);
-    if (idx === -1) return null;
-
-    const existing = { ...companies[idx], ...storedCompanies[idx] };
-    const patchLocation = resolveLocationSnapshot({
-      locationCityId: patch.locationCityId ?? existing.locationCityId,
-      country: patch.country,
-      city: patch.city,
-      baseAirport: patch.baseAirport,
-    });
-
-    const updated: CompanyProfile = normalizeCompanyStorage({
-      ...existing,
-      ...storedPatch(patch),
-      locationCityId: patchLocation?.locationCityId ?? patch.locationCityId ?? existing.locationCityId,
-      updatedAt: new Date().toISOString(),
-    });
-    const next = [...storedCompanies];
-    next[idx] = updated;
-    await storageAdapter.set(DB_KEYS.v2Companies, next);
-    return toCompanyView(updated);
+    const { data, error } = await supabase
+      .from('companies')
+      .update(companyPatchToDb(patch))
+      .eq('id', id)
+      .select(`
+        id, name, location_city_id, phone, email, company_type,
+        verification_status, created_at, updated_at,
+        location_airports ( country_name, city, iata, icao, latitude, longitude )
+      `)
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapCompanyRow(data as any) : null;
   },
 };

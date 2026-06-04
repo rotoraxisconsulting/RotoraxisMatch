@@ -8,7 +8,7 @@ export interface Document {
   technicianId: string;
   type: DocumentType;
   fileName: string;
-  storagePath: string; // local path in demo; Supabase Storage path later
+  storagePath: string; // Supabase Storage path
   status: DocumentStatus;
   uploadedAt: string;
   reviewedAt?: string;      // set when admin changes status (verified / rejected / expired)

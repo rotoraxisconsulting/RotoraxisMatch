@@ -1,10 +1,9 @@
-// Legacy route kept for backward navigation only.
+﻿// Legacy route kept for backward navigation only.
 // TODO: Remove this screen once all deep links to /technician/requests are gone.
 import React from 'react';
 import { ScrollView, StyleSheet, Text } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Button } from '../../src/components/Button';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { colors, spacing, typography } from '../../src/theme';
 import {
   TechnicianCard,
@@ -18,7 +17,6 @@ export default function TechnicianRequestsLegacy() {
   return (
     <TechnicianScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="technician" />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}

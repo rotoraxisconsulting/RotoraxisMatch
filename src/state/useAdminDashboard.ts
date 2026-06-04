@@ -9,12 +9,13 @@ import {
   MatchRequest,
   VerificationStatus,
   DocumentStatus,
+  UserStatus,
 } from '../types';
 import { OfferWithRequirements } from '../types/offer';
 import { OfferRequest, OfferApplication } from '../types/offerRequest';
 import { OfferStatus } from '../types/enums';
+import { supabase } from '../lib/supabase';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
-import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
@@ -25,6 +26,12 @@ import {
   v2DocumentToV1,
   v2OfferRequestToMatchRequest,
 } from '../utils/v2CompatAdapters';
+
+const PROFILE_STATUS_BY_VERIFICATION: Record<VerificationStatus, UserStatus> = {
+  verified: 'active',
+  pending: 'pending_verification',
+  rejected: 'suspended',
+};
 
 export interface AdminMetrics {
   totalTechnicians: number;
@@ -87,14 +94,24 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const load = useCallback(async () => {
     setLoading(true);
 
-    const [profiles, companyProfilesResult, v2Docs, v2Requests, v2Offers, v2Applications] =
+    const [profiles, v2Docs, v2Requests, v2Offers, v2Applications, companiesRes, membersRes] =
       await Promise.all([
         technicianRepositoryV2.getAll(),
-        companyRepositoryV2.getAll(),
         documentRepositoryV2.getAll(),
         offerRequestRepository.getAll(),
         offerRepository.getAllWithRequirements(),
         offerApplicationRepository.getAll(),
+        supabase
+          .from('companies')
+          .select(`
+            id, name, location_city_id, phone, email, company_type,
+            verification_status, created_at, updated_at,
+            location_airports ( country_name, city, iata, icao, latitude, longitude )
+          `)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('company_members')
+          .select('id, company_id, user_id, role, created_at'),
       ]);
 
     // Load relations for each technician so admin can see licenseCategories, etc.
@@ -107,15 +124,38 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     setTechnicianDetails(technicianDetailsResult);
     setTechnicians(technicianDetailsResult.map(v2TechnicianToV1));
 
-    const memberCountEntries = await Promise.all(
-      companyProfilesResult.map(async (company) => {
-        const members = await companyRepositoryV2.getMembers(company.id);
-        return [company.id, members.length] as const;
-      }),
-    );
+    // Map Supabase companies rows → CompanyProfileView (camelCase + resolved location)
+    const companyProfilesResult: CompanyProfileView[] = (companiesRes.data ?? []).map((row) => {
+      // PostgREST returns the joined table as an object or array depending on cardinality
+      const loc = Array.isArray(row.location_airports)
+        ? row.location_airports[0]
+        : row.location_airports;
+      return {
+        id: row.id,
+        name: row.name,
+        locationCityId: row.location_city_id,
+        phone: row.phone ?? undefined,
+        email: row.email,
+        companyType: row.company_type,
+        verificationStatus: row.verification_status,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        country: loc?.country_name ?? '',
+        city: loc?.city ?? '',
+        baseAirport: loc?.iata ?? loc?.icao ?? undefined,
+        latitude: loc?.latitude ?? undefined,
+        longitude: loc?.longitude ?? undefined,
+      } as CompanyProfileView;
+    });
+
+    // Build member-count map from the flat members list (one query instead of N)
+    const memberCountMap: Record<string, number> = {};
+    for (const m of (membersRes.data ?? [])) {
+      memberCountMap[m.company_id] = (memberCountMap[m.company_id] ?? 0) + 1;
+    }
 
     setCompanyProfiles(companyProfilesResult);
-    setCompanyMemberCounts(Object.fromEntries(memberCountEntries));
+    setCompanyMemberCounts(memberCountMap);
     setCompanies(companyProfilesResult.map(v2CompanyToV1));
     setDocumentDetails(v2Docs);
     setDocuments(v2Docs.map(v2DocumentToV1));
@@ -130,27 +170,104 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     load();
   }, [load]);
 
-  // Admin writes verificationStatus directly — intentional admin-only action.
-  // Future Supabase: protected by admin-only RLS policy (is_admin()); no separate RPC needed.
   const updateTechnicianVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
-      await technicianRepositoryV2.update(id, { verificationStatus: status });
-      setTechnicians((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, verificationStatus: status } : t)),
-      );
+      let technicianUpdated = false;
+      try {
+        const profileStatus = PROFILE_STATUS_BY_VERIFICATION[status];
+
+        const { data: technicianProfile, error: technicianError } = await supabase
+          .from('technician_profiles')
+          .update({ verification_status: status })
+          .eq('id', id)
+          .select('user_id')
+          .maybeSingle();
+        if (technicianError) {
+          throw new Error(`Could not update technician verification status: ${technicianError.message}`);
+        }
+        technicianUpdated = true;
+
+        const userId = technicianProfile?.user_id;
+        if (!userId) {
+          throw new Error('Technician was updated, but no linked user profile was found to sync.');
+        }
+
+        const { error: profilesError } = await supabase
+          .from('profiles')
+          .update({ status: profileStatus })
+          .eq('id', userId);
+        if (profilesError) {
+          throw new Error(`Technician was updated, but profile status could not be synced: ${profilesError.message}`);
+        }
+
+        await load();
+      } catch (error) {
+        if (technicianUpdated) {
+          try {
+            await load();
+          } catch {
+            // Keep the original sync error visible to the admin.
+          }
+        }
+        throw error;
+      }
     },
-    [],
+    [load],
   );
 
-  // Future Supabase: same admin-only RLS policy protects company verificationStatus writes.
   const updateCompanyVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
-      await companyRepositoryV2.update(id, { verificationStatus: status });
-      setCompanies((prev) =>
-        prev.map((c) => (c.id === id ? { ...c, verificationStatus: status } : c)),
-      );
+      let companyUpdated = false;
+      try {
+        const profileStatus = PROFILE_STATUS_BY_VERIFICATION[status];
+
+        const { error: companyError } = await supabase
+          .from('companies')
+          .update({ verification_status: status })
+          .eq('id', id);
+        if (companyError) {
+          throw new Error(`Could not update company verification status: ${companyError.message}`);
+        }
+        companyUpdated = true;
+
+        const { data: members, error: membersError } = await supabase
+          .from('company_members')
+          .select('user_id')
+          .eq('company_id', id)
+          .eq('role', 'admin');
+        if (membersError) {
+          throw new Error(`Company was updated, but admin members could not be loaded: ${membersError.message}`);
+        }
+
+        const userIds = (members ?? [])
+          .map((member) => member.user_id)
+          .filter((userId): userId is string => Boolean(userId));
+
+        if (userIds.length === 0) {
+          throw new Error('Company was updated, but no admin member profile was found to sync.');
+        }
+
+        const { error: profilesError } = await supabase
+          .from('profiles')
+          .update({ status: profileStatus })
+          .in('id', userIds);
+        if (profilesError) {
+          throw new Error(`Company was updated, but profile status could not be synced: ${profilesError.message}`);
+        }
+
+        await load();
+      } catch (error) {
+        if (companyUpdated) {
+          try {
+            await load();
+          } catch {
+            // Keep the original sync error visible to the admin.
+          }
+        }
+        throw error;
+      }
     },
-    [],
+    [load],
   );
 
   const updateDocumentStatus = useCallback(async (id: string, status: DocumentStatus) => {

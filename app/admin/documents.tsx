@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+﻿import React, { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   ScrollView,
@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { FileCheck, Search } from 'lucide-react-native';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { AdminDocumentCard } from '../../src/components/AdminDocumentCard';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
@@ -106,7 +105,6 @@ export default function AdminDocumentsScreen() {
   return (
     <AdminScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="admin" />
 
       <View style={[styles.topContent, isWide && styles.contentWide]}>
         <AdminPageHeader

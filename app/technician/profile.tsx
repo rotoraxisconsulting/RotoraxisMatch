@@ -5,12 +5,12 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
+  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
   useWindowDimensions,
 } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Button } from '../../src/components/Button';
 import { CountryPickerField, CityPickerField } from '../../src/components/LocationPicker';
@@ -25,12 +25,15 @@ import {
   techStyles,
   techUi,
 } from '../../src/components/technician/TechnicianUI';
-import { useTechnicianDashboard } from '../../src/state/useTechnicianDashboard';
+import { useAuth } from '../../src/auth/AuthContext';
+import { supabase } from '../../src/lib/supabase';
 import { Technician, AvailabilityStatus } from '../../src/types';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
 import { AIRPLANES, HELICOPTERS } from '../../src/constants/aircraftTypes';
 import { colors, spacing } from '../../src/theme';
+
+type AvailabilityContract = Technician['availability']['contractTypes'][number];
 
 const AVAILABILITY_OPTIONS: { value: AvailabilityStatus; label: string }[] = [
   { value: 'available', label: 'Available' },
@@ -38,7 +41,74 @@ const AVAILABILITY_OPTIONS: { value: AvailabilityStatus; label: string }[] = [
   { value: 'unavailable', label: 'Unavailable' },
 ];
 
-type AvailabilityContract = Technician['availability']['contractTypes'][number];
+type SupaTechRow = {
+  id: string;
+  anonymous_code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  location_city_id: string;
+  availability: {
+    immediately?: boolean;
+    available_from?: string | null;
+    contract_types?: string[];
+  } | null;
+  verification_status: string;
+  profile_completeness: number;
+};
+
+function computeProfileCompleteness(t: Technician): number {
+  let score = 0;
+  if (t.fullName?.trim()) score += 10;
+  if (t.email?.trim()) score += 10;
+  if (t.phone?.trim()) score += 5;
+  if (t.city?.trim()) score += 5;
+  if (t.country?.trim()) score += 5;
+  if (t.baseAirport?.trim()) score += 5;
+  if (t.licenseCategories.length > 0) score += 20;
+  if (t.aircraftTypes.length > 0) score += 15;
+  if (t.specialties.length > 0) score += 10;
+  if (t.availability.status !== 'unavailable') score += 5;
+  if (t.yearsExperience > 0) score += 10;
+  return Math.min(score, 100);
+}
+
+function supaRowToForm(
+  row: SupaTechRow,
+  licenses: string[],
+  aircraftTypes: string[],
+  yearsExperience: number,
+): Technician {
+  const avail = row.availability ?? {};
+  const immediately = avail.immediately ?? false;
+  const availableFrom: string | undefined = avail.available_from ?? undefined;
+  const contractTypes = (avail.contract_types ?? []) as AvailabilityContract[];
+  const status: AvailabilityStatus = immediately ? 'available' : availableFrom ? 'open_to_offers' : 'unavailable';
+
+  const location = resolveLocationSnapshot({ locationCityId: row.location_city_id });
+
+  return {
+    id: row.id,
+    anonymousCode: row.anonymous_code,
+    fullName: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email,
+    phone: row.phone ?? '',
+    locationCityId: row.location_city_id,
+    country: location?.country ?? '',
+    city: location?.city ?? '',
+    baseAirport: location?.baseAirport ?? '',
+    latitude: location?.latitude,
+    longitude: location?.longitude,
+    licenseCategories: licenses,
+    aircraftTypes,
+    specialties: [],
+    availability: { immediately, status, availableFrom, contractTypes },
+    verificationStatus: row.verification_status as Technician['verificationStatus'],
+    profileCompleteness: row.profile_completeness,
+    yearsExperience,
+  };
+}
 
 function verificationTone(status: string): 'success' | 'warning' | 'error' | 'muted' {
   if (status === 'verified') return 'success';
@@ -70,26 +140,105 @@ function EmptyValue() {
 
 export default function TechnicianProfileScreen() {
   const router = useRouter();
-  const { technician, loading, updateProfile, refresh } = useTechnicianDashboard();
+  const { profile, loading: authLoading, signOut } = useAuth();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
+  const [techId, setTechId] = useState<string | null>(null);
   const [form, setForm] = useState<Technician | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [noTechProfile, setNoTechProfile] = useState(false);
+
+  // Auth guards
+  useEffect(() => {
+    if (!authLoading && !profile) {
+      router.replace('/auth/login' as any);
+    }
+  }, [authLoading, profile]);
+
+  useEffect(() => {
+    if (!authLoading && profile?.status === 'pending_verification') {
+      router.replace('/auth/pending-verification' as any);
+    }
+  }, [authLoading, profile]);
+
+  async function handleSignOut() {
+    await signOut();
+    router.replace('/');
+  }
+
+  const loadProfile = useCallback(async () => {
+    if (!profile?.id) return;
+    setProfileLoading(true);
+    setProfileError(null);
+    setNoTechProfile(false);
+
+    try {
+      const { data: techRow, error: techErr } = await supabase
+        .from('technician_profiles')
+        .select(
+          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, verification_status, profile_completeness',
+        )
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      if (techErr) throw techErr;
+
+      if (!techRow) {
+        setNoTechProfile(true);
+        setProfileLoading(false);
+        return;
+      }
+
+      setTechId(techRow.id);
+
+      const [licResult, habResult, expResult] = await Promise.all([
+        supabase
+          .from('technician_licenses')
+          .select('license_code')
+          .eq('technician_id', techRow.id),
+        supabase
+          .from('technician_habilitations')
+          .select('aircraft_type_code')
+          .eq('technician_id', techRow.id),
+        supabase
+          .from('technician_aircraft_experience')
+          .select('value, unit')
+          .eq('technician_id', techRow.id),
+      ]);
+
+      const licenses = (licResult.data ?? []).map((r: any) => r.license_code as string);
+      const aircraftTypes = (habResult.data ?? []).map((r: any) => r.aircraft_type_code as string);
+      const expRows = (expResult.data ?? []) as { value: number; unit: string }[];
+      const yearsExperience =
+        expRows.length > 0
+          ? Math.max(
+              ...expRows.map((r) =>
+                r.unit === 'years' ? r.value : Math.round(r.value / 2000),
+              ),
+            )
+          : 0;
+
+      setForm(supaRowToForm(techRow as SupaTechRow, licenses, aircraftTypes, yearsExperience));
+    } catch (err: any) {
+      setProfileError(err?.message ?? 'Failed to load profile. Please try again.');
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [profile?.id]);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
 
   useFocusEffect(
     useCallback(() => {
-      refresh();
-    }, [refresh]),
+      loadProfile();
+    }, [loadProfile]),
   );
-
-  useEffect(() => {
-    if (technician) {
-      setForm({ ...technician });
-      setIsDirty(false);
-    }
-  }, [technician]);
 
   function updateField<K extends keyof Technician>(key: K, value: Technician[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -111,19 +260,17 @@ export default function TechnicianProfileScreen() {
 
   function toggleLicense(code: string) {
     if (!form) return;
-    const current = form.licenseCategories;
-    const next = current.includes(code)
-      ? current.filter((c) => c !== code)
-      : [...current, code];
+    const next = form.licenseCategories.includes(code)
+      ? form.licenseCategories.filter((c) => c !== code)
+      : [...form.licenseCategories, code];
     updateField('licenseCategories', next);
   }
 
   function toggleAircraftType(code: string) {
     if (!form) return;
-    const current = form.aircraftTypes;
-    const next = current.includes(code)
-      ? current.filter((c) => c !== code)
-      : [...current, code];
+    const next = form.aircraftTypes.includes(code)
+      ? form.aircraftTypes.filter((c) => c !== code)
+      : [...form.aircraftTypes, code];
     updateField('aircraftTypes', next);
   }
 
@@ -137,23 +284,98 @@ export default function TechnicianProfileScreen() {
   }
 
   async function handleSave() {
-    if (!form || !isDirty) return;
+    if (!form || !isDirty || !techId) return;
+
     const selectedLocation = resolveLocationSnapshot(form);
-    const profileToSave: Partial<Technician> = selectedLocation
-      ? {
-          ...form,
-          locationCityId: selectedLocation.locationCityId,
-          country: selectedLocation.country,
-          city: selectedLocation.city,
-          baseAirport: selectedLocation.baseAirport,
-        }
-      : form;
+    const locationCityId = selectedLocation?.locationCityId ?? form.locationCityId;
+
+    const nameParts = form.fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] ?? '';
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : firstName;
+
+    const immediately = form.availability.status === 'available';
+    const availableFrom =
+      form.availability.status === 'open_to_offers'
+        ? (form.availability.availableFrom ?? null)
+        : null;
+
+    const newCompleteness = computeProfileCompleteness(form);
+
     setSaving(true);
-    await updateProfile(profileToSave);
-    setSaving(false);
+    setProfileError(null);
+    try {
+      // Update main profile row
+      const { error: updateErr } = await supabase
+        .from('technician_profiles')
+        .update({
+          first_name: firstName,
+          last_name: lastName,
+          email: form.email,
+          phone: form.phone || null,
+          ...(locationCityId ? { location_city_id: locationCityId } : {}),
+          availability: {
+            immediately,
+            available_from: availableFrom,
+            contract_types: form.availability.contractTypes,
+          },
+          profile_completeness: newCompleteness,
+        })
+        .eq('id', techId);
+
+      if (updateErr) throw updateErr;
+
+      // Replace licenses
+      const { error: delLicErr } = await supabase
+        .from('technician_licenses')
+        .delete()
+        .eq('technician_id', techId);
+      if (delLicErr) throw delLicErr;
+
+      if (form.licenseCategories.length > 0) {
+        const { error: insLicErr } = await supabase
+          .from('technician_licenses')
+          .insert(
+            form.licenseCategories.map((code) => ({
+              technician_id: techId,
+              license_code: code,
+            })),
+          );
+        if (insLicErr) throw insLicErr;
+      }
+
+      // Replace habilitations (each needs a license_code FK from license_categories)
+      const { error: delHabErr } = await supabase
+        .from('technician_habilitations')
+        .delete()
+        .eq('technician_id', techId);
+      if (delHabErr) throw delHabErr;
+
+      if (form.aircraftTypes.length > 0 && form.licenseCategories.length > 0) {
+        const defaultLicense = form.licenseCategories[0];
+        const { error: insHabErr } = await supabase
+          .from('technician_habilitations')
+          .insert(
+            form.aircraftTypes.map((code) => ({
+              technician_id: techId,
+              license_code: defaultLicense,
+              aircraft_type_code: code,
+            })),
+          );
+        if (insHabErr) throw insHabErr;
+      }
+
+      setForm((prev) => (prev ? { ...prev, profileCompleteness: newCompleteness } : prev));
+      setIsDirty(false);
+    } catch (err: any) {
+      setProfileError(err?.message ?? 'Save failed. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
-  if (loading || !form) {
+  // ── Loading states ────────────────────────────────────────────────────────
+
+  if (authLoading) {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
@@ -162,13 +384,72 @@ export default function TechnicianProfileScreen() {
     );
   }
 
+  if (profileLoading) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <LoadingScreen color={colors.technician} role="technician" />
+      </>
+    );
+  }
+
+  if (noTechProfile) {
+    return (
+      <TechnicianScreen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={styles.centeredState}>
+          <Text style={styles.stateTitle}>Profile not set up</Text>
+          <Text style={styles.stateBody}>
+            Your technician profile hasn&apos;t been created yet. Complete your sign-up to
+            configure your profile.
+          </Text>
+          <Button
+            label="Go to dashboard"
+            variant="primary"
+            onPress={() => router.replace('/technician' as any)}
+            style={styles.stateBtn}
+          />
+        </View>
+      </TechnicianScreen>
+    );
+  }
+
+  if (profileError && !form) {
+    return (
+      <TechnicianScreen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <View style={styles.centeredState}>
+          <Text style={styles.stateTitle}>Could not load profile</Text>
+          <Text style={styles.stateBody}>{profileError}</Text>
+          <Button
+            label="Retry"
+            variant="primary"
+            onPress={loadProfile}
+            style={styles.stateBtn}
+          />
+        </View>
+      </TechnicianScreen>
+    );
+  }
+
+  if (!form) {
+    // Unexpected: loading done, no error, no noTechProfile, but form is still null
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <LoadingScreen color={colors.technician} role="technician" />
+      </>
+    );
+  }
+
+  // ── Main form ─────────────────────────────────────────────────────────────
+
   const completeness = form.profileCompleteness ?? 0;
   const status = form.availability.status ?? 'open_to_offers';
 
   return (
     <TechnicianScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="technician" />
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -232,6 +513,12 @@ export default function TechnicianProfileScreen() {
             </View>
           )}
 
+          {profileError && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>{profileError}</Text>
+            </View>
+          )}
+
           <SectionTitle title="Identity" subtitle="Private details remain controlled by privacy rules." />
           <TechnicianCard style={styles.sectionCard}>
             <FieldLabel>Full name</FieldLabel>
@@ -274,23 +561,27 @@ export default function TechnicianProfileScreen() {
             <CountryPickerField
               label="Country"
               value={form.country}
-              onChange={(country) => updateFields({
-                country,
-                locationCityId: undefined,
-                city: '',
-                baseAirport: '',
-              })}
+              onChange={(country) =>
+                updateFields({
+                  country,
+                  locationCityId: undefined,
+                  city: '',
+                  baseAirport: '',
+                })
+              }
             />
             <View style={styles.fieldGap} />
             <CityPickerField
               label="City"
               country={form.country}
               value={form.city}
-              onChange={(city, _icao, entry) => updateFields({
-                locationCityId: entry.id,
-                city,
-                baseAirport: entry.iata || entry.icao,
-              })}
+              onChange={(city, _icao, entry) =>
+                updateFields({
+                  locationCityId: entry.id,
+                  city,
+                  baseAirport: entry.iata || entry.icao,
+                })
+              }
             />
             <View style={styles.fieldGap} />
             <FieldLabel>Base airport</FieldLabel>
@@ -302,24 +593,6 @@ export default function TechnicianProfileScreen() {
               placeholderTextColor={techUi.textMuted}
               autoCapitalize="characters"
               maxLength={4}
-            />
-          </TechnicianCard>
-
-          <SectionTitle title="Experience" />
-          <TechnicianCard style={styles.sectionCard}>
-            <FieldLabel>Years of experience</FieldLabel>
-            <TextInput
-              style={styles.input}
-              value={String(form.yearsExperience)}
-              onChangeText={(v) => {
-                const n = parseInt(v, 10);
-                if (!isNaN(n) && n >= 0) updateField('yearsExperience', n);
-                else if (v === '') updateField('yearsExperience', 0);
-              }}
-              placeholder="0"
-              placeholderTextColor={techUi.textMuted}
-              keyboardType="number-pad"
-              maxLength={2}
             />
           </TechnicianCard>
 
@@ -409,7 +682,9 @@ export default function TechnicianProfileScreen() {
           <TechnicianCard style={styles.sectionCard}>
             <View style={styles.tagRow}>
               {form.specialties.length > 0
-                ? form.specialties.map((s) => <TechnicianBadge key={s} label={s} tone="cyan" small />)
+                ? form.specialties.map((s) => (
+                    <TechnicianBadge key={s} label={s} tone="cyan" small />
+                  ))
                 : <EmptyValue />}
             </View>
           </TechnicianCard>
@@ -426,6 +701,14 @@ export default function TechnicianProfileScreen() {
             fullWidth
             style={styles.saveBtn}
           />
+
+          <TouchableOpacity
+            style={styles.signOutBtn}
+            onPress={handleSignOut}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.signOutBtnText}>Sign out</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </TechnicianScreen>
@@ -532,6 +815,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: techUi.amber,
   },
+  errorBanner: {
+    marginTop: spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  errorText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#DC2626',
+  },
   sectionTitleBlock: {
     marginTop: spacing.lg,
     marginBottom: spacing.xs,
@@ -601,5 +899,45 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     backgroundColor: techUi.accent,
     borderRadius: 16,
+  },
+  signOutBtn: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#FECACA',
+    backgroundColor: techUi.redSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  signOutBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: techUi.red,
+  },
+  centeredState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    gap: spacing.md,
+  },
+  stateTitle: {
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '700',
+    color: techUi.text,
+    textAlign: 'center',
+  },
+  stateBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: techUi.textSoft,
+    textAlign: 'center',
+  },
+  stateBtn: {
+    marginTop: spacing.sm,
+    minWidth: 160,
   },
 });

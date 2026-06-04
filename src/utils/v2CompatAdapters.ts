@@ -189,7 +189,7 @@ export function v2TechnicianToV1(tech: TechnicianWithRelations): Technician {
  * Convert a V1 Partial<Technician> patch (from the edit profile screen) to a
  * V2 TechnicianProfile patch suitable for technicianRepositoryV2.update().
  *
- * fullName is split on the first space: "Carlos Rivera" → { firstName: "Carlos", lastName: "Rivera" }.
+ * fullName is split on the first space: "First Last" -> { firstName: "First", lastName: "Last" }.
  * Fields that have no direct V2 equivalent (specialties, licenseCategories,
  * aircraftTypes) are silently ignored — they are managed as separate
  * relation records in V2 and cannot be patched this way.

@@ -1,5 +1,7 @@
-import React, { createContext, useContext } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { AppRole, CompanyMemberRole } from '../types/enums';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../auth/AuthContext';
 
 export interface LocalTechnicianSession {
   profileId: string;
@@ -24,32 +26,103 @@ export interface LocalSessionContextValue {
   technician: LocalTechnicianSession;
   company: LocalCompanySession;
   admin: LocalAdminSession;
+  sessionLoading: boolean;
 }
 
-const LOCAL_SESSION: LocalSessionContextValue = {
-  technician: {
-    profileId: 'prof-t001',
-    role: 'technician',
-    technicianId: 'tech-001',
-  },
-  company: {
-    profileId: 'prof-c001a',
-    role: 'company_user',
-    companyId: 'comp-001',
-    companyMemberId: 'cm-001',
-    companyMemberRole: 'admin',
-  },
-  admin: {
-    profileId: 'prof-admin01',
-    role: 'admin',
-  },
+const EMPTY_TECH: LocalTechnicianSession = {
+  profileId: '',
+  role: 'technician',
+  technicianId: '',
 };
 
-const SessionContext = createContext<LocalSessionContextValue>(LOCAL_SESSION);
+const EMPTY_COMPANY: LocalCompanySession = {
+  profileId: '',
+  role: 'company_user',
+  companyId: '',
+  companyMemberId: '',
+  companyMemberRole: 'viewer',
+};
+
+const EMPTY_ADMIN: LocalAdminSession = {
+  profileId: '',
+  role: 'admin',
+};
+
+const DEFAULT_VALUE: LocalSessionContextValue = {
+  technician: EMPTY_TECH,
+  company: EMPTY_COMPANY,
+  admin: EMPTY_ADMIN,
+  sessionLoading: true,
+};
+
+const SessionContext = createContext<LocalSessionContextValue>(DEFAULT_VALUE);
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
+  const { profile, loading: authLoading } = useAuth();
+  const [value, setValue] = useState<LocalSessionContextValue>(DEFAULT_VALUE);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (!profile) {
+      setValue({ ...DEFAULT_VALUE, sessionLoading: false });
+      return;
+    }
+
+    setValue((prev) => ({ ...prev, sessionLoading: true }));
+
+    if (profile.role === 'technician') {
+      supabase
+        .from('technician_profiles')
+        .select('id')
+        .eq('user_id', profile.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          setValue({
+            technician: {
+              profileId: profile.id,
+              role: 'technician',
+              technicianId: data?.id ?? '',
+            },
+            company: EMPTY_COMPANY,
+            admin: EMPTY_ADMIN,
+            sessionLoading: false,
+          });
+        });
+    } else if (profile.role === 'company_user') {
+      supabase
+        .from('company_members')
+        .select('id, company_id, role')
+        .eq('user_id', profile.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          setValue({
+            technician: EMPTY_TECH,
+            company: {
+              profileId: profile.id,
+              role: 'company_user',
+              companyId: data?.company_id ?? '',
+              companyMemberId: data?.id ?? '',
+              companyMemberRole: (data?.role as CompanyMemberRole) ?? 'viewer',
+            },
+            admin: EMPTY_ADMIN,
+            sessionLoading: false,
+          });
+        });
+    } else if (profile.role === 'admin') {
+      setValue({
+        technician: EMPTY_TECH,
+        company: EMPTY_COMPANY,
+        admin: { profileId: profile.id, role: 'admin' },
+        sessionLoading: false,
+      });
+    } else {
+      setValue({ ...DEFAULT_VALUE, sessionLoading: false });
+    }
+  }, [authLoading, profile?.id, profile?.role]);
+
   return (
-    <SessionContext.Provider value={LOCAL_SESSION}>
+    <SessionContext.Provider value={value}>
       {children}
     </SessionContext.Provider>
   );

@@ -54,14 +54,16 @@ function toggle<T>(arr: T[], item: T): T[] {
   return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item];
 }
 
-function validate(form: FormState): string | null {
-  if (!form.title.trim()) return 'Title is required.';
-  if (form.title.trim().length < 3) return 'Title must be at least 3 characters.';
-  if (!form.description.trim()) return 'Description is required.';
-  if (!form.locationCityId) return 'Country and city are required.';
-  if (form.minYearsExperience < 0 || form.minYearsExperience > 30) return 'Years of experience must be between 0 and 30.';
-  return null;
+function computeErrors(form: FormState) {
+  return {
+    title: !form.title.trim() ? 'Title is required.'
+      : form.title.trim().length < 3 ? 'Title must be at least 3 characters.'
+      : undefined,
+    description: !form.description.trim() ? 'Description is required.' : undefined,
+    location: !form.locationCityId ? 'Please select a country and city.' : undefined,
+  };
 }
+type FormErrors = { title?: string; description?: string; location?: string };
 
 export default function EditOfferScreen() {
   const router = useRouter();
@@ -72,6 +74,7 @@ export default function EditOfferScreen() {
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState<FormErrors>({});
   const [form, setForm] = useState<FormState | null>(null);
   const [aircraftTab, setAircraftTab] = useState<AircraftCategory>('airplane');
 
@@ -104,12 +107,17 @@ export default function EditOfferScreen() {
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => prev ? { ...prev, [key]: value } : prev);
+    if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
+    if (key === 'description') setErrors((e) => ({ ...e, description: undefined }));
+    if (['locationCityId', 'locationCountry', 'locationCity'].includes(key as string)) {
+      setErrors((e) => ({ ...e, location: undefined }));
+    }
   }
 
   async function handleSave(overrideStatus?: OfferStatus) {
     if (!form || !id) return;
-    const err = validate(form);
-    if (err) { Alert.alert('Validation error', err); return; }
+    const errs = computeErrors(form);
+    if (Object.values(errs).some(Boolean)) { setErrors(errs); return; }
 
     const status = overrideStatus ?? form.status;
 
@@ -174,18 +182,18 @@ export default function EditOfferScreen() {
         />
 
         <FormSection title="Offer details" subtitle="Update the role information technicians will see." icon={FileText}>
-          <FormField label="Title">
+          <FormField label="Title" error={errors.title}>
             <TextInput
-              style={styles.input}
+              style={[styles.input, errors.title && styles.inputError]}
               placeholderTextColor={companyUi.textMuted}
               value={form.title}
               onChangeText={(v) => setField('title', v)}
             />
           </FormField>
 
-          <FormField label="Description">
+          <FormField label="Description" error={errors.description}>
             <TextInput
-              style={[styles.input, styles.textarea]}
+              style={[styles.input, styles.textarea, errors.description && styles.inputError]}
               placeholderTextColor={companyUi.textMuted}
               value={form.description}
               onChangeText={(v) => setField('description', v)}
@@ -250,6 +258,7 @@ export default function EditOfferScreen() {
               setField('locationBaseAirport', entry.iata || entry.icao);
             }}
           />
+          {errors.location ? <Text style={styles.fieldError}>{errors.location}</Text> : null}
           <FormField label="Base airport">
             <TextInput
               style={[styles.input, styles.readonlyInput]}
@@ -365,11 +374,12 @@ function ChoiceSection({ title, helper, children }: { title: string; helper: str
   );
 }
 
-function FormField({ label, children }: { label: string; children: React.ReactNode }) {
+function FormField({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       {children}
+      {error ? <Text style={styles.fieldError}>{error}</Text> : null}
     </View>
   );
 }
@@ -415,6 +425,16 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '700',
     color: companyUi.textSoft,
+  },
+  fieldError: {
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: companyUi.red,
+  },
+  inputError: {
+    borderColor: '#FECACA',
+    backgroundColor: companyUi.redSoft,
   },
   input: {
     minHeight: 46,

@@ -1,0 +1,217 @@
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  TouchableOpacity,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Stack, useRouter } from 'expo-router';
+import { useAuth } from '../../src/auth/AuthContext';
+import { Button } from '../../src/components/Button';
+import { colors, spacing } from '../../src/theme';
+import { AppRole } from '../../src/types/enums';
+
+function roleRoute(role: AppRole): string {
+  if (role === 'admin') return '/admin';
+  if (role === 'company_user') return '/company';
+  return '/technician';
+}
+
+export default function LoginScreen() {
+  const router = useRouter();
+  const { signIn, profile } = useAuth();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Redirect once profile is loaded after sign-in
+  useEffect(() => {
+    if (!profile) return;
+    router.replace(roleRoute(profile.role) as any);
+  }, [profile]);
+
+  async function handleSignIn() {
+    if (!email.trim() || !password) {
+      setError('Please enter your email and password.');
+      return;
+    }
+    setError(null);
+    setLoading(true);
+    const { error: signInError } = await signIn(email.trim(), password);
+    if (signInError) {
+      setError(signInError);
+      setLoading(false);
+    }
+    // On success: keep loading=true until profile redirect fires
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
+            <Text style={styles.backText}>← Back</Text>
+          </TouchableOpacity>
+
+          <View style={styles.header}>
+            <Text style={styles.logoIcon}>✈</Text>
+            <Text style={styles.title}>Sign in</Text>
+            <Text style={styles.subtitle}>RotoraxisMatch</Text>
+          </View>
+
+          <View style={styles.form}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              placeholder="you@example.com"
+              placeholderTextColor={colors.textMuted}
+              autoComplete="email"
+              returnKeyType="next"
+            />
+
+            <Text style={[styles.label, { marginTop: spacing.md }]}>Password</Text>
+            <TextInput
+              style={styles.input}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              placeholder="••••••••"
+              placeholderTextColor={colors.textMuted}
+              autoComplete="current-password"
+              returnKeyType="done"
+              onSubmitEditing={handleSignIn}
+            />
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            <Button
+              label="Sign in"
+              onPress={handleSignIn}
+              loading={loading}
+              fullWidth
+              size="lg"
+              style={styles.btn}
+            />
+          </View>
+
+          <View style={styles.createRow}>
+            <Text style={styles.createNote}>Don&apos;t have an account? </Text>
+            <TouchableOpacity onPress={() => router.push('/auth/signup' as any)}>
+              <Text style={styles.createLink}>Create account</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.footerNote}>
+            Access is based on your verified Supabase account role.
+          </Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: colors.navy,
+  },
+  scroll: {
+    flexGrow: 1,
+    padding: spacing.lg,
+    maxWidth: 480,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  back: {
+    paddingVertical: spacing.sm,
+    alignSelf: 'flex-start',
+  },
+  backText: {
+    color: colors.cyanLight,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  header: {
+    alignItems: 'center',
+    paddingVertical: spacing.xxl,
+  },
+  logoIcon: {
+    fontSize: 40,
+    marginBottom: spacing.md,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: colors.cyanLight,
+    marginTop: 4,
+  },
+  form: {
+    backgroundColor: colors.navyLight,
+    borderRadius: 16,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.cyanLight,
+    marginBottom: 6,
+  },
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    color: colors.white,
+    fontSize: 15,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: 13,
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  btn: {
+    marginTop: spacing.lg,
+  },
+  createRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.xl,
+    marginBottom: spacing.sm,
+  },
+  createNote: { color: colors.textMuted, fontSize: 13 },
+  createLink: { color: colors.cyan, fontSize: 13, fontWeight: '600' },
+  footerNote: {
+    textAlign: 'center',
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+});

@@ -29,18 +29,13 @@ import {
   XCircle,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
-import { Button } from '../../src/components/Button';
-import { useDemoSession } from '../../src/state/useDemoSession';
-import { useTechnicianDashboard } from '../../src/state/useTechnicianDashboard';
-import { useTechnicianSession } from '../../src/state/SessionContext';
-import { chatRepository } from '../../src/repositories/v2/chatRepository';
-import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
-import { offerApplicationRepository } from '../../src/repositories/v2/offerApplicationRepository';
+import { useAuth } from '../../src/auth/AuthContext';
+import { useSession } from '../../src/state/SessionContext';
+import { supabase } from '../../src/lib/supabase';
 import { activityRepository } from '../../src/repositories/v2/activityRepository';
 import { colors, spacing } from '../../src/theme';
-import type { Company, MatchRequest, Technician } from '../../src/types';
+import type { Company, MatchRequest } from '../../src/types';
 
 type DashboardIconKind =
   | 'profile'
@@ -65,7 +60,14 @@ type DashboardMetric = {
   detail: string;
   tone: string;
   softTone: string;
-  hasActivity?: boolean;
+};
+
+type SupaTechProfile = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  anonymousCode: string;
+  verificationStatus: 'pending' | 'verified' | 'rejected';
 };
 
 const ui = {
@@ -103,56 +105,107 @@ const softShadow = Platform.select<ViewStyle>({
 
 export default function TechnicianDashboard() {
   const router = useRouter();
-  const { technicianId } = useTechnicianSession();
-  const { clearSession } = useDemoSession();
-  const { technician, requests, documents, companyMap, loading, refresh } = useTechnicianDashboard();
+  const { profile, loading: authLoading } = useAuth();
+  const { technician: techSession, sessionLoading } = useSession();
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
   const isNarrow = width < 390;
 
+  const [supaTech, setSupaTech] = useState<SupaTechProfile | null>(null);
   const [chatCount, setChatCount] = useState(0);
   const [pendingDirectOffers, setPendingDirectOffers] = useState(0);
   const [pendingApplications, setPendingApplications] = useState(0);
+  const [documentCount, setDocumentCount] = useState(0);
+  const [countsLoading, setCountsLoading] = useState(true);
+
+  // Unread activity badges for NavCards
   const [unreadDirectOffers, setUnreadDirectOffers] = useState(0);
-  const [unreadBrowseOffers, setUnreadBrowseOffers] = useState(0);
+  const [unreadApplications, setUnreadApplications] = useState(0);
   const [unreadChats, setUnreadChats] = useState(0);
 
   useEffect(() => {
-    chatRepository.getRoomsForTechnician(technicianId).then((rooms) => {
-      setChatCount(rooms.length);
-    });
-    offerRequestRepository.getForTechnician(technicianId).then((reqs) => {
-      setPendingDirectOffers(reqs.filter((r) => r.status === 'pending').length);
-    });
-    offerApplicationRepository.getForTechnician(technicianId).then((apps) => {
-      setPendingApplications(apps.filter((a) => a.status === 'pending').length);
-    });
-    activityRepository.getUnreadCount('technician', technicianId, ['direct_offer_received']).then(setUnreadDirectOffers);
-    activityRepository.getUnreadCount('technician', technicianId, ['application_accepted', 'application_rejected']).then(setUnreadBrowseOffers);
-    activityRepository.getUnreadCount('technician', technicianId, ['chat_message_received']).then(setUnreadChats);
-  }, [technicianId]);
+    if (!authLoading && !profile) {
+      router.replace('/auth/login' as any);
+    }
+  }, [authLoading, profile]);
+
+  useEffect(() => {
+    if (!authLoading && profile?.status === 'pending_verification') {
+      router.replace('/auth/pending-verification' as any);
+    }
+  }, [authLoading, profile]);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    supabase
+      .from('technician_profiles')
+      .select('id, first_name, last_name, anonymous_code, verification_status')
+      .eq('user_id', profile.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!data) {
+          setCountsLoading(false);
+          return;
+        }
+        setSupaTech({
+          id: data.id,
+          firstName: data.first_name,
+          lastName: data.last_name,
+          anonymousCode: data.anonymous_code,
+          verificationStatus: data.verification_status as SupaTechProfile['verificationStatus'],
+        });
+
+        const techId = data.id;
+        Promise.all([
+          supabase.from('documents').select('id', { count: 'exact', head: true }).eq('technician_id', techId),
+          supabase.from('offer_requests').select('id', { count: 'exact', head: true }).eq('technician_id', techId).eq('status', 'pending'),
+          supabase.from('offer_applications').select('id', { count: 'exact', head: true }).eq('technician_id', techId).eq('status', 'pending'),
+          supabase.from('chat_rooms').select('id', { count: 'exact', head: true }).eq('technician_id', techId),
+        ]).then(([docs, reqs, apps, chats]) => {
+          setDocumentCount(docs.count ?? 0);
+          setPendingDirectOffers(reqs.count ?? 0);
+          setPendingApplications(apps.count ?? 0);
+          setChatCount(chats.count ?? 0);
+          setCountsLoading(false);
+        });
+      });
+  }, [profile?.id]);
 
   useFocusEffect(
     useCallback(() => {
-      refresh();
-    }, [refresh]),
+      if (!profile?.id) return;
+      const techId = techSession.technicianId;
+      if (!techId) return;
+      Promise.all([
+        supabase.from('documents').select('id', { count: 'exact', head: true }).eq('technician_id', techId),
+        supabase.from('offer_requests').select('id', { count: 'exact', head: true }).eq('technician_id', techId).eq('status', 'pending'),
+        supabase.from('offer_applications').select('id', { count: 'exact', head: true }).eq('technician_id', techId).eq('status', 'pending'),
+        supabase.from('chat_rooms').select('id', { count: 'exact', head: true }).eq('technician_id', techId),
+        activityRepository.getUnreadCount('technician', techId, ['direct_offer_received']),
+        activityRepository.getUnreadCount('technician', techId, ['application_accepted', 'application_rejected']),
+        activityRepository.getUnreadCount('technician', techId, ['chat_message_received']),
+      ]).then(([docs, reqs, apps, chats, unreadOffers, unreadApps, unreadChatCount]) => {
+        setDocumentCount(docs.count ?? 0);
+        setPendingDirectOffers(reqs.count ?? 0);
+        setPendingApplications(apps.count ?? 0);
+        setChatCount(chats.count ?? 0);
+        setUnreadDirectOffers(unreadOffers as number);
+        setUnreadApplications(unreadApps as number);
+        setUnreadChats(unreadChatCount as number);
+      });
+    }, [profile?.id, techSession.technicianId]),
   );
 
-  async function handleSwitchRole() {
-    await clearSession();
-    router.replace('/');
-  }
-
-  if (loading) {
+  if (authLoading || sessionLoading) {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
-        <LoadingScreen color={colors.technician} role="technician" />
+        <LoadingScreen color={colors.technician} />
       </>
     );
   }
 
-  const unreadTotal = unreadDirectOffers + unreadBrowseOffers + unreadChats;
   const metrics: DashboardMetric[] = [
     {
       icon: 'directOffers',
@@ -161,7 +214,6 @@ export default function TechnicianDashboard() {
       detail: 'Pending',
       tone: pendingDirectOffers > 0 ? ui.amber : ui.accent,
       softTone: pendingDirectOffers > 0 ? ui.amberSoft : ui.accentSoft,
-      hasActivity: unreadDirectOffers > 0,
     },
     {
       icon: 'connections',
@@ -170,13 +222,12 @@ export default function TechnicianDashboard() {
       detail: 'Open chats',
       tone: ui.blue,
       softTone: ui.blueSoft,
-      hasActivity: unreadChats > 0,
     },
     {
       icon: 'documentCheck',
       label: 'Documents',
-      value: documents.length,
-      detail: `${documents.filter((d) => d.status === 'verified').length} verified`,
+      value: documentCount,
+      detail: 'Uploaded',
       tone: ui.green,
       softTone: ui.greenSoft,
     },
@@ -187,7 +238,6 @@ export default function TechnicianDashboard() {
       detail: 'Pending',
       tone: pendingApplications > 0 ? ui.accent : ui.textSoft,
       softTone: pendingApplications > 0 ? ui.accentSoft : ui.surfaceSoft,
-      hasActivity: unreadBrowseOffers > 0,
     },
   ];
 
@@ -197,7 +247,6 @@ export default function TechnicianDashboard() {
     <SafeAreaView style={styles.safe}>
       <StatusBar style="dark" />
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="technician" />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, isWide && styles.contentWide]}
@@ -208,48 +257,33 @@ export default function TechnicianDashboard() {
             <Text style={styles.eyebrow}>Technician Dashboard</Text>
             <Text style={styles.pageTitle}>Operations overview</Text>
           </View>
-          {unreadTotal > 0 ? (
-            <View style={styles.activityChip}>
-              <View style={styles.activityChipDot} />
-              <Text style={styles.activityChipText}>
-                {unreadTotal} new
-              </Text>
-            </View>
-          ) : null}
         </View>
 
         <View style={[styles.shell, isWide && styles.shellWide]}>
           <View style={[styles.sideColumn, isWide && styles.sideColumnWide]}>
-            {technician ? (
-              <ProfilePanel
-                technician={technician}
-                documentsCount={documents.length}
+            {supaTech ? (
+              <SupabaseProfileCard
+                supaTech={supaTech}
+                documentCount={documentCount}
                 onProfilePress={() => router.push('/technician/profile' as any)}
                 onDocumentsPress={() => router.push('/technician/documents' as any)}
               />
+            ) : !countsLoading ? (
+              <EmptyProfileCard onPress={() => router.push('/technician/profile' as any)} />
             ) : null}
 
             {isWide ? (
-              <>
-                <ActionPanel
-                  rail
-                  router={router}
-                  chatCount={chatCount}
-                  pendingDirectOffers={pendingDirectOffers}
-                  pendingApplications={pendingApplications}
-                  unreadDirectOffers={unreadDirectOffers}
-                  unreadApplications={unreadBrowseOffers}
-                  unreadChats={unreadChats}
-                  actionWidthStyle={styles.actionFull}
-                />
-                <Button
-                  label="Switch role"
-                  onPress={handleSwitchRole}
-                  variant="ghost"
-                  fullWidth
-                  style={styles.switchBtn}
-                />
-              </>
+              <ActionPanel
+                rail
+                router={router}
+                chatCount={chatCount}
+                pendingDirectOffers={pendingDirectOffers}
+                pendingApplications={pendingApplications}
+                actionWidthStyle={styles.actionFull}
+                unreadDirectOffers={unreadDirectOffers}
+                unreadApplications={unreadApplications}
+                unreadChats={unreadChats}
+              />
             ) : null}
           </View>
 
@@ -266,7 +300,6 @@ export default function TechnicianDashboard() {
                     icon={metric.icon}
                     tone={metric.tone}
                     softTone={metric.softTone}
-                    hasActivity={metric.hasActivity}
                     style={isNarrow ? styles.metricFull : styles.metricHalf}
                   />
                 ))}
@@ -279,29 +312,22 @@ export default function TechnicianDashboard() {
                 chatCount={chatCount}
                 pendingDirectOffers={pendingDirectOffers}
                 pendingApplications={pendingApplications}
-                unreadDirectOffers={unreadDirectOffers}
-                unreadApplications={unreadBrowseOffers}
-                unreadChats={unreadChats}
                 actionWidthStyle={actionWidthStyle}
+                unreadDirectOffers={unreadDirectOffers}
+                unreadApplications={unreadApplications}
+                unreadChats={unreadChats}
               />
             ) : null}
 
-            <RecentRequestsPanel
-              requests={requests.slice(0, 3)}
-              companyMap={companyMap}
-              unreadCount={unreadDirectOffers}
-              onOpen={(id) => router.push(`/technician/direct-offers/${id}` as any)}
-            />
-
-            {!isWide ? (
-              <Button
-                label="Switch role"
-                onPress={handleSwitchRole}
-                variant="ghost"
-                fullWidth
-                style={styles.switchBtn}
-              />
-            ) : null}
+            <View style={styles.panel}>
+              <SectionTitle label="Recent direct offers" value="Latest" />
+              <View style={styles.emptyRecent}>
+                <Text style={styles.emptyRecentTitle}>No direct offers yet</Text>
+                <Text style={styles.emptyRecentText}>
+                  New company offers will appear here when they arrive.
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -314,11 +340,11 @@ type ActionPanelProps = {
   chatCount: number;
   pendingDirectOffers: number;
   pendingApplications: number;
-  unreadDirectOffers: number;
-  unreadApplications: number;
-  unreadChats: number;
   actionWidthStyle: ViewStyle;
   rail?: boolean;
+  unreadDirectOffers?: number;
+  unreadApplications?: number;
+  unreadChats?: number;
 };
 
 function ActionPanel({
@@ -326,11 +352,11 @@ function ActionPanel({
   chatCount,
   pendingDirectOffers,
   pendingApplications,
-  unreadDirectOffers,
-  unreadApplications,
-  unreadChats,
   actionWidthStyle,
   rail = false,
+  unreadDirectOffers = 0,
+  unreadApplications = 0,
+  unreadChats = 0,
 }: ActionPanelProps) {
   return (
     <View style={[styles.panel, rail && styles.railPanel]}>
@@ -353,9 +379,9 @@ function ActionPanel({
             accent={pendingDirectOffers > 0 ? ui.amber : ui.blue}
             softAccent={pendingDirectOffers > 0 ? ui.amberSoft : ui.blueSoft}
             icon="directOffers"
-            unreadCount={unreadDirectOffers}
             onPress={() => router.push('/technician/direct-offers' as any)}
             rail
+            badge={unreadDirectOffers > 0}
           />
           <ActionCard
             title="My Applications"
@@ -363,9 +389,9 @@ function ActionPanel({
             accent={pendingApplications > 0 ? ui.accent : ui.textSoft}
             softAccent={pendingApplications > 0 ? ui.accentSoft : ui.surfaceSoft}
             icon="applications"
-            unreadCount={unreadApplications}
             onPress={() => router.push('/technician/applications' as any)}
             rail
+            badge={unreadApplications > 0}
           />
           <ActionCard
             title="Chats"
@@ -373,9 +399,9 @@ function ActionPanel({
             accent={ui.blue}
             softAccent={ui.blueSoft}
             icon="chats"
-            unreadCount={unreadChats}
             onPress={() => router.push('/technician/chats' as any)}
             rail
+            badge={unreadChats > 0}
           />
         </View>
       ) : (
@@ -393,14 +419,14 @@ function ActionPanel({
             />
             <ActionCard
               title="Direct Offers"
-              subtitle={pendingDirectOffers > 0 ? `${pendingDirectOffers} pending company offer${pendingDirectOffers !== 1 ? 's' : ''}` : 'Sent directly by companies'}
+              subtitle={pendingDirectOffers > 0 ? `${pendingDirectOffers} pending company offers` : 'Sent directly by companies'}
               accent={pendingDirectOffers > 0 ? ui.amber : ui.blue}
               softAccent={pendingDirectOffers > 0 ? ui.amberSoft : ui.blueSoft}
               icon="directOffers"
-              unreadCount={unreadDirectOffers}
               onPress={() => router.push('/technician/direct-offers' as any)}
               style={actionWidthStyle}
               primary
+              badge={unreadDirectOffers > 0}
             />
           </View>
 
@@ -411,8 +437,8 @@ function ActionPanel({
               accent={pendingApplications > 0 ? ui.accent : ui.textSoft}
               softAccent={pendingApplications > 0 ? ui.accentSoft : ui.surfaceSoft}
               icon="applications"
-              unreadCount={unreadApplications}
               onPress={() => router.push('/technician/applications' as any)}
+              badge={unreadApplications > 0}
             />
             <ActionCard
               title="Chats"
@@ -420,8 +446,8 @@ function ActionPanel({
               accent={ui.blue}
               softAccent={ui.blueSoft}
               icon="chats"
-              unreadCount={unreadChats}
               onPress={() => router.push('/technician/chats' as any)}
+              badge={unreadChats > 0}
             />
           </View>
         </>
@@ -437,10 +463,10 @@ type ActionCardProps = {
   softAccent: string;
   icon: DashboardIconKind;
   onPress: () => void;
-  unreadCount?: number;
   style?: ViewStyle;
   primary?: boolean;
   rail?: boolean;
+  badge?: boolean;
 };
 
 function ActionCard({
@@ -450,13 +476,11 @@ function ActionCard({
   softAccent,
   icon,
   onPress,
-  unreadCount = 0,
   style,
   primary = false,
   rail = false,
+  badge = false,
 }: ActionCardProps) {
-  const showActivity = unreadCount > 0;
-
   return (
     <TouchableOpacity
       style={[
@@ -468,9 +492,11 @@ function ActionCard({
       onPress={onPress}
       activeOpacity={0.78}
     >
-      {showActivity ? <View style={styles.unreadDot} /> : null}
-      <View style={[styles.actionMark, { backgroundColor: softAccent }]}>
-        <DashboardIcon kind={icon} color={accent} />
+      <View style={styles.iconWrapper}>
+        <View style={[styles.actionMark, { backgroundColor: softAccent }]}>
+          <DashboardIcon kind={icon} color={accent} />
+        </View>
+        {badge ? <View style={styles.navBadgeDot} /> : null}
       </View>
       <View style={styles.actionCopy}>
         <Text style={styles.actionTitle} numberOfLines={1}>{title}</Text>
@@ -483,64 +509,41 @@ function ActionCard({
   );
 }
 
-type ProfilePanelProps = {
-  technician: Technician;
-  documentsCount: number;
-  onProfilePress: () => void;
-  onDocumentsPress: () => void;
-};
-
-function ProfilePanel({
-  technician,
-  documentsCount,
+function SupabaseProfileCard({
+  supaTech,
+  documentCount,
   onProfilePress,
   onDocumentsPress,
-}: ProfilePanelProps) {
-  const completeness = Math.max(0, Math.min(100, technician.profileCompleteness));
-  const base = technician.baseAirport || technician.city || 'Base pending';
-  const aircraft = compactList(technician.aircraftTypes, 'Aircraft pending');
+}: {
+  supaTech: SupaTechProfile;
+  documentCount: number;
+  onProfilePress: () => void;
+  onDocumentsPress: () => void;
+}) {
+  const fullName = `${supaTech.firstName} ${supaTech.lastName}`.trim();
+  const initials = fullName
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p.charAt(0).toUpperCase())
+    .join('') || 'T';
 
   return (
     <View style={styles.profileCard}>
       <SectionTitle label="Profile" value="Technician" />
-
       <View style={styles.profileTop}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initialsFor(technician.fullName)}</Text>
+          <Text style={styles.avatarText}>{initials}</Text>
         </View>
         <View style={styles.profileIdentity}>
-          <Text style={styles.profileName} numberOfLines={1}>{technician.fullName}</Text>
-          <Text style={styles.profileRole} numberOfLines={1}>{technicianRoleLabel(technician)}</Text>
-          <Text style={styles.profileCode}>{technician.anonymousCode}</Text>
+          <Text style={styles.profileName} numberOfLines={1}>{fullName}</Text>
+          <Text style={styles.profileCode}>{supaTech.anonymousCode}</Text>
         </View>
       </View>
-
       <View style={styles.statusRow}>
-        <StatusPill status={technician.verificationStatus} />
-        <View style={styles.subtlePill}>
-          <DashboardIcon kind="availability" color={ui.textSoft} small />
-          <Text style={styles.subtlePillText}>{availabilityLabel(technician)}</Text>
-        </View>
+        <VerificationPill status={supaTech.verificationStatus} />
       </View>
-
-      <View style={styles.completenessBlock}>
-        <View style={styles.completenessLabelRow}>
-          <Text style={styles.completenessLabel}>Profile completeness</Text>
-          <Text style={styles.completenessValue}>{completeness}%</Text>
-        </View>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${completeness}%` as any }]} />
-        </View>
-      </View>
-
-      <View style={styles.profileFacts}>
-        <Fact label="Base" value={base} />
-        <Fact label="Aircraft" value={aircraft} />
-        <Fact label="Experience" value={`${technician.yearsExperience} yrs`} />
-      </View>
-
       <View style={styles.profileActions}>
-        <ProfileAction
+        <ProfileActionBtn
           title="My Profile"
           subtitle="Edit details"
           icon="profile"
@@ -548,9 +551,9 @@ function ProfilePanel({
           softAccent={ui.accentSoft}
           onPress={onProfilePress}
         />
-        <ProfileAction
+        <ProfileActionBtn
           title="My Documents"
-          subtitle={`${documentsCount} file${documentsCount !== 1 ? 's' : ''}`}
+          subtitle={`${documentCount} file${documentCount !== 1 ? 's' : ''}`}
           icon="documents"
           accent={ui.green}
           softAccent={ui.greenSoft}
@@ -561,7 +564,24 @@ function ProfilePanel({
   );
 }
 
-function ProfileAction({
+function EmptyProfileCard({ onPress }: { onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.profileCard} onPress={onPress} activeOpacity={0.78}>
+      <SectionTitle label="Profile" value="Incomplete" />
+      <View style={styles.emptyProfileInner}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>T</Text>
+        </View>
+        <View style={styles.emptyProfileCopy}>
+          <Text style={styles.profileName}>Complete your profile</Text>
+          <Text style={styles.profileCode}>Tap to set up your technician profile</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ProfileActionBtn({
   title,
   subtitle,
   icon,
@@ -600,14 +620,12 @@ type MetricTileProps = {
   icon: DashboardIconKind;
   tone: string;
   softTone: string;
-  hasActivity?: boolean;
   style?: ViewStyle;
 };
 
-function MetricTile({ label, value, detail, icon, tone, softTone, hasActivity, style }: MetricTileProps) {
+function MetricTile({ label, value, detail, icon, tone, softTone, style }: MetricTileProps) {
   return (
     <View style={[styles.metricTile, style]}>
-      {hasActivity ? <View style={styles.metricActivityDot} /> : null}
       <View style={[styles.metricAccent, { backgroundColor: softTone }]}>
         <DashboardIcon kind={icon} color={tone} />
       </View>
@@ -637,174 +655,32 @@ const DASHBOARD_ICONS: Record<DashboardIconKind, React.ComponentType<LucideProps
 
 function DashboardIcon({ kind, color, small = false }: { kind: DashboardIconKind; color: string; small?: boolean }) {
   const Icon = DASHBOARD_ICONS[kind];
-  return (
-    <Icon
-      color={color}
-      size={small ? 16 : 20}
-      strokeWidth={2}
-    />
-  );
+  return <Icon color={color} size={small ? 16 : 20} strokeWidth={2} />;
 }
 
-type RecentRequestsPanelProps = {
-  requests: MatchRequest[];
-  companyMap: Record<string, Company>;
-  unreadCount: number;
-  onOpen: (id: string) => void;
-};
-
-function RecentRequestsPanel({ requests, companyMap, unreadCount, onOpen }: RecentRequestsPanelProps) {
-  return (
-    <View style={styles.panel}>
-      <SectionTitle
-        label="Recent direct offers"
-        value={unreadCount > 0 ? `${unreadCount} unread` : `${requests.length} latest`}
-        alert={unreadCount > 0}
-      />
-
-      {requests.length > 0 ? (
-        <View style={styles.requestList}>
-          {requests.map((request) => (
-            <TouchableOpacity
-              key={request.id}
-              style={styles.requestRow}
-              onPress={() => onOpen(request.id)}
-              activeOpacity={0.78}
-            >
-              <View style={styles.requestCompanyMark}>
-                <DashboardIcon kind="company" color={colors.white} />
-              </View>
-              <View style={styles.requestCopy}>
-                <View style={styles.requestTitleRow}>
-                  <Text style={styles.requestTitle} numberOfLines={1}>
-                    {companyMap[request.companyId]?.companyName ?? 'Company'}
-                  </Text>
-                  <RequestStatus status={request.status} />
-                </View>
-                <Text style={styles.requestMessage} numberOfLines={2}>
-                  {request.message ?? 'Direct offer received.'}
-                </Text>
-                <Text style={styles.requestDate}>{formatDate(request.createdAt)}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-      ) : (
-        <View style={styles.emptyRecent}>
-          <Text style={styles.emptyRecentTitle}>No direct offers yet</Text>
-          <Text style={styles.emptyRecentText}>
-            New company offers will appear here when they arrive.
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-function SectionTitle({ label, value, alert = false }: { label: string; value?: string; alert?: boolean }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-      {value ? (
-        <View style={styles.sectionValueWrap}>
-          {alert ? <View style={styles.sectionValueDot} /> : null}
-          <Text style={styles.sectionValue}>{value}</Text>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function StatusPill({ status }: { status: Technician['verificationStatus'] }) {
+function VerificationPill({ status }: { status: SupaTechProfile['verificationStatus'] }) {
   const verified = status === 'verified';
   const rejected = status === 'rejected';
   const bg = verified ? ui.greenSoft : rejected ? ui.redSoft : ui.amberSoft;
   const text = verified ? ui.green : rejected ? ui.red : ui.amber;
   const icon: DashboardIconKind = verified ? 'verified' : rejected ? 'rejected' : 'pending';
+  const label = verified ? 'Verified' : rejected ? 'Rejected' : 'Pending review';
 
   return (
     <View style={[styles.statusPill, { backgroundColor: bg }]}>
       <DashboardIcon kind={icon} color={text} small />
-      <Text style={[styles.statusPillText, { color: text }]}>{statusLabel(status)}</Text>
+      <Text style={[styles.statusPillText, { color: text }]}>{label}</Text>
     </View>
   );
 }
 
-function RequestStatus({ status }: { status: MatchRequest['status'] }) {
-  const color = status === 'accepted' ? ui.green : status === 'sent' ? ui.amber : ui.red;
-  const bg = status === 'accepted' ? ui.greenSoft : status === 'sent' ? ui.amberSoft : ui.redSoft;
-  const icon: DashboardIconKind = status === 'accepted' ? 'accepted' : status === 'sent' ? 'pending' : 'rejected';
-
+function SectionTitle({ label, value }: { label: string; value?: string }) {
   return (
-    <View style={[styles.requestStatus, { backgroundColor: bg }]}>
-      <DashboardIcon kind={icon} color={color} small />
-      <Text style={[styles.requestStatusText, { color }]}>{requestStatusLabel(status)}</Text>
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionLabel}>{label}</Text>
+      {value ? <Text style={styles.sectionValue}>{value}</Text> : null}
     </View>
   );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.fact}>
-      <Text style={styles.factLabel}>{label}</Text>
-      <Text style={styles.factValue} numberOfLines={1}>{value}</Text>
-    </View>
-  );
-}
-
-function initialsFor(name: string): string {
-  const initials = name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join('');
-  return initials || 'T';
-}
-
-function technicianRoleLabel(technician: Technician): string {
-  if (technician.licenseCategories.length > 0) {
-    return `${technician.licenseCategories.slice(0, 2).join(' / ')} licensed technician`;
-  }
-  return 'Aviation technician';
-}
-
-function availabilityLabel(technician: Technician): string {
-  switch (technician.availability.status) {
-    case 'available':
-      return 'Available now';
-    case 'open_to_offers':
-      return 'Open to offers';
-    case 'unavailable':
-      return 'Unavailable';
-    default:
-      return 'Availability pending';
-  }
-}
-
-function compactList(items: string[], emptyLabel: string): string {
-  if (items.length === 0) return emptyLabel;
-  if (items.length <= 2) return items.join(', ');
-  return `${items.slice(0, 2).join(', ')} +${items.length - 2}`;
-}
-
-function statusLabel(status: Technician['verificationStatus']): string {
-  if (status === 'verified') return 'Verified';
-  if (status === 'rejected') return 'Rejected';
-  return 'Pending review';
-}
-
-function requestStatusLabel(status: MatchRequest['status']): string {
-  if (status === 'sent') return 'Pending';
-  if (status === 'accepted') return 'Accepted';
-  return 'Closed';
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-  });
 }
 
 const styles = StyleSheet.create({
@@ -812,9 +688,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: ui.page,
   },
-  scroll: {
-    flex: 1,
-  },
+  scroll: { flex: 1 },
   content: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
@@ -845,38 +719,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: ui.text,
   },
-  activityChip: {
-    minHeight: 34,
-    borderRadius: 17,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: ui.surface,
-    borderWidth: 1,
-    borderColor: ui.border,
-  },
-  activityChipDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: ui.red,
-  },
-  activityChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: ui.textSoft,
-  },
-  shell: {
-    gap: spacing.md,
-  },
+  shell: { gap: spacing.md },
   shellWide: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
-  sideColumn: {
-    gap: spacing.md,
-  },
+  sideColumn: { gap: spacing.md },
   sideColumnWide: {
     width: 336,
     flexShrink: 0,
@@ -893,9 +741,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     ...(softShadow ?? {}),
   },
-  railPanel: {
-    padding: 14,
-  },
+  railPanel: { padding: 14 },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -908,23 +754,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: ui.text,
   },
-  sectionValueWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  sectionValueDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: ui.red,
-  },
   sectionValue: {
     fontSize: 12,
     fontWeight: '600',
     color: ui.textMuted,
   },
-
   profileCard: {
     backgroundColor: ui.surface,
     borderRadius: 24,
@@ -938,6 +772,12 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: 'center',
   },
+  emptyProfileInner: {
+    flexDirection: 'row',
+    gap: 14,
+    alignItems: 'center',
+  },
+  emptyProfileCopy: { flex: 1, minWidth: 0 },
   avatar: {
     width: 56,
     height: 56,
@@ -960,13 +800,6 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: '700',
     color: ui.text,
-  },
-  profileRole: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-    color: ui.textSoft,
-    marginTop: 2,
   },
   profileCode: {
     fontSize: 12,
@@ -992,78 +825,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  subtlePill: {
-    minHeight: 30,
-    borderRadius: 15,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    backgroundColor: ui.surfaceSoft,
-    borderWidth: 1,
-    borderColor: ui.borderSoft,
-  },
-  subtlePillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: ui.textSoft,
-  },
-  completenessBlock: {
-    marginTop: spacing.md,
-  },
-  completenessLabelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  completenessLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: ui.textSoft,
-  },
-  completenessValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: ui.accent,
-  },
-  progressTrack: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ui.borderSoft,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-    backgroundColor: ui.accent,
-  },
-  profileFacts: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  fact: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: ui.surfaceSoft,
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: ui.borderSoft,
-  },
-  factLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: ui.textMuted,
-    marginBottom: 3,
-  },
-  factValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: ui.text,
-  },
   profileActions: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -1088,9 +849,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 8,
   },
-  profileActionCopy: {
-    minWidth: 0,
-  },
+  profileActionCopy: { minWidth: 0 },
   profileActionTitle: {
     fontSize: 12,
     lineHeight: 15,
@@ -1104,7 +863,6 @@ const styles = StyleSheet.create({
     color: ui.textSoft,
     marginTop: 2,
   },
-
   metricsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1117,23 +875,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ui.borderSoft,
     padding: 14,
-    position: 'relative',
   },
-  metricHalf: {
-    width: '48.5%',
-  },
-  metricFull: {
-    width: '100%',
-  },
-  metricActivityDot: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ui.red,
-  },
+  metricHalf: { width: '48.5%' },
+  metricFull: { width: '100%' },
   metricAccent: {
     width: 34,
     height: 34,
@@ -1170,15 +914,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.sm,
   },
-  railActions: {
-    gap: spacing.sm,
-  },
-  actionHalf: {
-    width: '48.5%',
-  },
-  actionFull: {
-    width: '100%',
-  },
+  railActions: { gap: spacing.sm },
+  actionHalf: { width: '48.5%' },
+  actionFull: { width: '100%' },
   actionCard: {
     minHeight: 72,
     backgroundColor: ui.surface,
@@ -1189,7 +927,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 11,
-    position: 'relative',
   },
   actionCardPrimary: {
     minHeight: 118,
@@ -1202,16 +939,6 @@ const styles = StyleSheet.create({
     minHeight: 66,
     borderColor: ui.borderSoft,
     backgroundColor: ui.surfaceSoft,
-  },
-  unreadDot: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: ui.red,
-    zIndex: 2,
   },
   actionMark: {
     width: 34,
@@ -1243,81 +970,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 7,
   },
-  actionRightPrimary: {
-    alignSelf: 'flex-end',
-  },
+  actionRightPrimary: { alignSelf: 'flex-end' },
   chevron: {
     fontSize: 17,
     lineHeight: 20,
     fontWeight: '700',
     color: ui.textMuted,
-  },
-
-  requestList: {
-    gap: spacing.sm,
-  },
-  requestRow: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 17,
-    backgroundColor: ui.surfaceSoft,
-    borderWidth: 1,
-    borderColor: ui.borderSoft,
-  },
-  requestCompanyMark: {
-    width: 38,
-    height: 38,
-    borderRadius: 14,
-    backgroundColor: ui.navy,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  requestCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  requestTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  requestTitle: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 18,
-    fontWeight: '700',
-    color: ui.text,
-  },
-  requestMessage: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-    color: ui.textSoft,
-    marginTop: 4,
-  },
-  requestDate: {
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '600',
-    color: ui.textMuted,
-    marginTop: 6,
-  },
-  requestStatus: {
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  requestStatusText: {
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: '700',
   },
   emptyRecent: {
     borderRadius: 18,
@@ -1338,7 +996,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
-  switchBtn: {
-    marginTop: 2,
+  iconWrapper: {
+    position: 'relative',
+  },
+  navBadgeDot: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#DC2626',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    zIndex: 10,
   },
 });

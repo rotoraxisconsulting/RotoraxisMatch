@@ -11,23 +11,22 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Button } from '../src/components/Button';
-import { DemoModeBanner } from '../src/components/DemoModeBanner';
-import { useDemoSession } from '../src/state/useDemoSession';
 import { colors, spacing } from '../src/theme';
-import { UserRole } from '../src/repositories/demoSessionRepository';
 import { hasSeenIntro } from '../src/storage/introStorage';
-import { localDatabase } from '../src/storage/localDatabase';
+import { useAuth } from '../src/auth/AuthContext';
+import { AppRole, UserStatus } from '../src/types/enums';
 
-const ROLE_LABELS: Record<UserRole, string> = {
-  technician: 'Technician',
-  company: 'Company',
-  admin: 'Admin',
-};
+function roleRoute(role: AppRole, status: UserStatus): string {
+  if (status !== 'active') return '/auth/pending-verification';
+  if (role === 'admin') return '/admin';
+  if (role === 'company_user') return '/company';
+  return '/technician';
+}
 
 const STATS = [
-  { value: '18+', label: 'Verified Techs' },
-  { value: '5+', label: 'Operators' },
   { value: '100%', label: 'Privacy First' },
+  { value: 'B2B', label: 'Aviation only' },
+  { value: 'GDPR', label: 'Compliant' },
 ];
 
 const VALUE_PROPS = [
@@ -50,24 +49,27 @@ const VALUE_PROPS = [
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { session, loading } = useDemoSession();
+  const { profile, loading: authLoading } = useAuth();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const [introChecked, setIntroChecked] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [resetDone, setResetDone] = useState(false);
 
   useEffect(() => {
-    hasSeenIntro().then(seen => {
+    if (authLoading) return;
+    if (profile) {
+      router.replace(roleRoute(profile.role, profile.status) as any);
+      return;
+    }
+    hasSeenIntro().then((seen) => {
       if (!seen) {
         router.replace('/intro' as any);
       } else {
         setIntroChecked(true);
       }
     });
-  }, []);
+  }, [authLoading, profile]);
 
-  if (!introChecked) {
+  if (authLoading || !introChecked) {
     return (
       <SafeAreaView style={styles.safe}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -77,35 +79,12 @@ export default function HomeScreen() {
     );
   }
 
-  async function handleResetDemoData() {
-    setResetting(true);
-    setResetDone(false);
-    try {
-      await localDatabase.resetV2Data();
-      setResetDone(true);
-      setTimeout(() => setResetDone(false), 4000);
-    } finally {
-      setResetting(false);
-    }
-  }
-
-  function goToOnboarding() {
-    router.push('/onboarding');
-  }
-
-  function continueSession() {
-    if (!session) return;
-    router.replace(`/${session.role}`);
-  }
-
   return (
     <SafeAreaView style={styles.safe}>
-      {session && <DemoModeBanner role={session.role} />}
       <ScrollView
         contentContainerStyle={[styles.scroll, isWide && styles.scrollWide]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Hero */}
         <View style={styles.hero}>
           <View style={styles.logoWrap}>
             <Text style={styles.logoIcon}>✈</Text>
@@ -116,7 +95,6 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {/* Stats strip */}
         <View style={styles.statsRow}>
           {STATS.map((s, i) => (
             <React.Fragment key={s.label}>
@@ -129,7 +107,6 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        {/* Value props */}
         <View style={styles.propsCard}>
           {VALUE_PROPS.map((vp, i) => (
             <ValueProp
@@ -142,34 +119,21 @@ export default function HomeScreen() {
           ))}
         </View>
 
-        {/* CTA */}
         <View style={styles.cta}>
-          {session ? (
-            <>
-              <Button
-                label={`Continue as ${ROLE_LABELS[session.role]}`}
-                onPress={continueSession}
-                fullWidth
-                size="lg"
-              />
-              <Button
-                label="Switch role"
-                onPress={goToOnboarding}
-                variant="outline"
-                fullWidth
-                size="md"
-                style={styles.secondaryBtn}
-              />
-            </>
-          ) : (
-            <Button
-              label="Get started"
-              onPress={goToOnboarding}
-              fullWidth
-              size="lg"
-              loading={loading}
-            />
-          )}
+          <Button
+            label="Sign in"
+            onPress={() => router.push('/auth/login' as any)}
+            fullWidth
+            size="lg"
+          />
+          <Button
+            label="Create account"
+            onPress={() => router.push('/auth/signup' as any)}
+            variant="outline"
+            fullWidth
+            size="md"
+            style={styles.secondaryBtn}
+          />
         </View>
 
         <TouchableOpacity
@@ -178,25 +142,6 @@ export default function HomeScreen() {
         >
           <Text style={styles.settingsLinkText}>⚙ Settings</Text>
         </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={handleResetDemoData}
-          style={styles.resetBtn}
-          disabled={resetting}
-          activeOpacity={0.7}
-        >
-          {resetting ? (
-            <ActivityIndicator size="small" color={colors.warning} />
-          ) : (
-            <Text style={[styles.resetBtnText, resetDone && styles.resetBtnTextDone]}>
-              {resetDone ? '✓ Demo data reset — navigate to your role to see fresh data' : '⟳ Reset demo data'}
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        <Text style={styles.footerNote}>
-          Demo mode · No real data is stored or transmitted
-        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -246,12 +191,8 @@ const vpStyles = StyleSheet.create({
     marginRight: spacing.md,
     flexShrink: 0,
   },
-  icon: {
-    fontSize: 20,
-  },
-  text: {
-    flex: 1,
-  },
+  icon: { fontSize: 20 },
+  text: { flex: 1 },
   title: {
     fontSize: 15,
     fontWeight: '600',
@@ -300,9 +241,7 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
   },
-  logoIcon: {
-    fontSize: 38,
-  },
+  logoIcon: { fontSize: 38 },
   appName: {
     fontSize: 30,
     fontWeight: '700',
@@ -372,31 +311,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     fontWeight: '500',
-  },
-  resetBtn: {
-    alignSelf: 'center',
-    paddingVertical: spacing.xs + 2,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(255,165,0,0.3)',
-    borderRadius: 8,
-    minWidth: 160,
-    alignItems: 'center',
-  },
-  resetBtnText: {
-    fontSize: 11,
-    color: colors.warning,
-    fontWeight: '500',
-    opacity: 0.75,
-  },
-  resetBtnTextDone: {
-    opacity: 1,
-    color: colors.success,
-  },
-  footerNote: {
-    textAlign: 'center',
-    fontSize: 12,
-    color: colors.textMuted,
   },
 });

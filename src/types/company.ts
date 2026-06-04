@@ -58,5 +58,9 @@ export interface CompanyMember {
   companyId: string;
   userId: string;
   role: CompanyMemberRole;
+  /** Set by company admin. Fallback display order: displayName → email → 'Unnamed member' */
+  displayName?: string;
+  /** Populated via profiles JOIN; absent until migration 004 is applied */
+  email?: string;
   createdAt: string;
 }

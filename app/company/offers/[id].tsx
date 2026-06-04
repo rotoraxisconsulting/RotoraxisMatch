@@ -473,7 +473,7 @@ export default function OfferDetailScreen() {
         ) : null}
 
         {!loadingMatches && matches.length === 0 ? (
-          <EmptyPanel title="No technicians found" subtitle="There are no technicians available in the demo database." />
+          <EmptyPanel title="No technicians found" subtitle="There are no technicians available for this offer yet." />
         ) : null}
 
         {!loadingMatches && orderedMatches.map(({ technician, score }) => {

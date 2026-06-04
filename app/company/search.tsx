@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -17,11 +18,9 @@ import {
   Radar,
   Search,
   Send,
-  UserRound,
 } from 'lucide-react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { MatchBadge } from '../../src/components/MatchBadge';
-import { RequestContactModal } from '../../src/components/RequestContactModal';
 import {
   CompanyBadge,
   CompanyCard,
@@ -35,9 +34,9 @@ import {
   companyUi,
 } from '../../src/components/company/CompanyUI';
 import { useTechnicianSearch } from '../../src/state/useTechnicianSearch';
-import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
 import { useCompanySession } from '../../src/state/SessionContext';
 import { isOfferOpenForTechnicians, offerRepository } from '../../src/repositories/v2/offerRepository';
+import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { calculateOfferTechnicianMatch } from '../../src/utils/matchingV2';
 import { AIRPLANES, HELICOPTERS, inferAircraftCategory, AircraftCategory } from '../../src/constants/aircraftTypes';
@@ -47,6 +46,7 @@ import { OfferWithRequirements } from '../../src/types/offer';
 import { SafeTechnicianView } from '../../src/types';
 import { MatchScore } from '../../src/types/matching';
 import { SafeTechnicianPreview } from '../../src/types/privacy';
+import { OfferRequest } from '../../src/types/offerRequest';
 
 type PreviewMap = Record<string, SafeTechnicianPreview>;
 type ScoreMap = Record<string, MatchScore>;
@@ -72,15 +72,16 @@ function verificationTone(status: string) {
   return status === 'verified' ? 'success' : 'warning';
 }
 
-function requestTone(status: string) {
+function offerRequestBadgeTone(status: string): 'success' | 'warning' | 'muted' {
   if (status === 'accepted') return 'success';
-  if (status === 'rejected') return 'error';
-  return 'warning';
+  if (status === 'pending') return 'warning';
+  return 'muted';
 }
 
-function requestLabel(status: string): string {
-  if (status === 'sent') return 'Pending request';
-  return labelize(status);
+function offerRequestBadgeLabel(status: string): string {
+  if (status === 'pending') return 'Pending response';
+  if (status === 'accepted') return 'Offer accepted';
+  return 'Already sent';
 }
 
 export default function TechnicianSearchScreen() {
@@ -89,25 +90,41 @@ export default function TechnicianSearchScreen() {
   const isWide = width >= 960;
   const { results, filters, loading, hasSearched, updateFilter, clearFilters, search } =
     useTechnicianSearch();
-  const { requests, hasSentRequest, getRequestForTechnician, sendRequest } =
-    useCompanyDashboard();
   const { companyId } = useCompanySession();
+  const { offerId: preselectedOfferId } = useLocalSearchParams<{ offerId?: string }>();
 
   const [aircraftCatFilter, setAircraftCatFilter] = useState<AircraftCategory | 'all'>('all');
-
   const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
-  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(preselectedOfferId ?? null);
   const [previews, setPreviews] = useState<PreviewMap>({});
   const [scores, setScores] = useState<ScoreMap>({});
-  const [selectedTech, setSelectedTech] = useState<SafeTechnicianView | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [offerRequests, setOfferRequests] = useState<OfferRequest[]>([]);
+  const [sendingTechId, setSendingTechId] = useState<string | null>(null);
+
+  const loadOfferRequests = useCallback(async () => {
+    const reqs = await offerRequestRepository.getForCompany(companyId);
+    setOfferRequests(reqs);
+  }, [companyId]);
 
   useFocusEffect(
     useCallback(() => {
       if (hasSearched) search();
-    }, [hasSearched, search]),
+      loadOfferRequests();
+    }, [hasSearched, search, loadOfferRequests]),
   );
+
+  const autoSearched = useRef(false);
+  useEffect(() => {
+    if (preselectedOfferId && !autoSearched.current) {
+      autoSearched.current = true;
+      setSelectedOfferId(preselectedOfferId);
+      search();
+    }
+  }, [preselectedOfferId, search]);
+
+  useEffect(() => {
+    loadOfferRequests();
+  }, [loadOfferRequests]);
 
   useEffect(() => {
     let active = true;
@@ -173,7 +190,7 @@ export default function TechnicianSearchScreen() {
   }, [results, selectedOffer]);
 
   async function handleSearch() {
-    await search(requests);
+    await search();
   }
 
   const filteredResults = useMemo(() => {
@@ -191,24 +208,28 @@ export default function TechnicianSearchScreen() {
     setPreviews({});
   }
 
-  function handleRequestContact(tech: SafeTechnicianView) {
-    setSelectedTech(tech);
-    setModalVisible(true);
+  function getActiveOfferRequest(techId: string): OfferRequest | undefined {
+    if (!selectedOfferId) return undefined;
+    return offerRequests.find(
+      (r) => r.technicianId === techId && r.offerId === selectedOfferId,
+    );
   }
 
-  async function handleConfirmRequest(message: string) {
-    if (!selectedTech) return;
-    setSending(true);
-    const freshRequests = await sendRequest(selectedTech.id, message);
-    setSending(false);
-    setModalVisible(false);
-    setSelectedTech(null);
-    await search(freshRequests);
-  }
-
-  function handleCancelModal() {
-    setSelectedTech(null);
-    setModalVisible(false);
+  async function handleSendOffer(techId: string) {
+    if (!selectedOfferId) return;
+    setSendingTechId(techId);
+    try {
+      await offerRequestRepository.create({
+        companyId,
+        technicianId: techId,
+        offerId: selectedOfferId,
+      });
+      await loadOfferRequests();
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? 'Failed to send the direct offer. Please try again.');
+    } finally {
+      setSendingTechId(null);
+    }
   }
 
   return (
@@ -342,8 +363,10 @@ export default function TechnicianSearchScreen() {
               <View style={styles.panelHeader}>
                 <IconBox icon={BriefcaseBusiness} color={companyUi.blue} backgroundColor={companyUi.blueSoft} />
                 <View style={styles.panelCopy}>
-                  <Text style={styles.panelTitle}>Match context</Text>
-                  <Text style={styles.panelSub}>Select an offer to calculate match percentages.</Text>
+                  <Text style={styles.panelTitle}>Select offer to send</Text>
+                  <Text style={styles.panelSub}>
+                    Select a published offer to calculate match scores and send direct offers to technicians.
+                  </Text>
                 </View>
               </View>
               <View style={styles.chipWrap}>
@@ -361,6 +384,11 @@ export default function TechnicianSearchScreen() {
                   />
                 ))}
               </View>
+              {offers.length === 0 && (
+                <Text style={styles.noOffersHint}>
+                  No published offers found. Create and publish an offer to send direct offers to technicians.
+                </Text>
+              )}
             </CompanyCard>
 
             {hasSearched && !loading ? (
@@ -371,8 +399,8 @@ export default function TechnicianSearchScreen() {
                 </Text>
                 <Text style={styles.resultSub}>
                   {selectedOffer
-                    ? `Match shown for ${selectedOffer.title}.`
-                    : 'Select an offer to calculate match.'}
+                    ? `Match shown for "${selectedOffer.title}". Select a technician to send a direct offer.`
+                    : 'Select an offer above to calculate match scores and send direct offers.'}
                 </Text>
               </View>
             ) : null}
@@ -399,20 +427,11 @@ export default function TechnicianSearchScreen() {
             preview={previews[item.id]}
             selectedOffer={selectedOffer}
             score={scores[item.id]}
-            requestStatus={getRequestForTechnician(item.id)?.status ?? null}
-            onRequestContact={
-              hasSentRequest(item.id) ? undefined : () => handleRequestContact(item)
-            }
+            activeOfferRequest={getActiveOfferRequest(item.id)}
+            onSendOffer={() => handleSendOffer(item.id)}
+            sendingThis={sendingTechId === item.id}
           />
         )}
-      />
-
-      <RequestContactModal
-        visible={modalVisible}
-        technician={selectedTech}
-        onConfirm={handleConfirmRequest}
-        onCancel={handleCancelModal}
-        loading={sending}
       />
     </CompanyScreen>
   );
@@ -430,30 +449,34 @@ function FilterGroup({ label, children }: { label: string; children: React.React
 /**
  * TechnicianResultCard renders a company-safe technician preview card.
  *
- * `technician` is SafeTechnicianView (V1 compat). The `fullName` field is ONLY
- * present when the company has an accepted offer record with this technician —
- * this is enforced by the privacy gate in useTechnicianSearch (canRevealIdentity).
- * Before acceptance: fullName === undefined → shows anonymousCode + "Identity locked".
- * After acceptance: fullName is set → shows real name + "Identity unlocked".
+ * Identity privacy: `fullName` is only present when canRevealIdentity() is true
+ * (accepted offer_request or offer_application for this company+technician pair).
+ * The `preview` prop (SafeTechnicianPreview) always stays anonymous.
  *
- * The `preview` prop (SafeTechnicianPreview / TechnicianPublicPreviewDTO) always has
- * the V2 anonymous fields (technicianType, licenses, habilitations). It never exposes
- * private fields regardless of acceptance state.
+ * Send offer logic:
+ * - No selectedOffer → button disabled, "Select an offer first"
+ * - selectedOffer + no activeOfferRequest → "Send offer" (active)
+ * - activeOfferRequest pending → "Pending response" (static)
+ * - activeOfferRequest accepted → "Offer accepted" (static)
+ * - activeOfferRequest other → "Already sent" (static)
+ * Duplicate detection is by company_id + technician_id + offer_id.
  */
 function TechnicianResultCard({
   technician,
   preview,
   selectedOffer,
   score,
-  requestStatus,
-  onRequestContact,
+  activeOfferRequest,
+  onSendOffer,
+  sendingThis,
 }: {
   technician: SafeTechnicianView;
   preview?: SafeTechnicianPreview;
   selectedOffer: OfferWithRequirements | null;
   score?: MatchScore;
-  requestStatus: string | null;
-  onRequestContact?: () => void;
+  activeOfferRequest: OfferRequest | undefined;
+  onSendOffer: () => void;
+  sendingThis: boolean;
 }) {
   const displayName = technician.fullName ?? technician.anonymousCode;
   const technicianType = preview?.technicianType
@@ -465,6 +488,19 @@ function TechnicianResultCard({
     : technician.aircraftTypes;
   const aircraftCat = aircraftChips.length > 0 ? inferAircraftCategory(aircraftChips) : null;
 
+  // Footer button state
+  const canSend = selectedOffer !== null && !activeOfferRequest && !sendingThis;
+  const isStatic = !canSend || sendingThis;
+
+  let actionLabel = 'Send offer';
+  if (!selectedOffer) {
+    actionLabel = 'Select an offer first';
+  } else if (sendingThis) {
+    actionLabel = 'Sending...';
+  } else if (activeOfferRequest) {
+    actionLabel = offerRequestBadgeLabel(activeOfferRequest.status);
+  }
+
   return (
     <CompanyCard style={styles.resultCard}>
       <View style={styles.resultTop}>
@@ -474,8 +510,12 @@ function TechnicianResultCard({
             <Text style={styles.techName} numberOfLines={1}>
               {displayName}
             </Text>
-            {requestStatus ? (
-              <CompanyBadge label={requestLabel(requestStatus)} tone={requestTone(requestStatus)} small />
+            {selectedOffer && activeOfferRequest ? (
+              <CompanyBadge
+                label={offerRequestBadgeLabel(activeOfferRequest.status)}
+                tone={offerRequestBadgeTone(activeOfferRequest.status)}
+                small
+              />
             ) : null}
           </View>
           <Text style={styles.techType}>{technicianType}</Text>
@@ -550,15 +590,24 @@ function TechnicianResultCard({
             <Text style={styles.matchHint}>Select an offer to calculate match.</Text>
           )}
         </View>
-        {onRequestContact ? (
-          <TouchableOpacity style={styles.requestButton} onPress={onRequestContact} activeOpacity={0.75}>
-            <Send color={companyUi.surface} size={15} strokeWidth={2} />
-            <Text style={styles.requestButtonText}>Request contact</Text>
+        {canSend ? (
+          <TouchableOpacity
+            style={styles.requestButton}
+            onPress={onSendOffer}
+            activeOpacity={0.75}
+          >
+            {sendingThis ? (
+              <ActivityIndicator size="small" color={companyUi.surface} />
+            ) : (
+              <>
+                <Send color={companyUi.surface} size={15} strokeWidth={2} />
+                <Text style={styles.requestButtonText}>Send offer</Text>
+              </>
+            )}
           </TouchableOpacity>
         ) : (
-          <View style={styles.requestStatic}>
-            <UserRound color={companyUi.textSoft} size={15} strokeWidth={2} />
-            <Text style={styles.requestStaticText}>Contact requested</Text>
+          <View style={[styles.requestStatic, !selectedOffer && styles.requestStaticDimmed]}>
+            <Text style={styles.requestStaticText}>{actionLabel}</Text>
           </View>
         )}
       </View>
@@ -657,6 +706,13 @@ const styles = StyleSheet.create({
     color: companyUi.surface,
   },
   offerPanel: { gap: 14 },
+  noOffersHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textMuted,
+    fontStyle: 'italic',
+  },
   resultHeader: { gap: 2 },
   resultTitle: {
     fontSize: 16,
@@ -795,6 +851,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
+  },
+  requestStaticDimmed: {
+    opacity: 0.6,
   },
   requestStaticText: {
     fontSize: 13,

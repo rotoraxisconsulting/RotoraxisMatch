@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Text,
   StyleSheet,
   TouchableOpacity,
@@ -80,6 +81,11 @@ export function AdminTechnicianCard({ technician, details, onUpdateStatus }: Pro
     setLoadingStatus(status);
     try {
       await onUpdateStatus(technician.id, status);
+    } catch (error) {
+      Alert.alert(
+        'Technician verification failed',
+        error instanceof Error ? error.message : 'Could not update technician verification.',
+      );
     } finally {
       setLoadingStatus(null);
     }

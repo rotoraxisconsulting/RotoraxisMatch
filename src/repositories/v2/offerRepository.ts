@@ -1,13 +1,14 @@
-import { storageAdapter } from '../../storage/asyncStorageAdapter';
-import { DB_KEYS } from '../../storage/localDatabase';
+import { supabase } from '../../lib/supabase';
 import { Offer, OfferWithRequirements } from '../../types/offer';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
-
-interface OfferRequiredTechnicianType { id: string; offerId: string; technicianTypeCode: TechnicianTypeCode; }
-interface OfferRequiredLicense        { id: string; offerId: string; licenseCode: LicenseCode; }
-interface OfferRequiredAircraftType   { id: string; offerId: string; aircraftTypeCode: string; }
+import {
+  loadOfferRequirements,
+  mapOfferRow,
+  throwIfError,
+  withRequirements,
+} from './supabaseMappers';
 
 type OfferLocationInput = {
   locationCityId?: string;
@@ -15,38 +16,6 @@ type OfferLocationInput = {
   locationCity?: string;
   locationBaseAirport?: string;
 };
-
-function uuid(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function normalizeOfferLocation<T extends Partial<Offer>>(offer: T): T {
-  const location = resolveLocationSnapshot({
-    locationCityId: offer.locationCityId,
-    country: offer.locationCountry,
-    city: offer.locationCity,
-    baseAirport: offer.locationBaseAirport,
-  });
-
-  if (!location) return offer;
-
-  return {
-    ...offer,
-    locationCityId: location.locationCityId,
-    locationCountry: location.country,
-    locationCity: location.city,
-    locationBaseAirport: location.baseAirport,
-  };
-}
-
-function hasOfferLocationPatch(patch: Partial<Offer>): boolean {
-  return (
-    patch.locationCityId !== undefined ||
-    patch.locationCountry !== undefined ||
-    patch.locationCity !== undefined ||
-    patch.locationBaseAirport !== undefined
-  );
-}
 
 function controlledOfferLocation(reference: OfferLocationInput): Pick<Offer, 'locationCityId' | 'locationCountry' | 'locationCity' | 'locationBaseAirport'> {
   const location = resolveLocationSnapshot({
@@ -68,94 +37,121 @@ function controlledOfferLocation(reference: OfferLocationInput): Pick<Offer, 'lo
   };
 }
 
+function hasOfferLocationPatch(patch: Partial<Offer>): boolean {
+  return (
+    patch.locationCityId !== undefined ||
+    patch.locationCountry !== undefined ||
+    patch.locationCity !== undefined ||
+    patch.locationBaseAirport !== undefined
+  );
+}
+
+function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record<string, unknown> {
+  return {
+    ...(patch.companyId !== undefined ? { company_id: patch.companyId } : {}),
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.contractType !== undefined ? { contract_type: patch.contractType } : {}),
+    ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
+    ...(patch.locationCountry !== undefined ? { location_country: patch.locationCountry } : {}),
+    ...(patch.locationCity !== undefined ? { location_city: patch.locationCity } : {}),
+    ...(patch.locationBaseAirport !== undefined ? { location_base_airport: patch.locationBaseAirport } : {}),
+    ...(patch.minYearsExperience !== undefined ? { min_years_experience: patch.minYearsExperience } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
+    ...(patch.expiresAt !== undefined ? { expires_at: patch.expiresAt ?? null } : {}),
+  };
+}
+
 export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible'> | null | undefined): boolean {
   return Boolean(offer && offer.status === 'published' && offer.visible);
 }
 
 export const offerRepository = {
   async getAll(): Promise<Offer[]> {
-    const offers = await storageAdapter.get<Offer[]>(DB_KEYS.v2Offers) ?? [];
-    return offers.map(normalizeOfferLocation);
+    const { data, error } = await supabase
+      .from('offers')
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .order('created_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapOfferRow);
   },
 
   async getById(id: string): Promise<Offer | null> {
-    const offers = await this.getAll();
-    return offers.find((o) => o.id === id) ?? null;
+    const { data, error } = await supabase
+      .from('offers')
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .eq('id', id)
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapOfferRow(data as any) : null;
   },
 
   async getPublished(): Promise<Offer[]> {
-    const offers = await this.getAll();
-    return offers.filter(isOfferOpenForTechnicians);
+    const { data, error } = await supabase
+      .from('offers')
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .eq('status', 'published')
+      .eq('visible', true)
+      .order('created_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapOfferRow);
   },
 
   async getForCompany(companyId: string): Promise<Offer[]> {
-    const offers = await this.getAll();
-    return offers.filter((o) => o.companyId === companyId);
+    const { data, error } = await supabase
+      .from('offers')
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapOfferRow);
   },
 
   async getWithRequirements(id: string): Promise<OfferWithRequirements | null> {
     const offer = await this.getById(id);
     if (!offer) return null;
-
-    const [types, licenses, aircraft] = await Promise.all([
-      storageAdapter.get<OfferRequiredTechnicianType[]>(DB_KEYS.v2OfferRequiredTechnicianTypes) ?? [],
-      storageAdapter.get<OfferRequiredLicense[]>(DB_KEYS.v2OfferRequiredLicenses) ?? [],
-      storageAdapter.get<OfferRequiredAircraftType[]>(DB_KEYS.v2OfferRequiredAircraftTypes) ?? [],
-    ]);
-
-    return {
-      ...offer,
-      requiredTechnicianTypes: (types as OfferRequiredTechnicianType[]).filter((t) => t.offerId === id).map((t) => t.technicianTypeCode),
-      requiredLicenses: (licenses as OfferRequiredLicense[]).filter((l) => l.offerId === id).map((l) => l.licenseCode),
-      requiredAircraftTypes: (aircraft as OfferRequiredAircraftType[]).filter((a) => a.offerId === id).map((a) => a.aircraftTypeCode),
-    };
+    const reqs = await loadOfferRequirements([id]);
+    return withRequirements(offer, reqs[id]);
   },
 
   async getAllWithRequirements(): Promise<OfferWithRequirements[]> {
     const offers = await this.getAll();
-    return Promise.all(offers.map((o) => this.getWithRequirements(o.id) as Promise<OfferWithRequirements>));
+    const reqs = await loadOfferRequirements(offers.map((o) => o.id));
+    return offers.map((offer) => withRequirements(offer, reqs[offer.id]));
   },
 
   async getPublishedWithRequirements(): Promise<OfferWithRequirements[]> {
-    const all = await this.getAllWithRequirements();
-    return all.filter(isOfferOpenForTechnicians);
+    const offers = await this.getPublished();
+    const reqs = await loadOfferRequirements(offers.map((o) => o.id));
+    return offers.map((offer) => withRequirements(offer, reqs[offer.id]));
   },
 
   async updateStatus(id: string, status: OfferStatus): Promise<Offer | null> {
-    const offers = await this.getAll();
-    const idx = offers.findIndex((o) => o.id === id);
-    if (idx === -1) return null;
-
-    const updated: Offer = normalizeOfferLocation({ ...offers[idx], status, visible: status === 'published', updatedAt: new Date().toISOString() });
-    const next = [...offers];
-    next[idx] = updated;
-    await storageAdapter.set(DB_KEYS.v2Offers, next);
-    return updated;
+    const { data, error } = await supabase
+      .from('offers')
+      .update({ status, visible: status === 'published' })
+      .eq('id', id)
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapOfferRow(data as any) : null;
   },
 
   async update(id: string, patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Promise<Offer | null> {
-    const offers = await this.getAll();
-    const idx = offers.findIndex((o) => o.id === id);
-    if (idx === -1) return null;
-
-    const merged = { ...offers[idx], ...patch, updatedAt: new Date().toISOString() };
+    const existing = await this.getById(id);
+    if (!existing) return null;
     const locationPatch = hasOfferLocationPatch(patch)
-      ? controlledOfferLocation(
-          patch.locationCityId !== undefined
-            ? {
-                locationCityId: patch.locationCityId,
-                locationCountry: patch.locationCountry,
-                locationCity: patch.locationCity,
-                locationBaseAirport: patch.locationBaseAirport,
-              }
-            : merged,
-        )
+      ? controlledOfferLocation({ ...existing, ...patch })
       : {};
-    const updated: Offer = normalizeOfferLocation({ ...merged, ...locationPatch });
-    const next = [...offers];
-    next[idx] = updated;
-    await storageAdapter.set(DB_KEYS.v2Offers, next);
-    return updated;
+    const { data, error } = await supabase
+      .from('offers')
+      .update(offerPatchToDb({ ...patch, ...locationPatch }))
+      .eq('id', id)
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapOfferRow(data as any) : null;
   },
 
   async create(data: {
@@ -173,39 +169,40 @@ export const offerRepository = {
     requiredLicenses?: LicenseCode[];
     requiredAircraftTypes?: string[];
   }): Promise<OfferWithRequirements> {
-    const offers = await this.getAll();
-    const now = new Date().toISOString();
-    const id = `offer-${uuid()}`;
     const status = data.status ?? 'draft';
     const location = controlledOfferLocation(data);
+    const { data: inserted, error } = await supabase
+      .from('offers')
+      .insert({
+        company_id: data.companyId,
+        title: data.title,
+        description: data.description,
+        contract_type: data.contractType,
+        location_city_id: location.locationCityId,
+        location_country: location.locationCountry,
+        location_city: location.locationCity,
+        location_base_airport: location.locationBaseAirport,
+        min_years_experience: data.minYearsExperience,
+        status,
+        visible: status === 'published',
+      })
+      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .single();
+    throwIfError(error);
 
-    const offer: Offer = {
-      id,
-      companyId: data.companyId,
-      title: data.title,
-      description: data.description,
-      contractType: data.contractType,
-      ...location,
-      minYearsExperience: data.minYearsExperience,
-      status,
-      visible: status === 'published',
-      createdAt: now,
-      updatedAt: now,
+    const offer = mapOfferRow(inserted as any);
+    const requirements = {
+      technicianTypes: data.requiredTechnicianTypes ?? [],
+      licenses: data.requiredLicenses ?? [],
+      aircraftTypes: data.requiredAircraftTypes ?? [],
     };
-
-    await storageAdapter.set(DB_KEYS.v2Offers, [...offers, offer]);
-
-    const reqTypes = data.requiredTechnicianTypes ?? [];
-    const reqLicenses = data.requiredLicenses ?? [];
-    const reqAircraft = data.requiredAircraftTypes ?? [];
-
-    await this.replaceRequirements(id, {
-      technicianTypes: reqTypes,
-      licenses: reqLicenses,
-      aircraftTypes: reqAircraft,
-    });
-
-    return { ...offer, requiredTechnicianTypes: reqTypes, requiredLicenses: reqLicenses, requiredAircraftTypes: reqAircraft };
+    await this.replaceRequirements(offer.id, requirements);
+    return {
+      ...offer,
+      requiredTechnicianTypes: requirements.technicianTypes,
+      requiredLicenses: requirements.licenses,
+      requiredAircraftTypes: requirements.aircraftTypes,
+    };
   },
 
   async replaceRequirements(offerId: string, requirements: {
@@ -213,36 +210,36 @@ export const offerRepository = {
     licenses: LicenseCode[];
     aircraftTypes: string[];
   }): Promise<void> {
-    const [allTypes, allLicenses, allAircraft] = await Promise.all([
-      storageAdapter.get<OfferRequiredTechnicianType[]>(DB_KEYS.v2OfferRequiredTechnicianTypes) ?? [],
-      storageAdapter.get<OfferRequiredLicense[]>(DB_KEYS.v2OfferRequiredLicenses) ?? [],
-      storageAdapter.get<OfferRequiredAircraftType[]>(DB_KEYS.v2OfferRequiredAircraftTypes) ?? [],
+    const deletes = await Promise.all([
+      supabase.from('offer_required_technician_types').delete().eq('offer_id', offerId),
+      supabase.from('offer_required_licenses').delete().eq('offer_id', offerId),
+      supabase.from('offer_required_aircraft_types').delete().eq('offer_id', offerId),
     ]);
+    deletes.forEach((result) => throwIfError(result.error));
 
-    const filteredTypes = (allTypes as OfferRequiredTechnicianType[]).filter((t) => t.offerId !== offerId);
-    const filteredLicenses = (allLicenses as OfferRequiredLicense[]).filter((l) => l.offerId !== offerId);
-    const filteredAircraft = (allAircraft as OfferRequiredAircraftType[]).filter((a) => a.offerId !== offerId);
-
-    const newTypes: OfferRequiredTechnicianType[] = requirements.technicianTypes.map((code, i) => ({
-      id: `${offerId}-type-${i}`,
-      offerId,
-      technicianTypeCode: code,
-    }));
-    const newLicenses: OfferRequiredLicense[] = requirements.licenses.map((code, i) => ({
-      id: `${offerId}-lic-${i}`,
-      offerId,
-      licenseCode: code,
-    }));
-    const newAircraft: OfferRequiredAircraftType[] = requirements.aircraftTypes.map((code, i) => ({
-      id: `${offerId}-acft-${i}`,
-      offerId,
-      aircraftTypeCode: code,
-    }));
-
-    await Promise.all([
-      storageAdapter.set(DB_KEYS.v2OfferRequiredTechnicianTypes, [...filteredTypes, ...newTypes]),
-      storageAdapter.set(DB_KEYS.v2OfferRequiredLicenses, [...filteredLicenses, ...newLicenses]),
-      storageAdapter.set(DB_KEYS.v2OfferRequiredAircraftTypes, [...filteredAircraft, ...newAircraft]),
-    ]);
+    const inserts = [];
+    if (requirements.technicianTypes.length > 0) {
+      inserts.push(
+        supabase.from('offer_required_technician_types').insert(
+          requirements.technicianTypes.map((code) => ({ offer_id: offerId, technician_type_code: code })),
+        ),
+      );
+    }
+    if (requirements.licenses.length > 0) {
+      inserts.push(
+        supabase.from('offer_required_licenses').insert(
+          requirements.licenses.map((code) => ({ offer_id: offerId, license_code: code })),
+        ),
+      );
+    }
+    if (requirements.aircraftTypes.length > 0) {
+      inserts.push(
+        supabase.from('offer_required_aircraft_types').insert(
+          requirements.aircraftTypes.map((code) => ({ offer_id: offerId, aircraft_type_code: code })),
+        ),
+      );
+    }
+    const results = await Promise.all(inserts);
+    results.forEach((result) => throwIfError(result.error));
   },
 };

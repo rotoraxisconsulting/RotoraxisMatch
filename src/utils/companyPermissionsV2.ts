@@ -1,7 +1,7 @@
 import { CompanyMemberRole } from '../types/enums';
 
 // TODO: enforce company role permissions in Supabase RLS during backend phase (V2-9).
-// These helpers are frontend-only guards for the demo. RLS policies in docs/RLS_PLAN_V2.md
+// These helpers are frontend-only UI guards. RLS policies in docs/RLS_PLAN_V2.md
 // will enforce the same rules server-side once Supabase is connected.
 
 export function canManageCompanyMembers(role: CompanyMemberRole): boolean {

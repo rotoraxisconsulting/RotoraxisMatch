@@ -348,8 +348,8 @@ function PrivacyVisual({ active }: { active: boolean }) {
           <Text style={prv.lockIcon}>✅</Text>
           <Text style={prv.revealedTitle}>Identity revealed</Text>
         </View>
-        <Text style={prv.revealedName}>Carlos M. — B1.1 / B2</Text>
-        <Text style={prv.revealedContact}>carlos@example.com · +34 6XX XXX XXX</Text>
+        <Text style={prv.revealedName}>Verified technician - B1.1 / B2</Text>
+        <Text style={prv.revealedContact}>Contact details unlocked after acceptance</Text>
       </View>
     </View>
   );

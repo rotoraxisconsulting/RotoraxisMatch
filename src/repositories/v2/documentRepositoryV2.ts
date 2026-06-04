@@ -1,26 +1,47 @@
-import { storageAdapter } from '../../storage/asyncStorageAdapter';
-import { DB_KEYS } from '../../storage/localDatabase';
+import { supabase } from '../../lib/supabase';
 import { Document } from '../../types/document';
 import { DocumentStatus } from '../../types/enums';
+import { mapDocumentRow, throwIfError } from './supabaseMappers';
 
 export const documentRepositoryV2 = {
   async getAll(): Promise<Document[]> {
-    return await storageAdapter.get<Document[]>(DB_KEYS.v2Documents) ?? [];
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
+      .order('uploaded_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapDocumentRow);
   },
 
   async getById(id: string): Promise<Document | null> {
-    const docs = await this.getAll();
-    return docs.find((d) => d.id === id) ?? null;
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
+      .eq('id', id)
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapDocumentRow(data as any) : null;
   },
 
   async getForTechnician(technicianId: string): Promise<Document[]> {
-    const docs = await this.getAll();
-    return docs.filter((d) => d.technicianId === technicianId);
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
+      .eq('technician_id', technicianId)
+      .order('uploaded_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapDocumentRow);
   },
 
   async getVerifiedForTechnician(technicianId: string): Promise<Document[]> {
-    const docs = await this.getForTechnician(technicianId);
-    return docs.filter((d) => d.status === 'verified');
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
+      .eq('technician_id', technicianId)
+      .eq('status', 'verified')
+      .order('uploaded_at', { ascending: false });
+    throwIfError(error);
+    return ((data ?? []) as any[]).map(mapDocumentRow);
   },
 
   async updateStatus(
@@ -28,48 +49,41 @@ export const documentRepositoryV2 = {
     status: DocumentStatus,
     rejectionReason?: string,
   ): Promise<Document | null> {
-    const docs = await this.getAll();
-    const idx = docs.findIndex((d) => d.id === id);
-    if (idx === -1) return null;
-
-    const now = new Date().toISOString();
-    const prev = docs[idx];
-
-    let updated: Document;
-    if (status === 'verified') {
-      updated = { ...prev, status, reviewedAt: now, rejectionReason: undefined };
-    } else if (status === 'rejected') {
-      updated = {
-        ...prev,
-        status,
-        reviewedAt: now,
-        rejectionReason: rejectionReason ?? prev.rejectionReason ?? 'Document rejected',
-      };
-    } else if (status === 'expired') {
-      updated = { ...prev, status, reviewedAt: now, rejectionReason: undefined };
-    } else {
-      // pending — reset review state
-      updated = { ...prev, status, reviewedAt: undefined, rejectionReason: undefined };
-    }
-
-    const next = [...docs];
-    next[idx] = updated;
-    await storageAdapter.set(DB_KEYS.v2Documents, next);
-    return updated;
+    const update = {
+      status,
+      reviewed_at: status === 'pending' ? null : new Date().toISOString(),
+      rejection_reason: status === 'rejected' ? rejectionReason ?? 'Document rejected' : null,
+    };
+    const { data, error } = await supabase
+      .from('documents')
+      .update(update)
+      .eq('id', id)
+      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
+      .maybeSingle();
+    throwIfError(error);
+    return data ? mapDocumentRow(data as any) : null;
   },
 
   async add(doc: Document): Promise<Document> {
-    const docs = await this.getAll();
-    const next = [...docs, doc];
-    await storageAdapter.set(DB_KEYS.v2Documents, next);
-    return doc;
+    const { data, error } = await supabase
+      .from('documents')
+      .insert({
+        technician_id: doc.technicianId,
+        type: doc.type,
+        file_name: doc.fileName,
+        storage_path: doc.storagePath,
+        status: doc.status,
+        expires_at: doc.expiresAt ?? null,
+      })
+      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
+      .single();
+    throwIfError(error);
+    return mapDocumentRow(data as any);
   },
 
   async remove(id: string): Promise<boolean> {
-    const docs = await this.getAll();
-    const next = docs.filter((d) => d.id !== id);
-    if (next.length === docs.length) return false;
-    await storageAdapter.set(DB_KEYS.v2Documents, next);
+    const { error } = await supabase.from('documents').delete().eq('id', id);
+    throwIfError(error);
     return true;
   },
 };

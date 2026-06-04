@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+﻿import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -20,7 +20,6 @@ import {
   XCircle,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import { DemoModeBanner } from '../../src/components/DemoModeBanner';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
 import type { OfferWithRequirements } from '../../src/types/offer';
@@ -148,7 +147,6 @@ export default function AdminOffersScreen() {
   return (
     <AdminScreen>
       <Stack.Screen options={{ headerShown: false }} />
-      <DemoModeBanner role="admin" />
 
       <View style={[styles.topContent, isWide && styles.contentWide]}>
         <AdminPageHeader

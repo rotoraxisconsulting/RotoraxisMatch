@@ -5,6 +5,7 @@ import {
   Modal,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -35,6 +36,18 @@ const ROLE_HINTS: Record<CompanyMemberRole, string> = {
   viewer: 'Read-only access to company workspace data.',
 };
 
+const LAST_ADMIN_MESSAGE = 'A company must have at least one admin.';
+const ADMIN_ONLY_MESSAGE = 'Only company admins can manage members.';
+const INVITE_ROLES: CompanyMemberRole[] = ['recruiter', 'viewer', 'admin'];
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', {
     day: '2-digit',
@@ -43,8 +56,14 @@ function formatDate(iso: string): string {
   });
 }
 
-function avatarInitial(userId: string): string {
-  return userId.charAt(0).toUpperCase();
+function memberDisplayName(member: CompanyMember): string {
+  return member.displayName?.trim() || member.email || 'Unnamed member';
+}
+
+function avatarInitial(member: CompanyMember): string {
+  if (member.displayName?.trim()) return member.displayName.trim().charAt(0).toUpperCase();
+  if (member.email?.trim()) return member.email.trim().charAt(0).toUpperCase();
+  return member.userId.charAt(0).toUpperCase();
 }
 
 function roleTone(role: CompanyMemberRole) {
@@ -65,56 +84,177 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
   const [currentMember, setCurrentMember] = useState<CompanyMember | null>(null);
   const [loading, setLoading] = useState(true);
   const [actioning, setActioning] = useState<string | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
+
+  // Invite modal state
+  const [inviteModalVisible, setInviteModalVisible] = useState(false);
+  const [inviteName, setInviteName] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<CompanyMemberRole>('recruiter');
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteSuccessMessage, setInviteSuccessMessage] = useState<string | null>(null);
+
+  // Role change + remove modal state
   const [changeRoleTarget, setChangeRoleTarget] = useState<CompanyMember | null>(null);
   const [removeTarget, setRemoveTarget] = useState<CompanyMember | null>(null);
 
-  const load = useCallback(async () => {
+  // Edit name modal state
+  const [editNameTarget, setEditNameTarget] = useState<CompanyMember | null>(null);
+  const [editNameValue, setEditNameValue] = useState('');
+
+  const load = useCallback(async (): Promise<CompanyMember[]> => {
+    if (!companyId) {
+      setMembers([]);
+      setCurrentMember(null);
+      return [];
+    }
     const all = await companyRepositoryV2.getMembers(companyId);
     setMembers(all);
     setCurrentMember(all.find((m) => m.userId === profileId) ?? null);
+    return all;
   }, [companyId, profileId]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    load().finally(() => {
-      if (active) setLoading(false);
-    });
+    load()
+      .catch((error) => {
+        if (active) {
+          Alert.alert('Team members unavailable', errorMessage(error, 'Could not load company members.'));
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
   }, [load]);
 
-  async function doAddMember(role: CompanyMemberRole) {
-    const demoUserId = `demo-user-${Date.now()}`;
+  function openInviteModal() {
+    setInviteName('');
+    setInviteEmail('');
+    setInviteRole('recruiter');
+    setInviteError(null);
+    setInviteSuccessMessage(null);
+    setInviteModalVisible(true);
+  }
+
+  function closeInviteModal() {
+    if (inviteSubmitting) return;
+    setInviteModalVisible(false);
+    setInviteError(null);
+  }
+
+  async function doInviteMember() {
+    if (!companyId) {
+      setInviteError('Your company membership could not be resolved.');
+      return;
+    }
+
+    const email = inviteEmail.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      setInviteError('Enter a valid email address.');
+      return;
+    }
+
+    setInviteSubmitting(true);
+    setInviteError(null);
     try {
-      await companyRepositoryV2.addMember(companyId, demoUserId, role);
+      const freshMembers = await load();
+      const actingMember = freshMembers.find((m) => m.userId === profileId);
+      if (!actingMember || !canManageCompanyMembers(actingMember.role)) {
+        throw new Error(ADMIN_ONLY_MESSAGE);
+      }
+
+      await companyRepositoryV2.addMember(companyId, email, inviteRole, inviteName.trim() || undefined);
       await load();
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not add member.');
+      setInviteModalVisible(false);
+      setInviteName('');
+      setInviteEmail('');
+      setInviteRole('recruiter');
+      setInviteSuccessMessage('Invitation sent. The user must open the email and set a password before signing in.');
+    } catch (error) {
+      setInviteError(errorMessage(error, 'Could not invite member.'));
+    } finally {
+      setInviteSubmitting(false);
     }
   }
 
   async function doChangeRole(member: CompanyMember, newRole: CompanyMemberRole) {
+    if (!companyId) {
+      Alert.alert('Error', 'Your company membership could not be resolved.');
+      return;
+    }
+
     setActioning(member.id);
     try {
-      await companyRepositoryV2.updateMemberRole(member.id, newRole);
+      const freshMembers = await load();
+      const actingMember = freshMembers.find((m) => m.userId === profileId);
+      if (!actingMember || !canManageCompanyMembers(actingMember.role)) {
+        throw new Error(ADMIN_ONLY_MESSAGE);
+      }
+
+      const target = freshMembers.find((m) => m.id === member.id);
+      if (!target) throw new Error('Member could not be found in your company.');
+
+      if (target.role === 'admin' && newRole !== 'admin') {
+        const adminCount = freshMembers.filter((m) => m.role === 'admin').length;
+        if (adminCount <= 1) throw new Error(LAST_ADMIN_MESSAGE);
+      }
+
+      await companyRepositoryV2.updateMemberRole(companyId, target.id, newRole);
       await load();
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not change role.');
+    } catch (error) {
+      Alert.alert('Error', errorMessage(error, 'Could not change role.'));
     } finally {
       setActioning(null);
     }
   }
 
   async function doRemoveMember(member: CompanyMember) {
+    if (!companyId) {
+      Alert.alert('Error', 'Your company membership could not be resolved.');
+      return;
+    }
+
     setActioning(member.id);
     try {
-      await companyRepositoryV2.removeMember(member.id);
+      const freshMembers = await load();
+      const actingMember = freshMembers.find((m) => m.userId === profileId);
+      if (!actingMember || !canManageCompanyMembers(actingMember.role)) {
+        throw new Error(ADMIN_ONLY_MESSAGE);
+      }
+
+      const target = freshMembers.find((m) => m.id === member.id);
+      if (!target) throw new Error('Member could not be found in your company.');
+
+      if (target.role === 'admin') {
+        const adminCount = freshMembers.filter((m) => m.role === 'admin').length;
+        if (adminCount <= 1) throw new Error(LAST_ADMIN_MESSAGE);
+      }
+
+      await companyRepositoryV2.removeMember(companyId, target.id);
       await load();
-    } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not remove member.');
+    } catch (error) {
+      Alert.alert('Error', errorMessage(error, 'Could not remove member.'));
+    } finally {
+      setActioning(null);
+    }
+  }
+
+  async function doEditName(member: CompanyMember, newName: string) {
+    if (!companyId) {
+      Alert.alert('Error', 'Your company membership could not be resolved.');
+      return;
+    }
+
+    setActioning(member.id);
+    try {
+      await companyRepositoryV2.updateMemberName(companyId, member.id, newName);
+      await load();
+    } catch (error) {
+      Alert.alert('Error', errorMessage(error, 'Could not update member name.'));
     } finally {
       setActioning(null);
     }
@@ -148,11 +288,22 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
               {members.length} member{members.length !== 1 ? 's' : ''} across {companyName}.
             </Text>
           </View>
-          <TouchableOpacity style={styles.headerAction} onPress={() => setShowAddModal(true)} activeOpacity={0.75}>
-            <UserPlus color={companyUi.surface} size={16} strokeWidth={2} />
-            <Text style={styles.headerActionText}>Add</Text>
+          <TouchableOpacity
+            style={styles.headerAction}
+            onPress={openInviteModal}
+            activeOpacity={0.75}
+          >
+            <UserPlus color={companyUi.surface} size={15} strokeWidth={2.2} />
+            <Text style={styles.headerActionText}>Invite</Text>
           </TouchableOpacity>
         </View>
+
+        {inviteSuccessMessage ? (
+          <View style={styles.inviteSuccess}>
+            <Text style={styles.inviteSuccessTitle}>Invitation sent</Text>
+            <Text style={styles.inviteSuccessText}>{inviteSuccessMessage}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.metricRow}>
           <Metric value={adminCount} label="Admins" />
@@ -164,7 +315,9 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
           <IconBox icon={ShieldCheck} size={17} color={companyUi.navy} backgroundColor={companyUi.surfaceSoft} />
           <View style={styles.sessionCopy}>
             <Text style={styles.sessionTitle}>Your admin session</Text>
-            <Text style={styles.sessionText} numberOfLines={1}>{profileId}</Text>
+            <Text style={styles.sessionText} numberOfLines={1}>
+              {currentMember ? memberDisplayName(currentMember) : profileId}
+            </Text>
           </View>
           <CompanyBadge label={ROLE_LABELS[currentRole]} tone={roleTone(currentRole)} small />
         </View>
@@ -182,23 +335,37 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
                 style={[styles.memberCard, isCurrentUser && styles.memberCardCurrent]}
               >
                 <View style={styles.memberMain}>
-                  <InitialAvatar label={avatarInitial(member.userId)} color={roleColor(member.role)} />
+                  <InitialAvatar label={avatarInitial(member)} color={roleColor(member.role)} />
                   <View style={styles.memberInfo}>
                     <View style={styles.memberTop}>
                       <Text style={styles.memberName} numberOfLines={1}>
-                        {member.userId}
+                        {memberDisplayName(member)}
                       </Text>
                       <View style={styles.memberBadges}>
                         {isCurrentUser ? <CompanyBadge label="Current" tone="cyan" small /> : null}
                         <CompanyBadge label={ROLE_LABELS[member.role]} tone={roleTone(member.role)} small />
                       </View>
                     </View>
+                    {member.email ? (
+                      <Text style={styles.memberEmail} numberOfLines={1}>{member.email}</Text>
+                    ) : null}
                     <Text style={styles.memberMeta}>Added {formatDate(member.createdAt)}</Text>
                     <Text style={styles.memberHint}>{ROLE_HINTS[member.role]}</Text>
                   </View>
                 </View>
 
                 <View style={styles.memberActions}>
+                  <TouchableOpacity
+                    style={[styles.editButton, isActioning && styles.disabled]}
+                    onPress={() => {
+                      setEditNameValue(member.displayName ?? '');
+                      setEditNameTarget(member);
+                    }}
+                    disabled={isActioning}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.editButtonText}>Edit name</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.secondaryButton, isActioning && styles.disabled]}
                     onPress={() => setChangeRoleTarget(member)}
@@ -216,8 +383,18 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
                       styles.dangerButton,
                       (isLastAdmin || isCurrentUser || isActioning) && styles.disabled,
                     ]}
-                    onPress={() => setRemoveTarget(member)}
-                    disabled={isLastAdmin || isCurrentUser || isActioning}
+                    onPress={() => {
+                      if (isLastAdmin) {
+                        Alert.alert('Cannot remove member', LAST_ADMIN_MESSAGE);
+                        return;
+                      }
+                      if (isCurrentUser) {
+                        Alert.alert('Cannot remove member', 'You cannot remove your own company membership from this screen.');
+                        return;
+                      }
+                      setRemoveTarget(member);
+                    }}
+                    disabled={isActioning}
                     activeOpacity={0.75}
                   >
                     <Trash2
@@ -241,22 +418,26 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
         </View>
       </CompanyCard>
 
-      <RolePickerModal
-        visible={showAddModal}
-        title="Add demo member"
-        subtitle="Choose an access level for the new workspace member."
-        roles={['admin', 'recruiter', 'viewer']}
-        onSelect={(role) => {
-          setShowAddModal(false);
-          doAddMember(role);
-        }}
-        onCancel={() => setShowAddModal(false)}
+      {/* Invite member modal */}
+      <InviteMemberModal
+        visible={inviteModalVisible}
+        name={inviteName}
+        email={inviteEmail}
+        role={inviteRole}
+        loading={inviteSubmitting}
+        error={inviteError}
+        onChangeName={setInviteName}
+        onChangeEmail={setInviteEmail}
+        onChangeRole={setInviteRole}
+        onSubmit={doInviteMember}
+        onCancel={closeInviteModal}
       />
 
+      {/* Change role modal */}
       <RolePickerModal
         visible={changeRoleTarget !== null}
         title="Change role"
-        subtitle={`New role for ${changeRoleTarget?.userId ?? 'member'}.`}
+        subtitle={`New role for ${changeRoleTarget ? memberDisplayName(changeRoleTarget) : 'member'}.`}
         roles={(['admin', 'recruiter', 'viewer'] as CompanyMemberRole[]).filter(
           (role) => role !== changeRoleTarget?.role,
         )}
@@ -268,6 +449,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
         onCancel={() => setChangeRoleTarget(null)}
       />
 
+      {/* Remove member modal */}
       <Modal
         visible={removeTarget !== null}
         transparent
@@ -278,7 +460,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
           <CompanyCard style={styles.modalCard}>
             <Text style={styles.modalTitle}>Remove member?</Text>
             <Text style={styles.modalSub} numberOfLines={2}>
-              Remove {removeTarget?.userId} from the company team.
+              Remove {removeTarget ? memberDisplayName(removeTarget) : 'this member'} from the company team.
             </Text>
             <TouchableOpacity
               style={styles.modalDanger}
@@ -297,6 +479,50 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
           </CompanyCard>
         </View>
       </Modal>
+
+      {/* Edit name modal */}
+      <Modal
+        visible={editNameTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditNameTarget(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <CompanyCard style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit name</Text>
+            <Text style={styles.modalSub} numberOfLines={2}>
+              Display name for {editNameTarget?.email ?? editNameTarget?.userId ?? 'this member'}.
+            </Text>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Name</Text>
+              <TextInput
+                style={styles.input}
+                value={editNameValue}
+                onChangeText={setEditNameValue}
+                placeholder="e.g. Maria García"
+                placeholderTextColor={companyUi.textMuted}
+                maxLength={100}
+                autoCapitalize="words"
+                autoCorrect={false}
+              />
+            </View>
+            <TouchableOpacity
+              style={styles.modalPrimary}
+              onPress={() => {
+                const target = editNameTarget;
+                setEditNameTarget(null);
+                if (target) doEditName(target, editNameValue);
+              }}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.modalPrimaryText}>Save name</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setEditNameTarget(null)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </CompanyCard>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -307,6 +533,120 @@ function Metric({ value, label }: { value: number; label: string }) {
       <Text style={styles.metricValue}>{value}</Text>
       <Text style={styles.metricLabel}>{label}</Text>
     </View>
+  );
+}
+
+function InviteMemberModal({
+  visible,
+  name,
+  email,
+  role,
+  loading,
+  error,
+  onChangeName,
+  onChangeEmail,
+  onChangeRole,
+  onSubmit,
+  onCancel,
+}: {
+  visible: boolean;
+  name: string;
+  email: string;
+  role: CompanyMemberRole;
+  loading: boolean;
+  error: string | null;
+  onChangeName: (name: string) => void;
+  onChangeEmail: (email: string) => void;
+  onChangeRole: (role: CompanyMemberRole) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+      <View style={styles.modalOverlay}>
+        <CompanyCard style={styles.modalCard}>
+          <Text style={styles.modalTitle}>Invite member</Text>
+          <Text style={styles.modalSub}>Send access to a company user.</Text>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Name (optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={name}
+              onChangeText={onChangeName}
+              placeholder="e.g. Maria García"
+              placeholderTextColor={companyUi.textMuted}
+              maxLength={100}
+              autoCapitalize="words"
+              autoCorrect={false}
+              editable={!loading}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={onChangeEmail}
+              placeholder="name@company.com"
+              placeholderTextColor={companyUi.textMuted}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!loading}
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Role</Text>
+            <View style={styles.inviteRoleRow}>
+              {INVITE_ROLES.map((option) => (
+                <TouchableOpacity
+                  key={option}
+                  style={[
+                    styles.inviteRoleOption,
+                    role === option && styles.inviteRoleOptionActive,
+                    loading && styles.disabled,
+                  ]}
+                  onPress={() => onChangeRole(option)}
+                  disabled={loading}
+                  activeOpacity={0.75}
+                >
+                  <Text
+                    style={[
+                      styles.inviteRoleText,
+                      role === option && styles.inviteRoleTextActive,
+                    ]}
+                  >
+                    {ROLE_LABELS[option]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {error ? <Text style={styles.modalError}>{error}</Text> : null}
+
+          <TouchableOpacity
+            style={[styles.modalPrimary, loading && styles.disabled]}
+            onPress={onSubmit}
+            disabled={loading}
+            activeOpacity={0.75}
+          >
+            {loading ? (
+              <ActivityIndicator size="small" color={companyUi.surface} />
+            ) : (
+              <Text style={styles.modalPrimaryText}>Send invite</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.modalCancel} onPress={onCancel} disabled={loading}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </CompanyCard>
+      </View>
+    </Modal>
   );
 }
 
@@ -398,6 +738,26 @@ const styles = StyleSheet.create({
     color: companyUi.surface,
     fontSize: 13,
     fontWeight: '700',
+  },
+  inviteSuccess: {
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    backgroundColor: companyUi.greenSoft,
+    borderRadius: 16,
+    padding: 12,
+    gap: 4,
+  },
+  inviteSuccessTitle: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: companyUi.green,
+  },
+  inviteSuccessText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
   metricRow: {
     flexDirection: 'row',
@@ -494,6 +854,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: companyUi.text,
   },
+  memberEmail: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: companyUi.textMuted,
+  },
   memberBadges: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -519,7 +886,22 @@ const styles = StyleSheet.create({
     borderTopColor: companyUi.borderSoft,
     paddingTop: 12,
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.xs,
+  },
+  editButton: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 14,
+    backgroundColor: companyUi.surfaceSoft,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editButtonText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: companyUi.textSoft,
   },
   secondaryButton: {
     flex: 1,
@@ -532,7 +914,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondaryButtonText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: companyUi.blue,
   },
@@ -546,10 +928,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    gap: 7,
+    gap: 5,
   },
   dangerButtonText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: companyUi.red,
   },
@@ -582,6 +964,66 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '500',
     color: companyUi.textSoft,
+  },
+  inputGroup: {
+    gap: 7,
+  },
+  inputLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  input: {
+    minHeight: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surfaceSoft,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: companyUi.text,
+  },
+  inviteRoleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  inviteRoleOption: {
+    minHeight: 36,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    backgroundColor: companyUi.surfaceSoft,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inviteRoleOptionActive: {
+    borderColor: companyUi.accent,
+    backgroundColor: companyUi.accent,
+  },
+  inviteRoleText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.textSoft,
+  },
+  inviteRoleTextActive: {
+    color: companyUi.surface,
+  },
+  modalError: {
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: companyUi.redSoft,
+    borderRadius: 14,
+    padding: 10,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: companyUi.red,
   },
   roleOption: {
     borderWidth: 1,
@@ -619,6 +1061,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modalDangerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.surface,
+  },
+  modalPrimary: {
+    minHeight: 44,
+    borderRadius: 15,
+    backgroundColor: companyUi.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalPrimaryText: {
     fontSize: 14,
     fontWeight: '700',
     color: companyUi.surface,

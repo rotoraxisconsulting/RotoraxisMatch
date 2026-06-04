@@ -16,7 +16,21 @@
       "Bash(Sort-Object FullName)",
       "Bash(git stash *)",
       "Bash(findstr \"webview\")",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(claude mcp *)",
+      "mcp__supabase__list_projects",
+      "mcp__supabase__list_extensions",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__list_tables",
+      "PowerShell(Get-Content *)",
+      "mcp__supabase__apply_migration",
+      "Bash(Remove-Item *)",
+      "mcp__supabase__execute_sql",
+      "Bash(xargs grep -l \"useAdminDashboard\\\\|useCompanyDashboard\\\\|useTechnicianDashboard\")"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }
