@@ -26,7 +26,13 @@
       "mcp__supabase__apply_migration",
       "Bash(Remove-Item *)",
       "mcp__supabase__execute_sql",
-      "Bash(xargs grep -l \"useAdminDashboard\\\\|useCompanyDashboard\\\\|useTechnicianDashboard\")"
+      "Bash(xargs grep -l \"useAdminDashboard\\\\|useCompanyDashboard\\\\|useTechnicianDashboard\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Proyectos\\\\RotoraxisMatch\" -Force)",
+      "Bash(Select-Object Name)",
+      "Bash(grep -v \"//\\\\|icon\\\\|directOffer\\\\|chevronDown\\\\|profileAction\")",
+      "mcp__supabase__deploy_edge_function",
+      "Bash(Get-ChildItem -Path \"c:\\\\Proyectos\\\\RotoraxisMatch\" -Recurse -Directory)",
+      "Bash(Select-Object -First 20)"
     ]
   },
   "enableAllProjectMcpServers": true,

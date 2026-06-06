@@ -46,7 +46,6 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
         contract_types: patch.availability.contractTypes ?? [],
       },
     } : {}),
-    ...(patch.verificationStatus !== undefined ? { verification_status: patch.verificationStatus } : {}),
     ...(patch.profileCompleteness !== undefined ? { profile_completeness: patch.profileCompleteness } : {}),
     ...(patch.socialLinks !== undefined ? { social_links: patch.socialLinks ?? null } : {}),
   };

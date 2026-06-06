@@ -34,6 +34,8 @@ import { useAuth } from '../../src/auth/AuthContext';
 import { useSession } from '../../src/state/SessionContext';
 import { supabase } from '../../src/lib/supabase';
 import { activityRepository } from '../../src/repositories/v2/activityRepository';
+import { getOfferMatchesForTechnician, OfferMatchResult } from '../../src/utils/matchingV2';
+import { MatchBadge } from '../../src/components/MatchBadge';
 import { colors, spacing } from '../../src/theme';
 import type { Company, MatchRequest } from '../../src/types';
 
@@ -71,25 +73,25 @@ type SupaTechProfile = {
 };
 
 const ui = {
-  page: '#F3F4F6',
+  page: '#E2EBF2',
   surface: '#FFFFFF',
-  surfaceSoft: '#F8FAFC',
-  border: '#E5E7EB',
-  borderSoft: '#EEF2F7',
-  text: '#0F172A',
-  textSoft: '#475569',
-  textMuted: '#94A3B8',
-  accent: '#0E7490',
-  accentSoft: '#E0F7FA',
-  blue: '#2563EB',
-  blueSoft: '#EFF6FF',
-  green: '#047857',
-  greenSoft: '#ECFDF5',
-  amber: '#B45309',
-  amberSoft: '#FFFBEB',
-  red: '#DC2626',
-  redSoft: '#FEF2F2',
-  navy: '#111827',
+  surfaceSoft: '#EBF2F8',
+  border: '#B0C4D6',
+  borderSoft: '#CCDAE8',
+  text: '#0A1520',
+  textSoft: '#2B3D52',
+  textMuted: '#527088',
+  accent: '#0891B2',
+  accentSoft: '#B3E5F5',
+  blue: '#1D4ED8',
+  blueSoft: '#DBEAFE',
+  green: '#065F46',
+  greenSoft: '#C6F0E1',
+  amber: '#92400E',
+  amberSoft: '#FDE9B0',
+  red: '#B91C1C',
+  redSoft: '#FECACA',
+  navy: '#0A1520',
 };
 
 const softShadow = Platform.select<ViewStyle>({
@@ -117,6 +119,7 @@ export default function TechnicianDashboard() {
   const [pendingApplications, setPendingApplications] = useState(0);
   const [documentCount, setDocumentCount] = useState(0);
   const [countsLoading, setCountsLoading] = useState(true);
+  const [topMatchOffers, setTopMatchOffers] = useState<OfferMatchResult[]>([]);
 
   // Unread activity badges for NavCards
   const [unreadDirectOffers, setUnreadDirectOffers] = useState(0);
@@ -185,11 +188,13 @@ export default function TechnicianDashboard() {
         activityRepository.getUnreadCount('technician', techId, ['direct_offer_received']),
         activityRepository.getUnreadCount('technician', techId, ['application_accepted', 'application_rejected']),
         activityRepository.getUnreadCount('technician', techId, ['chat_message_received']),
-      ]).then(([docs, reqs, apps, chats, unreadOffers, unreadApps, unreadChatCount]) => {
+        getOfferMatchesForTechnician(techId),
+      ]).then(([docs, reqs, apps, chats, unreadOffers, unreadApps, unreadChatCount, matches]) => {
         setDocumentCount(docs.count ?? 0);
         setPendingDirectOffers(reqs.count ?? 0);
         setPendingApplications(apps.count ?? 0);
         setChatCount(chats.count ?? 0);
+        setTopMatchOffers((matches as OfferMatchResult[]).slice(0, 3));
         setUnreadDirectOffers(unreadOffers as number);
         setUnreadApplications(unreadApps as number);
         setUnreadChats(unreadChatCount as number);
@@ -320,13 +325,44 @@ export default function TechnicianDashboard() {
             ) : null}
 
             <View style={styles.panel}>
-              <SectionTitle label="Recent direct offers" value="Latest" />
-              <View style={styles.emptyRecent}>
-                <Text style={styles.emptyRecentTitle}>No direct offers yet</Text>
-                <Text style={styles.emptyRecentText}>
-                  New company offers will appear here when they arrive.
-                </Text>
-              </View>
+              <SectionTitle label="Recommended for you" value="By match %" />
+              {topMatchOffers.length === 0 ? (
+                <View style={styles.emptyRecent}>
+                  <Text style={styles.emptyRecentTitle}>No offers available</Text>
+                  <Text style={styles.emptyRecentText}>
+                    Published offers matching your profile will appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.matchList}>
+                  {topMatchOffers.map(({ offer, score }) => (
+                    <TouchableOpacity
+                      key={offer.id}
+                      style={styles.matchRow}
+                      onPress={() => router.push(`/technician/offers/${offer.id}` as any)}
+                      activeOpacity={0.75}
+                    >
+                      <View style={styles.matchRowInfo}>
+                        <Text style={styles.matchRowTitle} numberOfLines={1}>{offer.title}</Text>
+                        <Text style={styles.matchRowMeta} numberOfLines={1}>
+                          {offer.locationCity}, {offer.locationCountry}
+                        </Text>
+                      </View>
+                      <View style={styles.matchRowRight}>
+                        <MatchBadge score={score.total} />
+                        <Text style={styles.matchRowArrow}>{'>'}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={styles.matchViewAll}
+                    onPress={() => router.push('/technician/offers' as any)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.matchViewAllText}>View all offers →</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
         </View>
@@ -988,6 +1024,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: ui.text,
+  },
+  matchList: {
+    gap: 4,
+  },
+  matchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: ui.borderSoft,
+    backgroundColor: ui.surfaceSoft,
+    gap: spacing.sm,
+  },
+  matchRowInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  matchRowTitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: ui.text,
+  },
+  matchRowMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '500',
+    color: ui.textMuted,
+  },
+  matchRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  matchRowArrow: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: ui.textMuted,
+  },
+  matchViewAll: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  matchViewAllText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: ui.accent,
   },
   emptyRecentText: {
     fontSize: 12,

@@ -21,7 +21,6 @@ function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
     ...(patch.email !== undefined ? { email: patch.email } : {}),
     ...(patch.companyType !== undefined ? { company_type: patch.companyType } : {}),
-    ...(patch.verificationStatus !== undefined ? { verification_status: patch.verificationStatus } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
   };
 }
@@ -123,17 +122,20 @@ export const companyRepositoryV2 = {
     memberId: string,
     role: CompanyMemberRole,
   ): Promise<CompanyMember> {
-    const { data, error } = await supabase
+    const { error } = await supabase.rpc('update_company_member_role', {
+      p_company_id: companyId,
+      p_member_id: memberId,
+      p_new_role: role,
+    });
+    throwIfError(error);
+    const { data, error: fetchError } = await supabase
       .from('company_members')
-      .update({ role })
+      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
       .eq('id', memberId)
       .eq('company_id', companyId)
-      .select('id, company_id, user_id, role, display_name, created_at, profiles(email)')
       .maybeSingle();
-    throwIfError(error);
-    if (!data) {
-      throw new Error('Member role could not be updated. Check your admin permissions and company membership.');
-    }
+    throwIfError(fetchError);
+    if (!data) throw new Error('Member role could not be updated.');
     return mapCompanyMemberRow(data as any);
   },
 
@@ -157,17 +159,11 @@ export const companyRepositoryV2 = {
   },
 
   async removeMember(companyId: string, memberId: string): Promise<void> {
-    const { data, error } = await supabase
-      .from('company_members')
-      .delete()
-      .eq('id', memberId)
-      .eq('company_id', companyId)
-      .select('id')
-      .maybeSingle();
+    const { error } = await supabase.rpc('remove_company_member', {
+      p_company_id: companyId,
+      p_member_id: memberId,
+    });
     throwIfError(error);
-    if (!data) {
-      throw new Error('Member could not be removed. Check your admin permissions and company membership.');
-    }
   },
 
   async update(id: string, patch: CompanyProfilePatch): Promise<CompanyProfileView | null> {

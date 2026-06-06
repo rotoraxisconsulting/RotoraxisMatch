@@ -74,7 +74,14 @@ export default function CompanySignupScreen() {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
-      options: { data: { role: 'company_user' } },
+      options: {
+        data: {
+          role: 'company_user',
+          company_name: companyName.trim(),
+          company_type: companyType,
+          location_city_id: locationCityId,
+        },
+      },
     });
 
     if (signUpError) {

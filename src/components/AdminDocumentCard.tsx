@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  Linking,
   Text,
   StyleSheet,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Calendar, CheckCircle, Clock, FileCheck, FileText, UserRound, XCircle } from 'lucide-react-native';
+import { Calendar, CheckCircle, Clock, Download, FileCheck, FileText, UserRound, XCircle } from 'lucide-react-native';
+import { getDocumentSignedUrl } from '../lib/documentStorage';
 import type { LucideProps } from 'lucide-react-native';
 import type { DocumentStatus, DocumentType, TechnicianDocument } from '../types';
 import {
@@ -24,6 +27,7 @@ interface Props {
   expiresAt?: string;
   reviewedAt?: string;
   rejectionReason?: string;
+  storagePath?: string;
   onUpdateStatus: (id: string, status: DocumentStatus) => Promise<void>;
 }
 
@@ -88,9 +92,11 @@ export function AdminDocumentCard({
   expiresAt,
   reviewedAt,
   rejectionReason,
+  storagePath,
   onUpdateStatus,
 }: Props) {
   const [loadingStatus, setLoadingStatus] = useState<DocumentStatus | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
 
   async function handleAction(status: DocumentStatus) {
     setLoadingStatus(status);
@@ -99,6 +105,20 @@ export function AdminDocumentCard({
     } finally {
       setLoadingStatus(null);
     }
+  }
+
+  async function handleViewFile() {
+    if (!storagePath) return;
+    setViewLoading(true);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120);
+    setViewLoading(false);
+    if (error || !url) {
+      Alert.alert('Error', error ?? 'Could not generate download link.');
+      return;
+    }
+    Linking.openURL(url).catch(() =>
+      Alert.alert('Error', 'Could not open the document link.'),
+    );
   }
 
   const availableActions = ACTIONS.filter((action) => action.status !== document.status);
@@ -142,12 +162,29 @@ export function AdminDocumentCard({
       ) : null}
 
       <View style={styles.actions}>
+        {storagePath ? (
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.viewBtn, (viewLoading || loadingStatus !== null) && styles.actionBtnDisabled]}
+            onPress={handleViewFile}
+            disabled={viewLoading || loadingStatus !== null}
+            activeOpacity={0.78}
+          >
+            {viewLoading ? (
+              <ActivityIndicator size="small" color={adminUi.accent} />
+            ) : (
+              <>
+                <Download size={15} color={adminUi.accent} strokeWidth={2.2} />
+                <Text style={[styles.actionBtnText, { color: adminUi.accent }]}>View file</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
         {availableActions.map((action) => (
           <StatusActionButton
             key={action.status}
             action={action}
             loading={loadingStatus === action.status}
-            disabled={loadingStatus !== null}
+            disabled={loadingStatus !== null || viewLoading}
             onPress={() => handleAction(action.status)}
           />
         ))}
@@ -306,6 +343,10 @@ const styles = StyleSheet.create({
   },
   actionBtnDisabled: {
     opacity: 0.55,
+  },
+  viewBtn: {
+    borderColor: adminUi.accent + '55',
+    backgroundColor: adminUi.accentSoft,
   },
   actionBtnText: {
     fontSize: 12,

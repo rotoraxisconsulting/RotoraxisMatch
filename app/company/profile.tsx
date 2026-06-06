@@ -265,13 +265,6 @@ export default function CompanyProfileScreen() {
                 <Metric value={sentCount} label="Awaiting reply" tone="warning" />
               </View>
             </CompanyCard>
-
-            <CompanyCard style={styles.noticeCard}>
-              <Text style={styles.noticeTitle}>Live profile</Text>
-              <Text style={styles.noticeText}>
-                Company profile changes are saved to Supabase and reflected in the live workspace.
-              </Text>
-            </CompanyCard>
           </View>
         </View>
 

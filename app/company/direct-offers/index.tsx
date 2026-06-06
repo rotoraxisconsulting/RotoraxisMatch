@@ -269,6 +269,7 @@ export default function DirectOffersScreen() {
                 key={row.id}
                 row={row}
                 isUnread={unreadIds.has(row.id)}
+                onPress={() => router.push(`/company/direct-offers/${row.id}` as any)}
                 onOpenChat={
                   row.chatRoomId
                     ? () => router.push(`/company/chats/${row.chatRoomId}` as any)
@@ -286,10 +287,12 @@ export default function DirectOffersScreen() {
 function DirectOfferCard({
   row,
   isUnread,
+  onPress,
   onOpenChat,
 }: {
   row: DirectOfferRow;
   isUnread: boolean;
+  onPress: () => void;
   onOpenChat?: () => void;
 }) {
   const { label, tone } = statusInfo(row.status);
@@ -297,39 +300,45 @@ function DirectOfferCard({
   const avatarLabel = row.displayName ?? row.anonymousCode ?? '?';
 
   return (
-    <CompanyCard style={[styles.card, isUnread && styles.cardUnread]}>
-      {isUnread ? <ActivityDot /> : null}
+    <TouchableOpacity onPress={onPress} activeOpacity={0.88}>
+      <CompanyCard style={[styles.card, isUnread && styles.cardUnread]}>
+        {isUnread ? <ActivityDot /> : null}
 
-      <View style={styles.cardTop}>
-        <InitialAvatar label={avatarLabel} size={42} color={companyUi.accent} />
-        <View style={styles.cardInfo}>
-          <View style={styles.cardTitleRow}>
-            <Text style={styles.techName} numberOfLines={1}>{techLabel}</Text>
-            <CompanyBadge label={label} tone={tone} small />
+        <View style={styles.cardTop}>
+          <InitialAvatar label={avatarLabel} size={42} color={companyUi.accent} />
+          <View style={styles.cardInfo}>
+            <View style={styles.cardTitleRow}>
+              <Text style={styles.techName} numberOfLines={1}>{techLabel}</Text>
+              <CompanyBadge label={label} tone={tone} small />
+            </View>
+            {row.offerTitle ? (
+              <Text style={styles.offerTitle} numberOfLines={1}>{row.offerTitle}</Text>
+            ) : null}
+            <Text style={styles.dateMeta}>
+              Sent {formatDate(row.createdAt)}
+              {row.status !== 'pending' ? ` · Updated ${formatDate(row.updatedAt)}` : ''}
+            </Text>
           </View>
-          {row.offerTitle ? (
-            <Text style={styles.offerTitle} numberOfLines={1}>{row.offerTitle}</Text>
-          ) : null}
-          <Text style={styles.dateMeta}>
-            Sent {formatDate(row.createdAt)}
-            {row.status !== 'pending' ? ` · Updated ${formatDate(row.updatedAt)}` : ''}
-          </Text>
         </View>
-      </View>
 
-      {row.identityRevealed ? (
-        <View style={styles.revealedBanner}>
-          <Text style={styles.revealedText}>Identity revealed · Contact details available</Text>
-        </View>
-      ) : null}
+        {row.identityRevealed ? (
+          <View style={styles.revealedBanner}>
+            <Text style={styles.revealedText}>Identity revealed · Contact details available</Text>
+          </View>
+        ) : null}
 
-      {onOpenChat ? (
-        <TouchableOpacity style={styles.chatButton} onPress={onOpenChat} activeOpacity={0.75}>
-          <MessageCircle color={companyUi.surface} size={15} strokeWidth={2.2} />
-          <Text style={styles.chatButtonText}>Open chat</Text>
-        </TouchableOpacity>
-      ) : null}
-    </CompanyCard>
+        {onOpenChat ? (
+          <TouchableOpacity
+            style={styles.chatButton}
+            onPress={(e) => { e.stopPropagation?.(); onOpenChat(); }}
+            activeOpacity={0.75}
+          >
+            <MessageCircle color={companyUi.surface} size={15} strokeWidth={2.2} />
+            <Text style={styles.chatButtonText}>Open chat</Text>
+          </TouchableOpacity>
+        ) : null}
+      </CompanyCard>
+    </TouchableOpacity>
   );
 }
 

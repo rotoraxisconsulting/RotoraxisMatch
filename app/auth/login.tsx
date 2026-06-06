@@ -100,6 +100,13 @@ export default function LoginScreen() {
               onSubmitEditing={handleSignIn}
             />
 
+            <TouchableOpacity
+              onPress={() => router.push('/auth/forgot-password' as any)}
+              style={styles.forgotWrap}
+            >
+              <Text style={styles.forgotLink}>Forgot password?</Text>
+            </TouchableOpacity>
+
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             <Button
@@ -208,6 +215,8 @@ const styles = StyleSheet.create({
   },
   createNote: { color: colors.textMuted, fontSize: 13 },
   createLink: { color: colors.cyan, fontSize: 13, fontWeight: '600' },
+  forgotWrap: { alignSelf: 'flex-end', paddingVertical: 4 },
+  forgotLink: { color: colors.cyan, fontSize: 13, fontWeight: '500' },
   footerNote: {
     textAlign: 'center',
     color: colors.textMuted,

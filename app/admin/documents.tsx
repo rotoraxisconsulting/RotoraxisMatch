@@ -172,6 +172,7 @@ export default function AdminDocumentsScreen() {
             expiresAt={documentDetailsMap[item.id]?.expiresAt}
             reviewedAt={documentDetailsMap[item.id]?.reviewedAt}
             rejectionReason={documentDetailsMap[item.id]?.rejectionReason}
+            storagePath={documentDetailsMap[item.id]?.storagePath}
             onUpdateStatus={updateDocumentStatus}
           />
         )}

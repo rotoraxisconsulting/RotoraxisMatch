@@ -89,11 +89,24 @@ export default function TechnicianSignupScreen() {
     setError(null);
     setLoading(true);
 
-    // Step 1: Create auth user — trigger auto-creates profiles row
+    const birthDate = buildDate(birthYear, birthMonth, birthDay)!;
+
+    // Step 1: Create auth user.
+    // All form fields are stored in user_metadata so AuthContext can call
+    // signup_technician() automatically after email confirmation if needed.
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
-      options: { data: { role: 'technician' } },
+      options: {
+        data: {
+          role: 'technician',
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          birth_date: birthDate,
+          technician_type: technicianType,
+          location_city_id: locationCityId,
+        },
+      },
     });
 
     if (signUpError) {
@@ -102,9 +115,10 @@ export default function TechnicianSignupScreen() {
       return;
     }
 
-    // Step 2: If email confirmation is disabled (dev), session is returned immediately
+    // Step 2: If email confirmation is disabled (dev), session exists immediately.
+    // Call the RPC now. When confirmation is enabled, session is null here and
+    // AuthContext.ensureRoleProfile() will call the RPC after confirmation.
     if (data.session) {
-      const birthDate = buildDate(birthYear, birthMonth, birthDay)!;
       const { error: rpcError } = await supabase.rpc('signup_technician', {
         p_first_name: firstName.trim(),
         p_last_name: lastName.trim(),

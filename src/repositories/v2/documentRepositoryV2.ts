@@ -49,19 +49,13 @@ export const documentRepositoryV2 = {
     status: DocumentStatus,
     rejectionReason?: string,
   ): Promise<Document | null> {
-    const update = {
-      status,
-      reviewed_at: status === 'pending' ? null : new Date().toISOString(),
-      rejection_reason: status === 'rejected' ? rejectionReason ?? 'Document rejected' : null,
-    };
-    const { data, error } = await supabase
-      .from('documents')
-      .update(update)
-      .eq('id', id)
-      .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')
-      .maybeSingle();
+    const { error } = await supabase.rpc('admin_update_document_status', {
+      p_document_id: id,
+      p_status: status,
+      p_rejection_reason: rejectionReason ?? null,
+    });
     throwIfError(error);
-    return data ? mapDocumentRow(data as any) : null;
+    return this.getById(id);
   },
 
   async add(doc: Document): Promise<Document> {
@@ -72,7 +66,6 @@ export const documentRepositoryV2 = {
         type: doc.type,
         file_name: doc.fileName,
         storage_path: doc.storagePath,
-        status: doc.status,
         expires_at: doc.expiresAt ?? null,
       })
       .select('id, technician_id, type, file_name, storage_path, status, uploaded_at, reviewed_at, rejection_reason, expires_at')

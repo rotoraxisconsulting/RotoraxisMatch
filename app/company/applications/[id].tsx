@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
+  Linking,
   useWindowDimensions,
   RefreshControl,
   Modal,
@@ -15,6 +17,7 @@ import {
   BriefcaseBusiness,
   CheckCircle,
   ClipboardCheck,
+  Download,
   FileCheck,
   Lock,
   MessageCircle,
@@ -22,6 +25,7 @@ import {
   UserRound,
   XCircle,
 } from 'lucide-react-native';
+import { getDocumentSignedUrl } from '../../../src/lib/documentStorage';
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
@@ -106,6 +110,7 @@ export default function ApplicationDetailScreen() {
   const [chatRoom, setChatRoom] = useState<ChatRoom | null>(null);
   const [confirmAction, setConfirmAction] = useState<'accept' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -158,6 +163,19 @@ export default function ApplicationDetailScreen() {
     if (!app || !id) return;
     setActionError(null);
     setConfirmAction('reject');
+  }
+
+  async function handleViewDoc(docId: string, storagePath: string) {
+    setViewingDocId(docId);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120);
+    setViewingDocId(null);
+    if (error || !url) {
+      Alert.alert('Error', error ?? 'Could not generate download link.');
+      return;
+    }
+    Linking.openURL(url).catch(() =>
+      Alert.alert('Error', 'Could not open the document link.'),
+    );
   }
 
   async function doConfirmAction() {
@@ -345,7 +363,23 @@ export default function ApplicationDetailScreen() {
                       {doc.expiresAt ? ` - Expires ${formatDate(doc.expiresAt)}` : ''}
                     </Text>
                   </View>
-                  <CompanyBadge label={doc.status} tone={doc.status === 'verified' ? 'success' : doc.status === 'pending' ? 'warning' : 'error'} small />
+                  <View style={styles.docActions}>
+                    <CompanyBadge label={doc.status} tone={doc.status === 'verified' ? 'success' : doc.status === 'pending' ? 'warning' : 'error'} small />
+                    {doc.storagePath ? (
+                      <TouchableOpacity
+                        style={styles.viewDocBtn}
+                        onPress={() => handleViewDoc(doc.id, doc.storagePath)}
+                        disabled={viewingDocId !== null}
+                        activeOpacity={0.75}
+                      >
+                        {viewingDocId === doc.id ? (
+                          <ActivityIndicator size="small" color={companyUi.accent} />
+                        ) : (
+                          <Download size={15} color={companyUi.accent} strokeWidth={2.2} />
+                        )}
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
                 </View>
               ))
             )
@@ -625,6 +659,22 @@ const styles = StyleSheet.create({
   docInfo: {
     flex: 1,
     minWidth: 0,
+  },
+  docActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    flexShrink: 0,
+  },
+  viewDocBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: companyUi.accent + '44',
+    backgroundColor: companyUi.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   docName: {
     fontSize: 13,

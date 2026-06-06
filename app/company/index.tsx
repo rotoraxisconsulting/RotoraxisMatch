@@ -100,7 +100,7 @@ function roleLabel(role: string): string {
 
 export default function CompanyDashboard() {
   const router = useRouter();
-  const { profile, loading: authLoading } = useAuth();
+  const { profile, session, loading: authLoading } = useAuth();
   const { companyId, companyMemberRole } = useCompanySession();
   const { sessionLoading } = useSession();
   const { width } = useWindowDimensions();
@@ -109,6 +109,7 @@ export default function CompanyDashboard() {
   const canViewTeam = canManageCompanyMembers(companyMemberRole);
 
   const [supabaseCompany, setSupabaseCompany] = useState<SupabaseCompany | null>(null);
+  const [memberDisplayName, setMemberDisplayName] = useState<string>('');
   const [pendingApplications, setPendingApplications] = useState(0);
   const [chatCount, setChatCount] = useState(0);
   const [pendingDirectOffers, setPendingDirectOffers] = useState(0);
@@ -152,6 +153,18 @@ export default function CompanyDashboard() {
           });
         }
       });
+
+    if (profile?.id) {
+      supabase
+        .from('company_members')
+        .select('display_name')
+        .eq('user_id', profile.id)
+        .eq('company_id', companyId)
+        .maybeSingle()
+        .then(({ data }) => {
+          setMemberDisplayName(data?.display_name ?? '');
+        });
+    }
 
     Promise.all([
       supabase.from('offer_applications').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'pending'),
@@ -235,7 +248,8 @@ export default function CompanyDashboard() {
     },
   ];
 
-  const cardWidthStyle = isNarrow ? styles.actionFull : styles.actionHalf;
+  // Always full-width on mobile — 2-column grid truncates card titles on small screens
+  const cardWidthStyle = styles.actionFull;
 
   return (
     <CompanyScreen>
@@ -256,6 +270,7 @@ export default function CompanyDashboard() {
             {supabaseCompany ? (
               <CompanyProfilePanel
                 company={supabaseCompany}
+                memberName={memberDisplayName || session?.user?.email || ''}
                 teamMembers={teamMembers}
                 canViewTeam={canViewTeam}
                 companyMemberRole={companyMemberRole}
@@ -347,12 +362,14 @@ export default function CompanyDashboard() {
 
 function CompanyProfilePanel({
   company,
+  memberName,
   teamMembers,
   canViewTeam,
   companyMemberRole,
   onProfilePress,
 }: {
   company: SupabaseCompany;
+  memberName: string;
   teamMembers: number;
   canViewTeam: boolean;
   companyMemberRole: string;
@@ -366,9 +383,11 @@ function CompanyProfilePanel({
           <Building2 color={colors.white} size={24} strokeWidth={2} />
         </View>
         <View style={styles.profileIdentity}>
-          <Text style={styles.companyName} numberOfLines={1}>{company.name}</Text>
+          <Text style={styles.companyName} numberOfLines={1}>
+            {memberName || company.name}
+          </Text>
           <Text style={styles.companyMeta} numberOfLines={1}>
-            {COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType}
+            {memberName ? company.name : (COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType)}
           </Text>
         </View>
       </View>
@@ -771,37 +790,37 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   railActions: { gap: spacing.sm },
-  actionHalf: { width: '48.5%' },
   actionFull: { width: '100%' },
   actionCard: {
-    minHeight: 82,
+    minHeight: 62,
     backgroundColor: companyUi.surface,
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: companyUi.border,
-    padding: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
+    gap: 12,
   },
   actionCopy: { flex: 1, minWidth: 0 },
   actionTitle: {
     fontSize: 14,
-    lineHeight: 18,
+    lineHeight: 19,
     fontWeight: '700',
     color: companyUi.text,
   },
   actionSubtitle: {
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '600',
+    fontWeight: '500',
     color: companyUi.textSoft,
-    marginTop: 3,
+    marginTop: 2,
   },
   chevron: {
-    fontSize: 17,
+    fontSize: 16,
     lineHeight: 20,
-    fontWeight: '700',
+    fontWeight: '600',
     color: companyUi.textMuted,
   },
   sectionHeader: {

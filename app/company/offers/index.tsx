@@ -36,6 +36,7 @@ import { offerApplicationRepository } from '../../../src/repositories/v2/offerAp
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { useCompanySession } from '../../../src/state/SessionContext';
+import { canManageOffers } from '../../../src/utils/companyPermissionsV2';
 
 type OfferCounts = {
   applications: number;
@@ -77,7 +78,8 @@ export default function OffersListScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId } = useCompanySession();
+  const { companyId, companyMemberRole } = useCompanySession();
+  const canManage = canManageOffers(companyMemberRole);
 
   const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
   const [counts, setCounts] = useState<Record<string, OfferCounts>>({});
@@ -148,7 +150,7 @@ export default function OffersListScreen() {
           title="Job Offers"
           subtitle={`${offers.length} total · ${published.length} published · ${drafts.length} draft${drafts.length !== 1 ? 's' : ''}`}
           onBack={() => router.back()}
-          right={(
+          right={canManage ? (
             <TouchableOpacity
               style={styles.newButton}
               onPress={() => router.push('/company/offers/new' as any)}
@@ -157,7 +159,7 @@ export default function OffersListScreen() {
               <Plus color={colors.white} size={17} strokeWidth={2.2} />
               <Text style={styles.newButtonText}>New</Text>
             </TouchableOpacity>
-          )}
+          ) : undefined}
         />
 
         {offers.length === 0 ? (
@@ -167,7 +169,7 @@ export default function OffersListScreen() {
           />
         ) : null}
 
-        {offers.length === 0 ? (
+        {offers.length === 0 && canManage ? (
           <Button
             label="Create offer"
             onPress={() => router.push('/company/offers/new' as any)}

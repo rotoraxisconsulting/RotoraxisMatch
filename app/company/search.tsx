@@ -35,6 +35,7 @@ import {
 } from '../../src/components/company/CompanyUI';
 import { useTechnicianSearch } from '../../src/state/useTechnicianSearch';
 import { useCompanySession } from '../../src/state/SessionContext';
+import { canSendDirectOffers } from '../../src/utils/companyPermissionsV2';
 import { isOfferOpenForTechnicians, offerRepository } from '../../src/repositories/v2/offerRepository';
 import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
@@ -90,7 +91,8 @@ export default function TechnicianSearchScreen() {
   const isWide = width >= 960;
   const { results, filters, loading, hasSearched, updateFilter, clearFilters, search } =
     useTechnicianSearch();
-  const { companyId } = useCompanySession();
+  const { companyId, companyMemberRole } = useCompanySession();
+  const canSendRole = canSendDirectOffers(companyMemberRole);
   const { offerId: preselectedOfferId } = useLocalSearchParams<{ offerId?: string }>();
 
   const [aircraftCatFilter, setAircraftCatFilter] = useState<AircraftCategory | 'all'>('all');
@@ -430,6 +432,7 @@ export default function TechnicianSearchScreen() {
             activeOfferRequest={getActiveOfferRequest(item.id)}
             onSendOffer={() => handleSendOffer(item.id)}
             sendingThis={sendingTechId === item.id}
+            canSendRole={canSendRole}
           />
         )}
       />
@@ -469,6 +472,7 @@ function TechnicianResultCard({
   activeOfferRequest,
   onSendOffer,
   sendingThis,
+  canSendRole,
 }: {
   technician: SafeTechnicianView;
   preview?: SafeTechnicianPreview;
@@ -477,6 +481,7 @@ function TechnicianResultCard({
   activeOfferRequest: OfferRequest | undefined;
   onSendOffer: () => void;
   sendingThis: boolean;
+  canSendRole: boolean;
 }) {
   const displayName = technician.fullName ?? technician.anonymousCode;
   const technicianType = preview?.technicianType
@@ -488,18 +493,8 @@ function TechnicianResultCard({
     : technician.aircraftTypes;
   const aircraftCat = aircraftChips.length > 0 ? inferAircraftCategory(aircraftChips) : null;
 
-  // Footer button state
-  const canSend = selectedOffer !== null && !activeOfferRequest && !sendingThis;
-  const isStatic = !canSend || sendingThis;
-
-  let actionLabel = 'Send offer';
-  if (!selectedOffer) {
-    actionLabel = 'Select an offer first';
-  } else if (sendingThis) {
-    actionLabel = 'Sending...';
-  } else if (activeOfferRequest) {
-    actionLabel = offerRequestBadgeLabel(activeOfferRequest.status);
-  }
+  // Footer button state — role gates the send action entirely
+  const canSend = canSendRole && selectedOffer !== null && !activeOfferRequest && !sendingThis;
 
   return (
     <CompanyCard style={styles.resultCard}>
@@ -605,11 +600,15 @@ function TechnicianResultCard({
               </>
             )}
           </TouchableOpacity>
-        ) : (
-          <View style={[styles.requestStatic, !selectedOffer && styles.requestStaticDimmed]}>
-            <Text style={styles.requestStaticText}>{actionLabel}</Text>
+        ) : activeOfferRequest ? (
+          <View style={styles.requestStatic}>
+            <Text style={styles.requestStaticText}>{offerRequestBadgeLabel(activeOfferRequest.status)}</Text>
           </View>
-        )}
+        ) : canSendRole ? (
+          <View style={[styles.requestStatic, styles.requestStaticDimmed]}>
+            <Text style={styles.requestStaticText}>Select an offer first</Text>
+          </View>
+        ) : null}
       </View>
     </CompanyCard>
   );

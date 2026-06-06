@@ -47,7 +47,7 @@ import { getTechnicianMatchesForOffer, TechnicianMatchResult } from '../../../sr
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest';
 import { useCompanySession } from '../../../src/state/SessionContext';
-import { canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
+import { canManageOffers, canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
 
@@ -364,6 +364,7 @@ export default function OfferDetailScreen() {
 
   const selectedTech = selectedTechId ? orderedMatches.find((m) => m.technician.id === selectedTechId) : null;
   const offerCanReceiveDirectOffers = isOfferOpenForTechnicians(offer);
+  const canManage = canManageOffers(companyMemberRole);
   const canSend = canSendDirectOffers(companyMemberRole) && offerCanReceiveDirectOffers;
 
   return (
@@ -413,52 +414,54 @@ export default function OfferDetailScreen() {
           <RequirementRow label="Aircraft types" items={offer.requiredAircraftTypes} />
         </CompanyCard>
 
-        <CompanyCard style={styles.sectionCard}>
-          <SectionTitle title="Status and actions" />
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => router.push(`/company/offers/edit?id=${offer.id}` as any)}
-              activeOpacity={0.75}
-            >
-              <Edit3 color={companyUi.textSoft} size={15} strokeWidth={2} />
-              <Text style={styles.secondaryButtonText}>Edit offer</Text>
-            </TouchableOpacity>
-            {offer.status === 'draft' ? (
+        {canManage ? (
+          <CompanyCard style={styles.sectionCard}>
+            <SectionTitle title="Actions" />
+            <View style={styles.actionRow}>
               <TouchableOpacity
-                style={[styles.primaryButton, statusChanging && styles.btnDisabled]}
-                onPress={handlePublish}
-                disabled={statusChanging}
+                style={styles.secondaryButton}
+                onPress={() => router.push(`/company/offers/edit?id=${offer.id}` as any)}
                 activeOpacity={0.75}
               >
-                {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <CheckCircle color={colors.white} size={16} strokeWidth={2} />}
-                <Text style={styles.primaryButtonText}>Publish</Text>
+                <Edit3 color={companyUi.textSoft} size={15} strokeWidth={2} />
+                <Text style={styles.secondaryButtonText}>Edit offer</Text>
               </TouchableOpacity>
-            ) : null}
-            {offer.status === 'closed' ? (
-              <TouchableOpacity
-                style={[styles.primaryButton, statusChanging && styles.btnDisabled]}
-                onPress={handlePublish}
-                disabled={statusChanging}
-                activeOpacity={0.75}
-              >
-                {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <CheckCircle color={colors.white} size={16} strokeWidth={2} />}
-                <Text style={styles.primaryButtonText}>Reopen offer</Text>
-              </TouchableOpacity>
-            ) : null}
-            {offer.status === 'published' ? (
-              <TouchableOpacity
-                style={[styles.dangerButton, statusChanging && styles.btnDisabled]}
-                onPress={handleClose}
-                disabled={statusChanging}
-                activeOpacity={0.75}
-              >
-                {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <XCircle color={colors.white} size={16} strokeWidth={2} />}
-                <Text style={styles.primaryButtonText}>Close offer</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </CompanyCard>
+              {offer.status === 'draft' ? (
+                <TouchableOpacity
+                  style={[styles.primaryButton, statusChanging && styles.btnDisabled]}
+                  onPress={handlePublish}
+                  disabled={statusChanging}
+                  activeOpacity={0.75}
+                >
+                  {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <CheckCircle color={colors.white} size={16} strokeWidth={2} />}
+                  <Text style={styles.primaryButtonText}>Publish</Text>
+                </TouchableOpacity>
+              ) : null}
+              {offer.status === 'closed' ? (
+                <TouchableOpacity
+                  style={[styles.primaryButton, statusChanging && styles.btnDisabled]}
+                  onPress={handlePublish}
+                  disabled={statusChanging}
+                  activeOpacity={0.75}
+                >
+                  {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <CheckCircle color={colors.white} size={16} strokeWidth={2} />}
+                  <Text style={styles.primaryButtonText}>Reopen offer</Text>
+                </TouchableOpacity>
+              ) : null}
+              {offer.status === 'published' ? (
+                <TouchableOpacity
+                  style={[styles.dangerButton, statusChanging && styles.btnDisabled]}
+                  onPress={handleClose}
+                  disabled={statusChanging}
+                  activeOpacity={0.75}
+                >
+                  {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <XCircle color={colors.white} size={16} strokeWidth={2} />}
+                  <Text style={styles.primaryButtonText}>Close offer</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </CompanyCard>
+        ) : null}
 
         <View style={styles.matchesHeader}>
           <Text style={styles.matchesTitle}>Technician matches</Text>
@@ -582,12 +585,7 @@ export default function OfferDetailScreen() {
                   <XCircle color={companyUi.textMuted} size={16} strokeWidth={2} />
                   <Text style={styles.stateNoticeText}>Closed offers cannot be sent privately</Text>
                 </View>
-              ) : (
-                <View style={styles.stateNotice}>
-                  <Clock color={companyUi.textMuted} size={16} strokeWidth={2} />
-                  <Text style={styles.stateNoticeText}>Viewer role cannot send offers</Text>
-                </View>
-              )}
+              ) : null}
             </CompanyCard>
           );
         })}

@@ -61,19 +61,9 @@ export const chatRepository = {
     const { data: existing, error: existingError } = await existingQuery.maybeSingle();
     throwIfError(existingError);
     if (existing) return mapChatRoomRow(existing as any);
-
-    const { data, error } = await supabase
-      .from('chat_rooms')
-      .insert({
-        offer_request_id: input.offerRequestId ?? null,
-        offer_application_id: input.offerApplicationId ?? null,
-        technician_id: input.technicianId,
-        company_id: input.companyId,
-      })
-      .select(ROOM_FIELDS)
-      .single();
-    throwIfError(error);
-    return mapChatRoomRow(data as any);
+    // Chat rooms are created server-side by the acceptance trigger.
+    // If not found here, the offer has not been accepted yet.
+    throw new Error('Chat room not available. The offer must be accepted before chatting.');
   },
 
   async getMessages(chatRoomId: string): Promise<ChatMessage[]> {

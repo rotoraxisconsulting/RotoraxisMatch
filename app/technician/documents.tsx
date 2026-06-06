@@ -1,13 +1,16 @@
-﻿import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
+  ActivityIndicator,
   Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
   useWindowDimensions,
+  View,
 } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Button } from '../../src/components/Button';
 import {
@@ -20,46 +23,50 @@ import {
   techUi,
 } from '../../src/components/technician/TechnicianUI';
 import { useTechnicianDashboard } from '../../src/state/useTechnicianDashboard';
+import { useTechnicianSession } from '../../src/state/SessionContext';
+import { documentRepositoryV2 } from '../../src/repositories/v2/documentRepositoryV2';
+import {
+  validateDocumentFile,
+  uploadDocumentToStorage,
+} from '../../src/lib/documentStorage';
 import { colors, spacing } from '../../src/theme';
-import { DocumentStatus, DocumentType, TechnicianDocument } from '../../src/types';
+import type { DocumentStatus, DocumentType, TechnicianDocument } from '../../src/types';
 
 const TYPE_LABELS: Record<DocumentType, string> = {
-  license: 'License',
-  medical: 'Medical',
+  license:  'License',
+  medical:  'Medical',
   training: 'Training',
-  id: 'ID',
-  resume: 'Resume',
-  other: 'Other',
+  id:       'ID',
+  resume:   'Resume',
+  other:    'Other',
 };
 
 const TYPE_TONES: Record<DocumentType, 'navy' | 'cyan' | 'info' | 'muted'> = {
-  license: 'navy',
-  medical: 'cyan',
+  license:  'navy',
+  medical:  'cyan',
   training: 'info',
-  id: 'muted',
-  resume: 'muted',
-  other: 'muted',
+  id:       'muted',
+  resume:   'muted',
+  other:    'muted',
 };
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   verified: 'Verified',
-  pending: 'Under review',
+  pending:  'Under review',
   rejected: 'Rejected',
-  expired: 'Expired',
+  expired:  'Expired',
 };
 
 const STATUS_TONES: Record<DocumentStatus, 'success' | 'warning' | 'error' | 'muted'> = {
   verified: 'success',
-  pending: 'warning',
+  pending:  'warning',
   rejected: 'error',
-  expired: 'error',
+  expired:  'error',
 };
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+    day: '2-digit', month: 'short', year: 'numeric',
   });
 }
 
@@ -72,19 +79,11 @@ function DocumentPanel({ document }: { document: TechnicianDocument }) {
       <View style={styles.documentTop}>
         <View style={styles.documentInfo}>
           <View style={styles.badgeRow}>
-            <TechnicianBadge
-              label={TYPE_LABELS[document.type]}
-              tone={TYPE_TONES[document.type]}
-              small
-            />
+            <TechnicianBadge label={TYPE_LABELS[document.type]} tone={TYPE_TONES[document.type]} small />
           </View>
           <Text style={styles.fileName} numberOfLines={2}>{document.fileName}</Text>
         </View>
-        <TechnicianBadge
-          label={STATUS_LABELS[document.status]}
-          tone={STATUS_TONES[document.status]}
-          small
-        />
+        <TechnicianBadge label={STATUS_LABELS[document.status]} tone={STATUS_TONES[document.status]} small />
       </View>
 
       <View style={styles.documentMeta}>
@@ -110,9 +109,16 @@ function DocumentPanel({ document }: { document: TechnicianDocument }) {
 
 export default function TechnicianDocumentsScreen() {
   const router = useRouter();
+  const { technicianId } = useTechnicianSession();
   const { documents, loading, refresh } = useTechnicianDashboard();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadType, setUploadType] = useState<DocumentType | null>(null);
+  const [pickedFile, setPickedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -121,15 +127,77 @@ export default function TechnicianDocumentsScreen() {
   );
 
   const verifiedCount = documents.filter((d) => d.status === 'verified').length;
-  const pendingCount = documents.filter((d) => d.status === 'pending').length;
+  const pendingCount  = documents.filter((d) => d.status === 'pending').length;
   const attentionCount = documents.filter((d) => d.status === 'rejected' || d.status === 'expired').length;
 
-  function handleUploadPress() {
-    Alert.alert(
-      'Document Upload',
-      'Document upload will be available in a future release. Documents are currently managed through the verification process.',
-      [{ text: 'OK' }],
+  async function handlePickFile() {
+    setUploadError(null);
+    let result: DocumentPicker.DocumentPickerResult;
+    try {
+      result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+        copyToCacheDirectory: true,
+      });
+    } catch {
+      setUploadError('Could not open file picker. Please try again.');
+      return;
+    }
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    const validationError = validateDocumentFile(asset.mimeType, asset.name, asset.size);
+    if (validationError) {
+      setUploadError(validationError);
+      return;
+    }
+    setPickedFile(asset);
+  }
+
+  async function handleUpload() {
+    if (!uploadType || !pickedFile || !technicianId) return;
+    setUploading(true);
+    setUploadError(null);
+
+    const { storagePath, error: storageError } = await uploadDocumentToStorage(
+      pickedFile.uri,
+      pickedFile.mimeType,
+      pickedFile.name,
+      technicianId,
     );
+
+    if (storageError) {
+      setUploadError(`Upload failed: ${storageError}`);
+      setUploading(false);
+      return;
+    }
+
+    try {
+      await documentRepositoryV2.add({
+        id: '',
+        technicianId,
+        type: uploadType,
+        fileName: pickedFile.name,
+        storagePath,
+        status: 'pending',
+        uploadedAt: new Date().toISOString(),
+      });
+      setUploadOpen(false);
+      setUploadType(null);
+      setPickedFile(null);
+      await refresh();
+    } catch (err) {
+      setUploadError(
+        err instanceof Error ? err.message : 'Failed to save document record.',
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handleCancelUpload() {
+    setUploadOpen(false);
+    setUploadType(null);
+    setPickedFile(null);
+    setUploadError(null);
   }
 
   if (loading && documents.length === 0) {
@@ -153,7 +221,7 @@ export default function TechnicianDocumentsScreen() {
         <TechnicianPageHeader
           eyebrow="Verification"
           title="My Documents"
-          subtitle="Track licenses, certificates and verification documents on file."
+          subtitle="Upload licenses, certificates and verification documents."
           onBack={() => router.back()}
         />
 
@@ -176,18 +244,77 @@ export default function TechnicianDocumentsScreen() {
           </View>
         </TechnicianCard>
 
-        <Button
-          label="Upload Document"
-          variant="outline"
-          onPress={handleUploadPress}
-          fullWidth
-          style={styles.uploadBtn}
-        />
+        {/* ── Upload section ─────────────────────────────── */}
+        {uploadOpen ? (
+          <TechnicianCard style={styles.uploadCard}>
+            <Text style={styles.uploadTitle}>Upload document</Text>
 
+            {/* Type selector */}
+            <Text style={styles.uploadLabel}>Document type</Text>
+            <View style={styles.typeChips}>
+              {(Object.keys(TYPE_LABELS) as DocumentType[]).map((type) => (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.typeChip, uploadType === type && styles.typeChipSelected]}
+                  onPress={() => setUploadType(type)}
+                  disabled={uploading}
+                >
+                  <Text style={[styles.typeChipText, uploadType === type && styles.typeChipTextSelected]}>
+                    {TYPE_LABELS[type]}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* File picker */}
+            <TouchableOpacity
+              style={[styles.filePickerBtn, uploading && styles.filePickerBtnDisabled]}
+              onPress={handlePickFile}
+              disabled={uploading}
+              activeOpacity={0.75}
+            >
+              <Text style={styles.filePickerBtnText} numberOfLines={1}>
+                {pickedFile ? pickedFile.name : 'Choose file  ·  PDF, JPG, PNG — max 5 MB'}
+              </Text>
+            </TouchableOpacity>
+
+            {uploadError ? (
+              <Text style={styles.uploadError}>{uploadError}</Text>
+            ) : null}
+
+            {/* Actions */}
+            <Button
+              label={uploading ? 'Uploading…' : 'Upload'}
+              onPress={handleUpload}
+              loading={uploading}
+              disabled={!uploadType || !pickedFile || uploading}
+              fullWidth
+              size="md"
+              style={styles.uploadSubmitBtn}
+            />
+            <TouchableOpacity
+              onPress={handleCancelUpload}
+              disabled={uploading}
+              style={styles.cancelLink}
+            >
+              <Text style={styles.cancelLinkText}>Cancel</Text>
+            </TouchableOpacity>
+          </TechnicianCard>
+        ) : (
+          <Button
+            label="Upload Document"
+            variant="outline"
+            onPress={() => setUploadOpen(true)}
+            fullWidth
+            style={styles.uploadBtn}
+          />
+        )}
+
+        {/* ── Document list ──────────────────────────────── */}
         {documents.length === 0 ? (
           <EmptyPanel
             title="No documents on file"
-            subtitle="Upload will be available later. Documents are currently managed through verification."
+            subtitle="Upload your licenses and certificates to start the verification process."
           />
         ) : (
           <View style={styles.listBlock}>
@@ -209,46 +336,82 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.md,
   },
-  summaryItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-  },
-  summaryValue: {
-    fontSize: 25,
-    lineHeight: 31,
-    fontWeight: '700',
-  },
+  summaryItem: { flex: 1, alignItems: 'center', gap: 3 },
+  summaryValue: { fontSize: 25, lineHeight: 31, fontWeight: '700' },
   summaryLabel: {
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '600',
-    color: techUi.textMuted,
-    textAlign: 'center',
+    fontSize: 11, lineHeight: 15, fontWeight: '600',
+    color: techUi.textMuted, textAlign: 'center',
   },
-  summaryDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: techUi.borderSoft,
-  },
+  summaryDivider: { width: 1, height: 40, backgroundColor: techUi.borderSoft },
+
+  // Upload button (collapsed state)
   uploadBtn: {
     marginBottom: spacing.lg,
     borderColor: techUi.accent,
     borderRadius: 16,
   },
-  listBlock: {
-    gap: spacing.sm,
+
+  // Upload form card (expanded state)
+  uploadCard: { gap: spacing.md, marginBottom: spacing.lg },
+  uploadTitle: {
+    fontSize: 16, lineHeight: 21, fontWeight: '700', color: techUi.text,
   },
+  uploadLabel: {
+    fontSize: 12, lineHeight: 16, fontWeight: '600',
+    color: techUi.textMuted, marginBottom: -4,
+  },
+  typeChips: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs,
+  },
+  typeChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.surfaceSoft,
+  },
+  typeChipSelected: {
+    borderColor: techUi.accent,
+    backgroundColor: techUi.accent + '22',
+  },
+  typeChipText: {
+    fontSize: 13, lineHeight: 18, fontWeight: '600', color: techUi.textMuted,
+  },
+  typeChipTextSelected: { color: techUi.accent },
+  filePickerBtn: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed' as const,
+    borderColor: techUi.accent,
+    backgroundColor: techUi.surfaceSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  filePickerBtnDisabled: { opacity: 0.5 },
+  filePickerBtnText: {
+    fontSize: 13, lineHeight: 18, fontWeight: '600', color: techUi.accent,
+  },
+  uploadError: {
+    fontSize: 13, lineHeight: 18, fontWeight: '500',
+    color: techUi.red, textAlign: 'center',
+  },
+  uploadSubmitBtn: { marginTop: 2 },
+  cancelLink: { alignSelf: 'center', paddingVertical: 4 },
+  cancelLinkText: {
+    fontSize: 13, lineHeight: 18, fontWeight: '600', color: techUi.textMuted,
+  },
+
+  // Document list
+  listBlock: { gap: spacing.sm },
   listTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-    color: techUi.text,
-    marginBottom: 2,
+    fontSize: 15, lineHeight: 20, fontWeight: '700',
+    color: techUi.text, marginBottom: 2,
   },
-  documentCard: {
-    gap: spacing.md,
-  },
+  documentCard: { gap: spacing.md },
   rejectionNote: {
     backgroundColor: '#FEF2F2',
     borderRadius: 10,
@@ -258,66 +421,37 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   rejectionLabel: {
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '700',
-    color: techUi.red,
-    marginBottom: 3,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
+    fontSize: 11, lineHeight: 14, fontWeight: '700',
+    color: techUi.red, marginBottom: 3,
+    textTransform: 'uppercase' as const, letterSpacing: 0.5,
   },
   rejectionText: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '500',
-    color: techUi.textSoft,
+    fontSize: 12, lineHeight: 17, fontWeight: '500', color: techUi.textSoft,
   },
   documentTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: spacing.md,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', gap: spacing.md,
   },
-  documentInfo: {
-    flex: 1,
-    minWidth: 0,
-    gap: spacing.xs,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-  },
+  documentInfo: { flex: 1, minWidth: 0, gap: spacing.xs },
+  badgeRow: { flexDirection: 'row' },
   fileName: {
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: '700',
-    color: techUi.text,
+    fontSize: 15, lineHeight: 21, fontWeight: '700', color: techUi.text,
   },
   documentMeta: {
-    flexDirection: 'row',
-    gap: spacing.sm,
+    flexDirection: 'row', gap: spacing.sm,
     paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: techUi.borderSoft,
+    borderTopWidth: 1, borderTopColor: techUi.borderSoft,
   },
   metaItem: {
-    flex: 1,
-    minWidth: 0,
-    borderRadius: 14,
+    flex: 1, minWidth: 0, borderRadius: 14,
     backgroundColor: techUi.surfaceSoft,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
   },
   metaLabel: {
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '600',
-    color: techUi.textMuted,
-    marginBottom: 2,
+    fontSize: 11, lineHeight: 14, fontWeight: '600',
+    color: techUi.textMuted, marginBottom: 2,
   },
   metaValue: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: techUi.textSoft,
+    fontSize: 12, lineHeight: 16, fontWeight: '700', color: techUi.textSoft,
   },
 });

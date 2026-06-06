@@ -9,7 +9,6 @@ import {
   MatchRequest,
   VerificationStatus,
   DocumentStatus,
-  UserStatus,
 } from '../types';
 import { OfferWithRequirements } from '../types/offer';
 import { OfferRequest, OfferApplication } from '../types/offerRequest';
@@ -27,11 +26,6 @@ import {
   v2OfferRequestToMatchRequest,
 } from '../utils/v2CompatAdapters';
 
-const PROFILE_STATUS_BY_VERIFICATION: Record<VerificationStatus, UserStatus> = {
-  verified: 'active',
-  pending: 'pending_verification',
-  rejected: 'suspended',
-};
 
 export interface AdminMetrics {
   totalTechnicians: number;
@@ -172,100 +166,24 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
 
   const updateTechnicianVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
-      let technicianUpdated = false;
-      try {
-        const profileStatus = PROFILE_STATUS_BY_VERIFICATION[status];
-
-        const { data: technicianProfile, error: technicianError } = await supabase
-          .from('technician_profiles')
-          .update({ verification_status: status })
-          .eq('id', id)
-          .select('user_id')
-          .maybeSingle();
-        if (technicianError) {
-          throw new Error(`Could not update technician verification status: ${technicianError.message}`);
-        }
-        technicianUpdated = true;
-
-        const userId = technicianProfile?.user_id;
-        if (!userId) {
-          throw new Error('Technician was updated, but no linked user profile was found to sync.');
-        }
-
-        const { error: profilesError } = await supabase
-          .from('profiles')
-          .update({ status: profileStatus })
-          .eq('id', userId);
-        if (profilesError) {
-          throw new Error(`Technician was updated, but profile status could not be synced: ${profilesError.message}`);
-        }
-
-        await load();
-      } catch (error) {
-        if (technicianUpdated) {
-          try {
-            await load();
-          } catch {
-            // Keep the original sync error visible to the admin.
-          }
-        }
-        throw error;
-      }
+      const { error } = await supabase.rpc('admin_update_technician_verification', {
+        p_technician_id: id,
+        p_status: status,
+      });
+      if (error) throw new Error(`Could not update technician verification: ${error.message}`);
+      await load();
     },
     [load],
   );
 
   const updateCompanyVerification = useCallback(
     async (id: string, status: VerificationStatus) => {
-      let companyUpdated = false;
-      try {
-        const profileStatus = PROFILE_STATUS_BY_VERIFICATION[status];
-
-        const { error: companyError } = await supabase
-          .from('companies')
-          .update({ verification_status: status })
-          .eq('id', id);
-        if (companyError) {
-          throw new Error(`Could not update company verification status: ${companyError.message}`);
-        }
-        companyUpdated = true;
-
-        const { data: members, error: membersError } = await supabase
-          .from('company_members')
-          .select('user_id')
-          .eq('company_id', id)
-          .eq('role', 'admin');
-        if (membersError) {
-          throw new Error(`Company was updated, but admin members could not be loaded: ${membersError.message}`);
-        }
-
-        const userIds = (members ?? [])
-          .map((member) => member.user_id)
-          .filter((userId): userId is string => Boolean(userId));
-
-        if (userIds.length === 0) {
-          throw new Error('Company was updated, but no admin member profile was found to sync.');
-        }
-
-        const { error: profilesError } = await supabase
-          .from('profiles')
-          .update({ status: profileStatus })
-          .in('id', userIds);
-        if (profilesError) {
-          throw new Error(`Company was updated, but profile status could not be synced: ${profilesError.message}`);
-        }
-
-        await load();
-      } catch (error) {
-        if (companyUpdated) {
-          try {
-            await load();
-          } catch {
-            // Keep the original sync error visible to the admin.
-          }
-        }
-        throw error;
-      }
+      const { error } = await supabase.rpc('admin_update_company_verification', {
+        p_company_id: id,
+        p_status: status,
+      });
+      if (error) throw new Error(`Could not update company verification: ${error.message}`);
+      await load();
     },
     [load],
   );
