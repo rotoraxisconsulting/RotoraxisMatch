@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 008: Restrict profiles UPDATE
+-- AviationJobTalent V2 — Migration 008: Restrict profiles UPDATE
 -- ============================================================
 -- Created: 2026-06-06
 --

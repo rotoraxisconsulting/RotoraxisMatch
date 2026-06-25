@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import { File as FsFile } from 'expo-file-system';
 import { supabase } from './supabase';
 
 const BUCKET = 'technician-documents';
@@ -55,12 +57,23 @@ export async function uploadDocumentToStorage(
     const storagePath = `${technicianId}/${uid}.${ext}`;
     const resolvedMime = mimeType ?? mimeFromName(name) ?? 'application/octet-stream';
 
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    let uploadBody: Blob | Uint8Array;
+
+    if (Platform.OS === 'web') {
+      // On web, fetch(uri) works normally — data URIs and blob URLs are supported.
+      const response = await fetch(uri);
+      uploadBody = await response.blob();
+    } else {
+      // On iOS/Android, fetch() on a local file:// URI returns an empty body.
+      // Use expo-file-system File.arrayBuffer() to read the actual bytes.
+      const fsFile = new FsFile(uri);
+      const buffer = await fsFile.arrayBuffer();
+      uploadBody = new Uint8Array(buffer);
+    }
 
     const { error } = await supabase.storage
       .from(BUCKET)
-      .upload(storagePath, blob, { contentType: resolvedMime, upsert: false });
+      .upload(storagePath, uploadBody, { contentType: resolvedMime, upsert: false });
 
     if (error) return { storagePath: '', error: error.message };
     return { storagePath, error: null };

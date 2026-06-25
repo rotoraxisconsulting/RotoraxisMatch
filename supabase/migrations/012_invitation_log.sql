@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 012: Invitation log for rate limiting
+-- AviationJobTalent V2 — Migration 012: Invitation log for rate limiting
 -- ============================================================
 -- Created: 2026-06-06
 --

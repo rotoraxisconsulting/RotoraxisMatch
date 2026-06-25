@@ -363,7 +363,7 @@ export default function OfferDetailScreen() {
             />
 
             <Text style={modalStyles.privacyNote}>
-              Your identity will remain anonymous until the company accepts your application.
+              Do not include your real name or contact details. Your identity will remain anonymous until the company accepts your application.
             </Text>
 
             <View style={modalStyles.actions}>

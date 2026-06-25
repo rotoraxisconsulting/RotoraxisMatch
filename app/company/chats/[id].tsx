@@ -182,6 +182,12 @@ export default function CompanyChatDetailScreen() {
             </View>
             <CompanyBadge label="Active" tone="success" small />
           </CompanyCard>
+
+          <CompanyCard style={styles.privacyBanner}>
+            <Text style={styles.privacyBannerText}>
+              🔓 Identity revealed — this technician's identity and admin-verified documents are visible to your company. Messages are private between both parties.
+            </Text>
+          </CompanyCard>
         </View>
 
         <ScrollView
@@ -414,5 +420,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: companyUi.textMuted,
     textAlign: 'center',
+  },
+  privacyBanner: {
+    marginBottom: spacing.xs,
+    backgroundColor: 'rgba(16,185,129,0.08)',
+    borderColor: 'rgba(16,185,129,0.25)',
+  },
+  privacyBannerText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: companyUi.textSoft,
+    fontWeight: '500',
   },
 });

@@ -4,6 +4,7 @@ import {
   Alert,
   Linking,
   Text,
+  TextInput,
   StyleSheet,
   TouchableOpacity,
   View,
@@ -28,7 +29,7 @@ interface Props {
   reviewedAt?: string;
   rejectionReason?: string;
   storagePath?: string;
-  onUpdateStatus: (id: string, status: DocumentStatus) => Promise<void>;
+  onUpdateStatus: (id: string, status: DocumentStatus, rejectionReason?: string) => Promise<void>;
 }
 
 type ActionConfig = {
@@ -97,13 +98,34 @@ export function AdminDocumentCard({
 }: Props) {
   const [loadingStatus, setLoadingStatus] = useState<DocumentStatus | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
+  const [showRejectForm, setShowRejectForm] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
 
   async function handleAction(status: DocumentStatus) {
+    if (status === 'rejected') {
+      setShowRejectForm(true);
+      return;
+    }
     setLoadingStatus(status);
     try {
       await onUpdateStatus(document.id, status);
     } finally {
       setLoadingStatus(null);
+    }
+  }
+
+  async function handleConfirmReject() {
+    if (!rejectReason.trim()) {
+      Alert.alert('Reason required', 'Please explain why this document is rejected.');
+      return;
+    }
+    setLoadingStatus('rejected');
+    setShowRejectForm(false);
+    try {
+      await onUpdateStatus(document.id, 'rejected', rejectReason.trim());
+    } finally {
+      setLoadingStatus(null);
+      setRejectReason('');
     }
   }
 
@@ -158,6 +180,39 @@ export function AdminDocumentCard({
         <View style={styles.rejectionNote}>
           <Text style={styles.rejectionLabel}>Reason</Text>
           <Text style={styles.rejectionText}>{rejectionReason}</Text>
+        </View>
+      ) : null}
+
+      {showRejectForm ? (
+        <View style={styles.rejectForm}>
+          <Text style={styles.rejectFormLabel}>Rejection reason</Text>
+          <TextInput
+            style={styles.rejectInput}
+            placeholder="Explain why this document is rejected…"
+            placeholderTextColor={adminUi.textSoft}
+            value={rejectReason}
+            onChangeText={setRejectReason}
+            multiline
+            numberOfLines={3}
+            autoFocus
+          />
+          <View style={styles.rejectFormActions}>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.cancelBtn]}
+              onPress={() => { setShowRejectForm(false); setRejectReason(''); }}
+              activeOpacity={0.78}
+            >
+              <Text style={[styles.actionBtnText, { color: adminUi.textSoft }]}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.confirmRejectBtn]}
+              onPress={handleConfirmReject}
+              activeOpacity={0.78}
+            >
+              <XCircle size={15} color={adminUi.red} strokeWidth={2.2} />
+              <Text style={[styles.actionBtnText, { color: adminUi.red }]}>Confirm rejection</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       ) : null}
 
@@ -319,6 +374,47 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '500',
     color: adminUi.textSoft,
+  },
+  rejectForm: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  rejectFormLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: adminUi.red,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  rejectInput: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: 13,
+    lineHeight: 19,
+    color: adminUi.text,
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  rejectFormActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  cancelBtn: {
+    borderColor: adminUi.borderSoft,
+    backgroundColor: adminUi.surfaceSoft,
+  },
+  confirmRejectBtn: {
+    flex: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
   },
   actions: {
     flexDirection: 'row',

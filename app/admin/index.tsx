@@ -66,9 +66,19 @@ type SupabaseAdminMetrics = {
   totalTechnicians: number;
   pendingTechnicians: number;
   verifiedTechnicians: number;
+  rejectedTechnicians: number;
   totalCompanies: number;
   pendingCompanies: number;
   verifiedCompanies: number;
+  rejectedCompanies: number;
+  publishedOffers: number;
+  draftOffers: number;
+  pendingApplications: number;
+  pendingDirectOffers: number;
+  totalDocuments: number;
+  pendingDocuments: number;
+  verifiedDocuments: number;
+  rejectedDocuments: number;
 };
 
 export default function AdminDashboard() {
@@ -86,9 +96,19 @@ export default function AdminDashboard() {
     totalTechnicians: 0,
     pendingTechnicians: 0,
     verifiedTechnicians: 0,
+    rejectedTechnicians: 0,
     totalCompanies: 0,
     pendingCompanies: 0,
     verifiedCompanies: 0,
+    rejectedCompanies: 0,
+    publishedOffers: 0,
+    draftOffers: 0,
+    pendingApplications: 0,
+    pendingDirectOffers: 0,
+    totalDocuments: 0,
+    pendingDocuments: 0,
+    verifiedDocuments: 0,
+    rejectedDocuments: 0,
   });
   const [metricsLoading, setMetricsLoading] = useState(true);
 
@@ -110,13 +130,30 @@ export default function AdminDashboard() {
       supabase.from('profiles').select('id', { count: 'exact', head: true }),
       supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'pending_verification'),
       supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'technician'),
+      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }),
       supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
       supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified'),
-      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'company_user'),
+      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'rejected'),
+      supabase.from('companies').select('id', { count: 'exact', head: true }),
       supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
       supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified'),
-    ]).then(([total, pending, active, techTotal, techPending, techVerified, compTotal, compPending, compVerified]) => {
+      supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'rejected'),
+      supabase.from('offers').select('id', { count: 'exact', head: true }).eq('status', 'published'),
+      supabase.from('offers').select('id', { count: 'exact', head: true }).eq('status', 'draft'),
+      supabase.from('offer_applications').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('offer_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('documents').select('id', { count: 'exact', head: true }),
+      supabase.from('documents').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('documents').select('id', { count: 'exact', head: true }).eq('status', 'verified'),
+      supabase.from('documents').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
+    ]).then(([
+      total, pending, active,
+      techTotal, techPending, techVerified, techRejected,
+      compTotal, compPending, compVerified, compRejected,
+      offPublished, offDraft,
+      appPending, reqPending,
+      docTotal, docPending, docVerified, docRejected,
+    ]) => {
       setSupaMetrics({
         totalProfiles: total.count ?? 0,
         pendingProfiles: pending.count ?? 0,
@@ -124,9 +161,19 @@ export default function AdminDashboard() {
         totalTechnicians: techTotal.count ?? 0,
         pendingTechnicians: techPending.count ?? 0,
         verifiedTechnicians: techVerified.count ?? 0,
+        rejectedTechnicians: techRejected.count ?? 0,
         totalCompanies: compTotal.count ?? 0,
         pendingCompanies: compPending.count ?? 0,
         verifiedCompanies: compVerified.count ?? 0,
+        rejectedCompanies: compRejected.count ?? 0,
+        publishedOffers: offPublished.count ?? 0,
+        draftOffers: offDraft.count ?? 0,
+        pendingApplications: appPending.count ?? 0,
+        pendingDirectOffers: reqPending.count ?? 0,
+        totalDocuments: docTotal.count ?? 0,
+        pendingDocuments: docPending.count ?? 0,
+        verifiedDocuments: docVerified.count ?? 0,
+        rejectedDocuments: docRejected.count ?? 0,
       });
       setMetricsLoading(false);
     });
@@ -147,11 +194,6 @@ export default function AdminDashboard() {
   }
 
   const pendingWorkload = supaMetrics.pendingProfiles;
-  const rejectedTechnicians = 0;
-  const rejectedCompanies = 0;
-  const draftOffers = 0;
-  const verifiedDocuments = 0;
-  const rejectedOrExpiredDocuments = 0;
 
   const technicianMetrics: MetricConfig[] = [
     {
@@ -181,7 +223,7 @@ export default function AdminDashboard() {
     },
     {
       label: 'Rejected technicians',
-      value: rejectedTechnicians,
+      value: supaMetrics.rejectedTechnicians,
       detail: 'Not cleared',
       icon: XCircle,
       tone: adminUi.textSoft,
@@ -217,7 +259,7 @@ export default function AdminDashboard() {
     },
     {
       label: 'Rejected companies',
-      value: rejectedCompanies,
+      value: supaMetrics.rejectedCompanies,
       detail: 'Not cleared',
       icon: XCircle,
       tone: adminUi.textSoft,
@@ -228,7 +270,7 @@ export default function AdminDashboard() {
   const marketplaceMetrics: MetricConfig[] = [
     {
       label: 'Published offers',
-      value: 0,
+      value: supaMetrics.publishedOffers,
       detail: 'Visible roles',
       icon: BriefcaseBusiness,
       tone: adminUi.green,
@@ -236,7 +278,7 @@ export default function AdminDashboard() {
     },
     {
       label: 'Draft offers',
-      value: draftOffers,
+      value: supaMetrics.draftOffers,
       detail: 'Not public',
       icon: Files,
       tone: adminUi.textSoft,
@@ -244,34 +286,37 @@ export default function AdminDashboard() {
     },
     {
       label: 'Pending applications',
-      value: 0,
+      value: supaMetrics.pendingApplications,
       detail: 'Technician initiated',
       icon: ClipboardCheck,
-      tone: adminUi.accent,
-      softTone: adminUi.accentSoft,
+      tone: supaMetrics.pendingApplications > 0 ? adminUi.accent : adminUi.textSoft,
+      softTone: supaMetrics.pendingApplications > 0 ? adminUi.accentSoft : adminUi.surfaceSoft,
+      urgent: supaMetrics.pendingApplications > 0,
     },
     {
       label: 'Pending direct offers',
-      value: 0,
+      value: supaMetrics.pendingDirectOffers,
       detail: 'Company initiated',
       icon: Inbox,
-      tone: adminUi.blue,
-      softTone: adminUi.blueSoft,
+      tone: supaMetrics.pendingDirectOffers > 0 ? adminUi.blue : adminUi.textSoft,
+      softTone: supaMetrics.pendingDirectOffers > 0 ? adminUi.blueSoft : adminUi.surfaceSoft,
+      urgent: supaMetrics.pendingDirectOffers > 0,
     },
   ];
 
   const complianceMetrics: MetricConfig[] = [
     {
       label: 'Pending documents',
-      value: 0,
+      value: supaMetrics.pendingDocuments,
       detail: 'Review queue',
       icon: Clock,
-      tone: adminUi.textSoft,
-      softTone: adminUi.surfaceSoft,
+      tone: supaMetrics.pendingDocuments > 0 ? adminUi.amber : adminUi.textSoft,
+      softTone: supaMetrics.pendingDocuments > 0 ? adminUi.amberSoft : adminUi.surfaceSoft,
+      urgent: supaMetrics.pendingDocuments > 0,
     },
     {
       label: 'Verified documents',
-      value: verifiedDocuments,
+      value: supaMetrics.verifiedDocuments,
       detail: 'Cleared records',
       icon: FileCheck,
       tone: adminUi.green,
@@ -279,11 +324,11 @@ export default function AdminDashboard() {
     },
     {
       label: 'Rejected or expired',
-      value: rejectedOrExpiredDocuments,
+      value: supaMetrics.rejectedDocuments,
       detail: 'Compliance attention',
       icon: XCircle,
-      tone: adminUi.textSoft,
-      softTone: adminUi.surfaceSoft,
+      tone: supaMetrics.rejectedDocuments > 0 ? adminUi.red : adminUi.textSoft,
+      softTone: supaMetrics.rejectedDocuments > 0 ? adminUi.redSoft : adminUi.surfaceSoft,
     },
   ];
 
@@ -308,10 +353,11 @@ export default function AdminDashboard() {
     },
     {
       label: 'Documents',
-      subtitle: 'Review uploaded documents',
+      subtitle: `${supaMetrics.totalDocuments} uploaded — ${supaMetrics.pendingDocuments} pending`,
       icon: Files,
       tone: adminUi.amber,
       softTone: adminUi.amberSoft,
+      badge: supaMetrics.pendingDocuments,
       onPress: () => router.push('/admin/documents' as any),
     },
     {

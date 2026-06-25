@@ -1,4 +1,4 @@
-# V2-2 QA Report — RotoraxisMatch
+# V2-2 QA Report — AviationJobTalent
 
 **Date:** 2026-05-23
 **Phase:** V2-2 (Company job offer management UI)

@@ -1,4 +1,4 @@
-# Data Model V2 — RotoraxisMatch
+# Data Model V2 — AviationJobTalent
 
 This document is the technical source of truth for the V2 data model.
 It explains every entity, its purpose, required vs optional fields, relationships, and design decisions.

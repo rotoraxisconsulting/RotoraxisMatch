@@ -104,7 +104,7 @@ export default function PendingVerificationScreen() {
 
         <Text style={styles.footer}>
           Need help? Contact support at{' '}
-          <Text style={styles.footerLink}>support@rotoraxismatch.com</Text>
+          <Text style={styles.footerLink}>support@aviationjobtalent.com</Text>
         </Text>
       </View>
     </SafeAreaView>

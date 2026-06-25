@@ -200,7 +200,7 @@ export default function SetPasswordScreen() {
           <View style={styles.header}>
             <Text style={styles.title}>Set your password</Text>
             <Text style={styles.subtitle}>
-              Create your own password to access RotoraxisMatch from the sign-in screen.
+              Create your own password to access Aviation Job Talent from the sign-in screen.
             </Text>
           </View>
 

@@ -18,7 +18,7 @@ import { colors, spacing } from '../../theme';
 const SLIDES = [
   {
     id: 'hero' as const,
-    title: 'RotoraxisMatch',
+    title: 'Aviation Job Talent',
     subtitle: 'Verified aviation talent, matched by license, aircraft type and availability.',
     description:
       'Aviation companies need reliable mechanics fast. Technicians need visibility without losing control of their identity.',
@@ -704,7 +704,7 @@ export function IntroExperience({ onComplete }: IntroExperienceProps) {
             style={[styles.btn, isLast && styles.btnFinal]}
           >
             <Text style={styles.btnText}>
-              {isLast ? 'Enter RotoraxisMatch' : 'Next  →'}
+              {isLast ? 'Enter Aviation Job Talent' : 'Next  →'}
             </Text>
           </TouchableOpacity>
           {!isLast && (

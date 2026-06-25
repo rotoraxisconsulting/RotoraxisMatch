@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 002: Signup RPCs
+-- AviationJobTalent V2 — Migration 002: Signup RPCs
 -- ============================================================
 -- Applied: 2026-06-03 (version 20260603112059 in supabase_migrations)
 --

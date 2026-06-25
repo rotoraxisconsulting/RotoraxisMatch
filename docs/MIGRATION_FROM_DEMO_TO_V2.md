@@ -1,4 +1,4 @@
-# Migration from Demo (V1) to V2 — RotoraxisMatch
+# Migration from Demo (V1) to V2 — AviationJobTalent
 
 This document maps current V1 demo code to the V2 data model, identifies what changes, and provides a practical guide for the implementation team.
 

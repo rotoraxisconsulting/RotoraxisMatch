@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 001: Initial Schema + RLS
+-- AviationJobTalent V2 — Migration 001: Initial Schema + RLS
 -- ============================================================
 -- Target:  rotoaxismatch-dev (rwauwuremzkizeoginza)
 -- Pg:      17.6.1  |  Region: eu-west-1

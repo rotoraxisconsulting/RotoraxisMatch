@@ -1,4 +1,4 @@
-# RotoraxisMatch MVP Simplicity Audit Report
+# AviationJobTalent MVP Simplicity Audit Report
 
 *Fecha: 2026-06-05 · Revisión completa del estado actual del producto*
 
@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary
 
-RotoraxisMatch está en un estado **sólido y cercano al lanzamiento**. La arquitectura es correcta, los flujos principales funcionan de extremo a extremo, la seguridad es buena y el diseño es coherente. Sin embargo, hay **tres bloqueadores reales antes de lanzar** (olvidar contraseña, eliminación de cuenta/GDPR, y dos migraciones sin aplicar), y un puñado de mejoras pequeñas que evitarían fricciones innecesarias con los primeros usuarios.
+AviationJobTalent está en un estado **sólido y cercano al lanzamiento**. La arquitectura es correcta, los flujos principales funcionan de extremo a extremo, la seguridad es buena y el diseño es coherente. Sin embargo, hay **tres bloqueadores reales antes de lanzar** (olvidar contraseña, eliminación de cuenta/GDPR, y dos migraciones sin aplicar), y un puñado de mejoras pequeñas que evitarían fricciones innecesarias con los primeros usuarios.
 
 El riesgo principal no es técnico: es lanzar con usuarios reales antes de tener resuelto el flujo de recuperación de contraseña y la política de borrado de datos.
 

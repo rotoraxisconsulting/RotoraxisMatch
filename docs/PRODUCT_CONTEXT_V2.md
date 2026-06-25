@@ -1,6 +1,6 @@
-# Product Context V2 — RotoraxisMatch
+# Product Context V2 — AviationJobTalent
 
-RotoraxisMatch V2 is a bidirectional aviation marketplace connecting verified technicians with companies, MROs, airlines, operators, and recruitment agencies.
+AviationJobTalent V2 is a bidirectional aviation marketplace connecting verified technicians with companies, MROs, airlines, operators, and recruitment agencies.
 
 ## Marketplace model
 

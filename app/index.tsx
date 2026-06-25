@@ -89,7 +89,7 @@ export default function HomeScreen() {
           <View style={styles.logoWrap}>
             <Text style={styles.logoIcon}>✈</Text>
           </View>
-          <Text style={styles.appName}>RotoraxisMatch</Text>
+          <Text style={styles.appName}>Aviation Job Talent</Text>
           <Text style={styles.tagline}>
             The professional network for{'\n'}aviation technicians and operators
           </Text>

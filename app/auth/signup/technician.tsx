@@ -18,6 +18,8 @@ import { AuthPickerField, PickerOption } from '../../../src/components/auth/Auth
 import { Button } from '../../../src/components/Button';
 import { colors, spacing } from '../../../src/theme';
 
+const CONSENT_VERSION = '2025-06';
+
 function isValidEmail(s: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
 }
@@ -49,6 +51,7 @@ export default function TechnicianSignupScreen() {
   const [technicianType, setTechnicianType] = useState('');
   const [locationCityId, setLocationCityId] = useState('');
 
+  const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -77,6 +80,7 @@ export default function TechnicianSignupScreen() {
     if (!buildDate(birthYear, birthMonth, birthDay)) return 'Enter a valid date of birth.';
     if (!technicianType) return 'Select your technician type.';
     if (!locationCityId) return 'Select your base airport.';
+    if (!tosAccepted) return 'You must accept the Terms of Service and Privacy Policy to continue.';
     return null;
   }
 
@@ -105,6 +109,8 @@ export default function TechnicianSignupScreen() {
           birth_date: birthDate,
           technician_type: technicianType,
           location_city_id: locationCityId,
+          tos_accepted_at: new Date().toISOString(),
+          tos_version: CONSENT_VERSION,
         },
       },
     });
@@ -134,9 +140,19 @@ export default function TechnicianSignupScreen() {
         setLoading(false);
         return;
       }
+
+      // Step 3: Record ToS consent
+      await supabase.from('user_consents').upsert(
+        {
+          user_id: data.user!.id,
+          consent_type: 'tos_privacy',
+          consent_version: CONSENT_VERSION,
+        },
+        { onConflict: 'user_id,consent_type,consent_version' },
+      );
     }
 
-    // Step 3: Redirect to pending verification
+    // Step 4: Redirect to pending verification
     router.replace('/auth/pending-verification' as any);
   }
 
@@ -306,6 +322,34 @@ export default function TechnicianSignupScreen() {
             />
           </View>
 
+          {/* ToS + Privacy consent checkbox */}
+          <TouchableOpacity
+            style={styles.consentRow}
+            onPress={() => setTosAccepted((v) => !v)}
+            activeOpacity={0.75}
+          >
+            <View style={[styles.checkbox, tosAccepted && styles.checkboxChecked]}>
+              {tosAccepted ? <Text style={styles.checkmark}>✓</Text> : null}
+            </View>
+            <Text style={styles.consentText}>
+              I have read and agree to the{' '}
+              <Text
+                style={styles.consentLink}
+                onPress={(e) => { e.stopPropagation(); router.push('/terms-of-service' as any); }}
+              >
+                Terms of Service
+              </Text>
+              {' '}and{' '}
+              <Text
+                style={styles.consentLink}
+                onPress={(e) => { e.stopPropagation(); router.push('/privacy-policy' as any); }}
+              >
+                Privacy Policy
+              </Text>
+              .
+            </Text>
+          </TouchableOpacity>
+
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
           <Button
@@ -318,7 +362,6 @@ export default function TechnicianSignupScreen() {
           />
 
           <Text style={styles.footerNote}>
-            By creating an account you agree to our Terms of Service.{'\n'}
             Your profile will be verified before you can access the platform.
           </Text>
         </ScrollView>
@@ -399,6 +442,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
   },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  checkboxChecked: {
+    borderColor: colors.cyan,
+    backgroundColor: colors.cyan + '33',
+  },
+  checkmark: { fontSize: 13, color: colors.cyan, fontWeight: '700', lineHeight: 16 },
+  consentText: { flex: 1, fontSize: 13, color: colors.cyanLight, lineHeight: 20 },
+  consentLink: { color: colors.cyan, fontWeight: '600', textDecorationLine: 'underline' as const },
   errorText: {
     color: colors.error,
     fontSize: 13,

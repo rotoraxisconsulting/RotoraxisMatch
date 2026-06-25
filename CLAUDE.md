@@ -1,14 +1,14 @@
-# RotoraxisMatch — Claude Context
+# AviationJobTalent — Claude Context
 
-> **V2 is the source of truth.** RotoraxisMatch V2 is now the active product definition.
+> **V2 is the source of truth.** AviationJobTalent V2 is now the active product definition.
 > Read `docs/PRODUCT_CONTEXT_V2.md`, `docs/DATA_MODEL_V2.md`, `docs/USER_FLOWS_V2.md`,
 > `docs/SUPABASE_PLAN_V2.md`, and `docs/IMPLEMENTATION_PHASES_V2.md` before any major work.
 
-RotoraxisMatch is a cross-platform aviation technician matching app.
+AviationJobTalent is a cross-platform aviation technician matching app.
 
 ## Product
 
-RotoraxisMatch connects verified aviation mechanics/technicians with aviation companies, MROs, operators, airlines, contractors and recruiters.
+AviationJobTalent connects verified aviation mechanics/technicians with aviation companies, MROs, operators, airlines, contractors and recruiters.
 
 The app must run on:
 - Web

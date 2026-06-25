@@ -1,21 +1,21 @@
 {
   "expo": {
-    "name": "RotoraxisMatch",
-    "slug": "rotoraxis-match",
+    "name": "Aviation Job Talent",
+    "slug": "aviationjobtalent",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "rotoraxismatch",
+    "scheme": "aviationjobtalent",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rotoraxis.match"
+      "bundleIdentifier": "com.aviationjobtalent.app"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#0A1628"
       },
-      "package": "com.rotoraxis.match"
+      "package": "com.aviationjobtalent.app"
     },
     "web": {
       "bundler": "metro",

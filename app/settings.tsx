@@ -9,19 +9,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Stack, useRouter } from 'expo-router';
+import Constants from 'expo-constants';
 import { colors, spacing } from '../src/theme';
-import { resetIntroSeen } from '../src/storage/introStorage';
 import { useAuth } from '../src/auth/AuthContext';
 import { CompanyPageHeader } from '../src/components/company/CompanyUI';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { profile, signOut } = useAuth();
-
-  async function handleShowIntroAgain() {
-    await resetIntroSeen();
-    router.replace('/intro' as any);
-  }
 
   async function handleSignOut() {
     await signOut();
@@ -39,26 +34,9 @@ export default function SettingsScreen() {
         <CompanyPageHeader
           eyebrow="App"
           title="Settings"
-          subtitle="Manage intro experience and account."
+          subtitle="Account, help and legal."
           onBack={() => router.back()}
         />
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Intro experience</Text>
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>First-launch introduction</Text>
-            <Text style={styles.cardDescription}>
-              Replay the RotoraxisMatch introduction that plays on first launch.
-            </Text>
-            <TouchableOpacity
-              onPress={handleShowIntroAgain}
-              style={styles.btn}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.btnText}>Show intro again</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
 
         {profile && (
           <View style={styles.section}>
@@ -79,16 +57,63 @@ export default function SettingsScreen() {
               >
                 <Text style={[styles.btnText, styles.btnTextDanger]}>Sign out</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/account/delete' as any)}
+                style={[styles.btn, styles.btnDestructive]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.btnText, styles.btnTextDestructive]}>Delete account…</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Help</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={[styles.legalRow, styles.legalRowLast]}
+              onPress={() => router.push('/support' as any)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.legalLabel}>Support</Text>
+              <Text style={styles.legalArrow}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Legal</Text>
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.legalRow}
+              onPress={() => router.push('/privacy-policy' as any)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.legalLabel}>Privacy Policy</Text>
+              <Text style={styles.legalArrow}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.legalRow, styles.legalRowLast]}
+              onPress={() => router.push('/terms-of-service' as any)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.legalLabel}>Terms of Service</Text>
+              <Text style={styles.legalArrow}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About</Text>
           <View style={styles.card}>
             <View style={styles.aboutRow}>
               <Text style={styles.aboutKey}>App</Text>
-              <Text style={styles.aboutValue}>RotoraxisMatch</Text>
+              <Text style={styles.aboutValue}>Aviation Job Talent</Text>
+            </View>
+            <View style={styles.aboutRow}>
+              <Text style={styles.aboutKey}>Version</Text>
+              <Text style={styles.aboutValue}>{Constants.expoConfig?.version ?? '1.0.0'}</Text>
             </View>
             <View style={[styles.aboutRow, styles.aboutRowLast]}>
               <Text style={styles.aboutKey}>Mode</Text>
@@ -106,6 +131,9 @@ const styles = StyleSheet.create({
   scroll: {
     padding: spacing.lg,
     paddingBottom: spacing.xxxl,
+    maxWidth: 640,
+    width: '100%',
+    alignSelf: 'center',
   },
   section: { marginBottom: spacing.xl },
   sectionTitle: {
@@ -148,6 +176,12 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.error,
   },
+  btnDestructive: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: 'rgba(239,68,68,0.4)',
+    marginTop: spacing.sm,
+  },
   btnText: {
     color: colors.white,
     fontSize: 14,
@@ -156,6 +190,20 @@ const styles = StyleSheet.create({
   btnTextDanger: {
     color: colors.error,
   },
+  btnTextDestructive: {
+    color: 'rgba(239,68,68,0.8)',
+  },
+  legalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  legalRowLast: { borderBottomWidth: 0 },
+  legalLabel: { fontSize: 14, color: colors.text },
+  legalArrow: { fontSize: 18, color: colors.textMuted, lineHeight: 22 },
   aboutRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

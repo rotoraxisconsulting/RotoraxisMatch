@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 010: Admin RPCs + member guards
+-- AviationJobTalent V2 — Migration 010: Admin RPCs + member guards
 -- ============================================================
 -- Created: 2026-06-06
 --

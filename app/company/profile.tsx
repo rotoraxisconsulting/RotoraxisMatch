@@ -27,7 +27,6 @@ import {
 import { CompanyTeamManagement } from '../../src/components/company/CompanyTeamManagement';
 import { useCompanyDashboard } from '../../src/state/useCompanyDashboard';
 import { useCompanySession } from '../../src/state/SessionContext';
-import { useAuth } from '../../src/auth/AuthContext';
 import { companyRepositoryV2 } from '../../src/repositories/v2/companyRepositoryV2';
 import { canManageCompanySettings } from '../../src/utils/companyPermissionsV2';
 import { COMPANY_TYPES } from '../../src/constants/companyTypes';
@@ -70,8 +69,7 @@ function profileToForm(profile: CompanyProfileView): CompanyForm {
 
 export default function CompanyProfileScreen() {
   const router = useRouter();
-  const { signOut } = useAuth();
-  const { companyId, companyMemberRole } = useCompanySession();
+const { companyId, companyMemberRole } = useCompanySession();
   const { width } = useWindowDimensions();
   const isWide = width >= 920;
   const { company, requests, loading, refresh } = useCompanyDashboard();
@@ -134,11 +132,6 @@ export default function CompanyProfileScreen() {
     } finally {
       setSaving(false);
     }
-  }
-
-  async function handleSignOut() {
-    await signOut();
-    router.replace('/');
   }
 
   if (loading || !company) {
@@ -268,13 +261,6 @@ export default function CompanyProfileScreen() {
           </View>
         </View>
 
-        <TouchableOpacity
-          style={styles.signOutBtn}
-          onPress={handleSignOut}
-          activeOpacity={0.75}
-        >
-          <Text style={styles.signOutBtnText}>Sign out</Text>
-        </TouchableOpacity>
       </ScrollView>
     </CompanyScreen>
   );
@@ -652,21 +638,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '500',
     color: companyUi.textSoft,
-  },
-  signOutBtn: {
-    minHeight: 48,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-    backgroundColor: companyUi.redSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.sm,
-    marginBottom: spacing.lg,
-  },
-  signOutBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: companyUi.red,
   },
 });

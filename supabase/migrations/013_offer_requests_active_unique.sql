@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 013: Extend offer_requests unique index
+-- AviationJobTalent V2 — Migration 013: Extend offer_requests unique index
 -- ============================================================
 -- Created: 2026-06-06
 --

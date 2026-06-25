@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 011: Close security block
+-- AviationJobTalent V2 — Migration 011: Close security block
 -- ============================================================
 -- Created: 2026-06-06
 --

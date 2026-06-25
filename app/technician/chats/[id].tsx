@@ -179,6 +179,12 @@ export default function TechnicianChatDetailScreen() {
             </View>
             <TechnicianBadge label="Active" tone="success" small />
           </TechnicianCard>
+
+          <TechnicianCard style={styles.privacyBanner}>
+            <Text style={styles.privacyBannerText}>
+              🔓 Your identity is revealed to this company. Messages are private between both parties.
+            </Text>
+          </TechnicianCard>
         </View>
 
         <ScrollView
@@ -393,5 +399,16 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '700',
     color: colors.white,
+  },
+  privacyBanner: {
+    marginBottom: spacing.xs,
+    backgroundColor: 'rgba(0,180,216,0.08)',
+    borderColor: 'rgba(0,180,216,0.2)',
+  },
+  privacyBannerText: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: techUi.textSoft,
+    fontWeight: '500',
   },
 });

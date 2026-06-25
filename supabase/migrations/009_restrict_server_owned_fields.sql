@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 009: Restrict server-owned fields
+-- AviationJobTalent V2 — Migration 009: Restrict server-owned fields
 -- ============================================================
 -- Created: 2026-06-06
 --

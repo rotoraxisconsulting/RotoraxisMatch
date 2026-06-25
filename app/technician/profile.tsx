@@ -140,7 +140,7 @@ function EmptyValue() {
 
 export default function TechnicianProfileScreen() {
   const router = useRouter();
-  const { profile, loading: authLoading, signOut } = useAuth();
+  const { profile, loading: authLoading } = useAuth();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
@@ -164,11 +164,6 @@ export default function TechnicianProfileScreen() {
       router.replace('/auth/pending-verification' as any);
     }
   }, [authLoading, profile]);
-
-  async function handleSignOut() {
-    await signOut();
-    router.replace('/');
-  }
 
   const loadProfile = useCallback(async () => {
     if (!profile?.id) return;
@@ -702,13 +697,6 @@ export default function TechnicianProfileScreen() {
             style={styles.saveBtn}
           />
 
-          <TouchableOpacity
-            style={styles.signOutBtn}
-            onPress={handleSignOut}
-            activeOpacity={0.75}
-          >
-            <Text style={styles.signOutBtnText}>Sign out</Text>
-          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </TechnicianScreen>
@@ -899,21 +887,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
     backgroundColor: techUi.accent,
     borderRadius: 16,
-  },
-  signOutBtn: {
-    minHeight: 48,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#FECACA',
-    backgroundColor: techUi.redSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  signOutBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: techUi.red,
   },
   centeredState: {
     flex: 1,

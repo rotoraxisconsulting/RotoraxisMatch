@@ -10,6 +10,9 @@ import {
   View,
 } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
+import { supabase } from '../../src/lib/supabase';
+
+const CONSENT_VERSION = '2025-06';
 import * as DocumentPicker from 'expo-document-picker';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Button } from '../../src/components/Button';
@@ -119,6 +122,7 @@ export default function TechnicianDocumentsScreen() {
   const [pickedFile, setPickedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [medicalConsentAccepted, setMedicalConsentAccepted] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -154,6 +158,10 @@ export default function TechnicianDocumentsScreen() {
 
   async function handleUpload() {
     if (!uploadType || !pickedFile || !technicianId) return;
+    if (uploadType === 'medical' && !medicalConsentAccepted) {
+      setUploadError('You must provide explicit consent to upload medical documents.');
+      return;
+    }
     setUploading(true);
     setUploadError(null);
 
@@ -180,9 +188,26 @@ export default function TechnicianDocumentsScreen() {
         status: 'pending',
         uploadedAt: new Date().toISOString(),
       });
+
+      // Record medical consent
+      if (uploadType === 'medical') {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          await supabase.from('user_consents').upsert(
+            {
+              user_id: user.id,
+              consent_type: 'medical_document',
+              consent_version: CONSENT_VERSION,
+            },
+            { onConflict: 'user_id,consent_type,consent_version' },
+          );
+        }
+      }
+
       setUploadOpen(false);
       setUploadType(null);
       setPickedFile(null);
+      setMedicalConsentAccepted(false);
       await refresh();
     } catch (err) {
       setUploadError(
@@ -198,6 +223,7 @@ export default function TechnicianDocumentsScreen() {
     setUploadType(null);
     setPickedFile(null);
     setUploadError(null);
+    setMedicalConsentAccepted(false);
   }
 
   if (loading && documents.length === 0) {
@@ -278,6 +304,29 @@ export default function TechnicianDocumentsScreen() {
               </Text>
             </TouchableOpacity>
 
+            {/* Medical document consent — required for GDPR Art. 9 */}
+            {uploadType === 'medical' && (
+              <View style={styles.medicalConsentBox}>
+                <Text style={styles.medicalConsentTitle}>Medical document consent required</Text>
+                <Text style={styles.medicalConsentDesc}>
+                  Medical certificates contain health data (special category under GDPR Art. 9). They are used exclusively by our admin team for licence verification and are never shared with companies.
+                </Text>
+                <TouchableOpacity
+                  style={styles.medicalConsentRow}
+                  onPress={() => setMedicalConsentAccepted((v) => !v)}
+                  activeOpacity={0.75}
+                  disabled={uploading}
+                >
+                  <View style={[styles.checkbox, medicalConsentAccepted && styles.checkboxChecked]}>
+                    {medicalConsentAccepted ? <Text style={styles.checkmark}>✓</Text> : null}
+                  </View>
+                  <Text style={styles.medicalConsentLabel}>
+                    I explicitly consent to the processing of this medical document for verification purposes only.
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {uploadError ? (
               <Text style={styles.uploadError}>{uploadError}</Text>
             ) : null}
@@ -287,7 +336,7 @@ export default function TechnicianDocumentsScreen() {
               label={uploading ? 'Uploading…' : 'Upload'}
               onPress={handleUpload}
               loading={uploading}
-              disabled={!uploadType || !pickedFile || uploading}
+              disabled={!uploadType || !pickedFile || uploading || (uploadType === 'medical' && !medicalConsentAccepted)}
               fullWidth
               size="md"
               style={styles.uploadSubmitBtn}
@@ -394,6 +443,38 @@ const styles = StyleSheet.create({
   filePickerBtnDisabled: { opacity: 0.5 },
   filePickerBtnText: {
     fontSize: 13, lineHeight: 18, fontWeight: '600', color: techUi.accent,
+  },
+  medicalConsentBox: {
+    backgroundColor: 'rgba(245,158,11,0.08)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.3)',
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  medicalConsentTitle: {
+    fontSize: 12, lineHeight: 16, fontWeight: '700',
+    color: techUi.amber, textTransform: 'uppercase' as const, letterSpacing: 0.4,
+  },
+  medicalConsentDesc: {
+    fontSize: 12, lineHeight: 18, color: techUi.textSoft,
+  },
+  medicalConsentRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
+  },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.surfaceSoft,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+  },
+  checkboxChecked: {
+    borderColor: techUi.accent,
+    backgroundColor: techUi.accent + '22',
+  },
+  checkmark: { fontSize: 13, color: techUi.accent, fontWeight: '700', lineHeight: 16 },
+  medicalConsentLabel: {
+    flex: 1, fontSize: 13, lineHeight: 19, color: techUi.textSoft,
   },
   uploadError: {
     fontSize: 13, lineHeight: 18, fontWeight: '500',

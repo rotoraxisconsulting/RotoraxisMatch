@@ -1,4 +1,4 @@
-# RLS Plan V2 — RotoraxisMatch
+# RLS Plan V2 — AviationJobTalent
 
 Row Level Security policies for the V2 Supabase schema.
 Do not implement yet. This is a design document.

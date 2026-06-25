@@ -188,8 +188,8 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     [load],
   );
 
-  const updateDocumentStatus = useCallback(async (id: string, status: DocumentStatus) => {
-    const updated = await documentRepositoryV2.updateStatus(id, status);
+  const updateDocumentStatus = useCallback(async (id: string, status: DocumentStatus, rejectionReason?: string) => {
+    const updated = await documentRepositoryV2.updateStatus(id, status, rejectionReason);
     if (!updated) return;
     // Update both the V1 compat list (for status badge / actions) and the V2 detail map
     // (for reviewedAt and rejectionReason displayed in the card).

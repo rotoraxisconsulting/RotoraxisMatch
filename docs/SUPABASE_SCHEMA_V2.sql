@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Supabase/Postgres Schema
+-- AviationJobTalent V2 — Supabase/Postgres Schema
 -- ============================================================
 -- CLEAN-START POLICY:
 --   Run this file on a fresh Supabase project.

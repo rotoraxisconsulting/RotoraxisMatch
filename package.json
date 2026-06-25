@@ -1,5 +1,5 @@
 {
-  "name": "rotoraxis-match",
+  "name": "aviationjobtalent",
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
@@ -16,6 +16,7 @@
     "expo": "^54.0.34",
     "expo-constants": "~18.0.13",
     "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.22",
     "expo-linking": "~8.0.12",
     "expo-router": "~6.0.23",
     "expo-splash-screen": "~31.0.13",

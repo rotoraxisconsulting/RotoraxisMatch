@@ -25,6 +25,7 @@ import {
   Inbox,
   MessageCircle,
   Radio,
+  Settings,
   Users,
   XCircle,
 } from 'lucide-react-native';
@@ -259,7 +260,7 @@ export default function TechnicianDashboard() {
       >
         <View style={styles.pageHeader}>
           <View>
-            <Text style={styles.eyebrow}>Technician Dashboard</Text>
+            <Text style={styles.eyebrow}>Aviation Job Talent</Text>
             <Text style={styles.pageTitle}>Operations overview</Text>
           </View>
         </View>
@@ -272,6 +273,7 @@ export default function TechnicianDashboard() {
                 documentCount={documentCount}
                 onProfilePress={() => router.push('/technician/profile' as any)}
                 onDocumentsPress={() => router.push('/technician/documents' as any)}
+                onSettingsPress={() => router.push('/settings' as any)}
               />
             ) : !countsLoading ? (
               <EmptyProfileCard onPress={() => router.push('/technician/profile' as any)} />
@@ -550,11 +552,13 @@ function SupabaseProfileCard({
   documentCount,
   onProfilePress,
   onDocumentsPress,
+  onSettingsPress,
 }: {
   supaTech: SupaTechProfile;
   documentCount: number;
   onProfilePress: () => void;
   onDocumentsPress: () => void;
+  onSettingsPress: () => void;
 }) {
   const fullName = `${supaTech.firstName} ${supaTech.lastName}`.trim();
   const initials = fullName
@@ -565,7 +569,12 @@ function SupabaseProfileCard({
 
   return (
     <View style={styles.profileCard}>
-      <SectionTitle label="Profile" value="Technician" />
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionLabel}>Profile</Text>
+        <TouchableOpacity onPress={onSettingsPress} style={styles.settingsBtnCard} activeOpacity={0.7}>
+          <Settings size={16} color={ui.textMuted} strokeWidth={2} />
+        </TouchableOpacity>
+      </View>
       <View style={styles.profileTop}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials}</Text>
@@ -744,16 +753,17 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   eyebrow: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 0.2,
     color: ui.accent,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   pageTitle: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: '700',
-    color: ui.text,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: ui.textSoft,
   },
   shell: { gap: spacing.md },
   shellWide: {
@@ -1097,5 +1107,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFFFFF',
     zIndex: 10,
+  },
+  settingsBtnCard: {
+    padding: spacing.xs,
   },
 });

@@ -1,6 +1,6 @@
 import { storageAdapter } from './asyncStorageAdapter';
 
-const INTRO_SEEN_KEY = 'rotoraxismatch_has_seen_intro';
+const INTRO_SEEN_KEY = 'aviationjobtalent_has_seen_intro';
 
 export async function hasSeenIntro(): Promise<boolean> {
   const value = await storageAdapter.get<boolean>(INTRO_SEEN_KEY);

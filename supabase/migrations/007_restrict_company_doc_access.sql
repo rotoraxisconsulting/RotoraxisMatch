@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 007: Restrict company document access
+-- AviationJobTalent V2 — Migration 007: Restrict company document access
 -- ============================================================
 -- Created: 2026-06-05
 --

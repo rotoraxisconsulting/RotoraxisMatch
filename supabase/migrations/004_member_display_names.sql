@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 004: Member display names
+-- AviationJobTalent V2 — Migration 004: Member display names
 -- ============================================================
 -- Created: 2026-06-04
 --

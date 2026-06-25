@@ -5,7 +5,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.107.0';
 // Add domains here as the product expands to new environments.
 const ALLOWED_ORIGINS = [
   'http://localhost:8081',
-  'https://app.rotoraxismatch.com',
+  'https://aviationjobtalent.vercel.app',
+  'https://app.aviationjobtalent.com',
 ];
 
 function buildCorsHeaders(origin) {

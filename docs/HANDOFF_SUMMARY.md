@@ -1,4 +1,4 @@
-# RotoraxisMatch — V2 Handoff Summary
+# AviationJobTalent — V2 Handoff Summary
 
 **As of:** 2026-06-01  
 **Current state:** V2-S0C final pre-Supabase audit complete - all critical/high pre-Supabase issues are resolved or explicitly deferred; ready for Supabase/Auth foundation (V2-S1)
@@ -7,7 +7,7 @@
 
 ## What is built
 
-RotoraxisMatch V2 is a cross-platform aviation technician matching app. It runs on Web, iOS, and Android via Expo.
+AviationJobTalent V2 is a cross-platform aviation technician matching app. It runs on Web, iOS, and Android via Expo.
 
 The app is fully functional in **demo mode** (AsyncStorage + JSON seeds). Real auth and Supabase are not yet connected.
 

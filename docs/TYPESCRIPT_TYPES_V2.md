@@ -1,4 +1,4 @@
-# TypeScript Types V2 — RotoraxisMatch
+# TypeScript Types V2 — AviationJobTalent
 
 These are the canonical TypeScript types for V2.
 When implementing, place these in `src/types/` split by domain file.

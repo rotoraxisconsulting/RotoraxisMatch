@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 003: Admin company verification RPC
+-- AviationJobTalent V2 — Migration 003: Admin company verification RPC
 -- ============================================================
 -- Created: 2026-06-03
 --

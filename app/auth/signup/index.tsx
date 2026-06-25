@@ -59,7 +59,7 @@ export default function SignupScreen() {
           <Text style={styles.logoIcon}>✈</Text>
           <Text style={styles.title}>Create your account</Text>
           <Text style={styles.subtitle}>
-            Choose how you will use RotoraxisMatch.
+            Choose how you will use Aviation Job Talent.
           </Text>
         </View>
 

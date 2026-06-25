@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2 — Migration 005: Activity event triggers
+-- AviationJobTalent V2 — Migration 005: Activity event triggers
 -- ============================================================
 -- Created: 2026-06-04
 --

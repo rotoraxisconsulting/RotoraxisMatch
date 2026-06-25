@@ -1,5 +1,5 @@
 -- ============================================================
--- RotoraxisMatch V2-S1 — Admin Bootstrap SQL
+-- AviationJobTalent V2-S1 — Admin Bootstrap SQL
 -- ============================================================
 -- Run this AFTER SUPABASE_SCHEMA_V2.sql and AFTER creating
 -- the admin user manually in Supabase Auth Dashboard.

@@ -1,4 +1,4 @@
-# RotoraxisMatch MVP Architecture & Data Model — Clean Handoff
+# AviationJobTalent MVP Architecture & Data Model — Clean Handoff
 
 **Date:** 2026-05-27  
 **Status:** Local demo complete. Next phase: Supabase/Auth (V2-S1).  

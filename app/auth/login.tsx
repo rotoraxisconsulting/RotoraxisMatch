@@ -70,7 +70,7 @@ export default function LoginScreen() {
           <View style={styles.header}>
             <Text style={styles.logoIcon}>✈</Text>
             <Text style={styles.title}>Sign in</Text>
-            <Text style={styles.subtitle}>RotoraxisMatch</Text>
+            <Text style={styles.subtitle}>Aviation Job Talent</Text>
           </View>
 
           <View style={styles.form}>

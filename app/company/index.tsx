@@ -18,6 +18,7 @@ import {
   MapPin,
   MessageCircle,
   Search,
+  Settings,
 } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
@@ -260,9 +261,8 @@ export default function CompanyDashboard() {
         showsVerticalScrollIndicator={false}
       >
         <CompanyPageHeader
-          eyebrow="Operator Dashboard"
+          eyebrow="Aviation Job Talent"
           title="Company operations"
-          subtitle="Manage offers, applications and technician outreach."
         />
 
         <View style={[styles.shell, isWide && styles.shellWide]}>
@@ -275,6 +275,7 @@ export default function CompanyDashboard() {
                 canViewTeam={canViewTeam}
                 companyMemberRole={companyMemberRole}
                 onProfilePress={() => router.push('/company/profile' as any)}
+                onSettingsPress={() => router.push('/settings' as any)}
               />
             ) : !sessionLoading && companyId ? (
               <CompanyLoadingCard />
@@ -367,6 +368,7 @@ function CompanyProfilePanel({
   canViewTeam,
   companyMemberRole,
   onProfilePress,
+  onSettingsPress,
 }: {
   company: SupabaseCompany;
   memberName: string;
@@ -374,10 +376,16 @@ function CompanyProfilePanel({
   canViewTeam: boolean;
   companyMemberRole: string;
   onProfilePress: () => void;
+  onSettingsPress: () => void;
 }) {
   return (
     <CompanyCard style={styles.profileCard}>
-      <SectionTitle label="Operator profile" value="Company" />
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionLabel}>Operator profile</Text>
+        <TouchableOpacity onPress={onSettingsPress} style={styles.settingsBtnCard} activeOpacity={0.7}>
+          <Settings size={16} color={companyUi.textMuted} strokeWidth={2} />
+        </TouchableOpacity>
+      </View>
       <View style={styles.profileTop}>
         <View style={styles.companyMark}>
           <Building2 color={colors.white} size={24} strokeWidth={2} />
@@ -928,5 +936,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#FFFFFF',
     zIndex: 10,
+  },
+  settingsBtnCard: {
+    padding: spacing.xs,
   },
 });

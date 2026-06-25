@@ -1,4 +1,4 @@
-# Supabase Plan V2 — RotoraxisMatch
+# Supabase Plan V2 — AviationJobTalent
 
 The local V2 demo is complete. This document is the migration target for the first Supabase/Auth phase. See the **Migration path** section at the bottom for recommended implementation order.
 
