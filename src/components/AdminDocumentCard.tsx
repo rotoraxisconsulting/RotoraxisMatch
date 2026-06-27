@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Text,
   TextInput,
   StyleSheet,
@@ -10,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Calendar, CheckCircle, Clock, Download, FileCheck, FileText, UserRound, XCircle } from 'lucide-react-native';
-import { getDocumentSignedUrl } from '../lib/documentStorage';
+import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '../lib/documentStorage';
 import type { LucideProps } from 'lucide-react-native';
 import type { DocumentStatus, DocumentType, TechnicianDocument } from '../types';
 import {
@@ -131,16 +130,16 @@ export function AdminDocumentCard({
 
   async function handleViewFile() {
     if (!storagePath) return;
+    const win = openDocumentPreWindow();
     setViewLoading(true);
-    const { url, error } = await getDocumentSignedUrl(storagePath, 120);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120, true);
     setViewLoading(false);
     if (error || !url) {
+      win?.close();
       Alert.alert('Error', error ?? 'Could not generate download link.');
       return;
     }
-    Linking.openURL(url).catch(() =>
-      Alert.alert('Error', 'Could not open the document link.'),
-    );
+    openDocumentUrl(url, win);
   }
 
   const availableActions = ACTIONS.filter((action) => action.status !== document.status);

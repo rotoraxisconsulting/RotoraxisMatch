@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Linking,
   useWindowDimensions,
   RefreshControl,
 } from 'react-native';
@@ -45,7 +44,7 @@ import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
-import { getDocumentSignedUrl } from '../../../src/lib/documentStorage';
+import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '../../../src/lib/documentStorage';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
 import { OfferRequest } from '../../../src/types/offerRequest';
@@ -170,16 +169,16 @@ export default function DirectOfferDetailScreen() {
   }
 
   async function handleViewDoc(docId: string, storagePath: string) {
+    const win = openDocumentPreWindow();
     setViewingDocId(docId);
-    const { url, error } = await getDocumentSignedUrl(storagePath, 120);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120, true);
     setViewingDocId(null);
     if (error || !url) {
+      win?.close();
       Alert.alert('Error', error ?? 'Could not generate download link.');
       return;
     }
-    Linking.openURL(url).catch(() =>
-      Alert.alert('Error', 'Could not open the document link.'),
-    );
+    openDocumentUrl(url, win);
   }
 
   if (loading) {

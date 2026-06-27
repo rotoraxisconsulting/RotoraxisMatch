@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 import { File as FsFile } from 'expo-file-system';
 import { supabase } from './supabase';
 
@@ -86,16 +86,48 @@ export async function uploadDocumentToStorage(
 }
 
 /**
+ * Opens a document URL in a way that works on iOS Safari.
+ *
+ * iOS Safari blocks window.open() / navigations that happen after an await because the
+ * user gesture is consumed by the first tick. The fix: call window.open('', '_blank')
+ * synchronously (before any await), then assign location.href once the URL is ready.
+ *
+ * Usage pattern in call sites:
+ *   const win = openDocumentPreWindow();          // sync — must be first line
+ *   const { url, error } = await getDocumentSignedUrl(...);
+ *   openDocumentUrl(url, win);
+ */
+export function openDocumentPreWindow(): Window | null {
+  if (Platform.OS !== 'web') return null;
+  // @ts-ignore — window is not in RN types but exists on web
+  return (typeof window !== 'undefined') ? window.open('', '_blank') : null;
+}
+
+export function openDocumentUrl(url: string | null, win: Window | null): void {
+  if (!url) {
+    win?.close();
+    return;
+  }
+  if (Platform.OS === 'web' && win) {
+    win.location.href = url;
+  } else {
+    Linking.openURL(url).catch(() => {});
+  }
+}
+
+/**
  * Creates a short-lived signed URL for a private document.
  * Default expiry: 120 seconds — enough to open the file.
+ * Pass download=true to add Content-Disposition: attachment (required for iOS Safari downloads).
  */
 export async function getDocumentSignedUrl(
   storagePath: string,
   expiresInSeconds = 120,
+  download = false,
 ): Promise<{ url: string | null; error: string | null }> {
   const { data, error } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(storagePath, expiresInSeconds);
+    .createSignedUrl(storagePath, expiresInSeconds, download ? { download: true } : undefined);
   if (error) return { url: null, error: error.message };
   return { url: data.signedUrl, error: null };
 }

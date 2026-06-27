@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Linking,
   useWindowDimensions,
   RefreshControl,
   Modal,
@@ -25,7 +24,7 @@ import {
   UserRound,
   XCircle,
 } from 'lucide-react-native';
-import { getDocumentSignedUrl } from '../../../src/lib/documentStorage';
+import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '../../../src/lib/documentStorage';
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
@@ -166,16 +165,17 @@ export default function ApplicationDetailScreen() {
   }
 
   async function handleViewDoc(docId: string, storagePath: string) {
+    // Must be called synchronously before any await — iOS Safari blocks window.open() after async gaps.
+    const win = openDocumentPreWindow();
     setViewingDocId(docId);
-    const { url, error } = await getDocumentSignedUrl(storagePath, 120);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120, true);
     setViewingDocId(null);
     if (error || !url) {
+      win?.close();
       Alert.alert('Error', error ?? 'Could not generate download link.');
       return;
     }
-    Linking.openURL(url).catch(() =>
-      Alert.alert('Error', 'Could not open the document link.'),
-    );
+    openDocumentUrl(url, win);
   }
 
   async function doConfirmAction() {
