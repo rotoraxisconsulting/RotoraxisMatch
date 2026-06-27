@@ -171,7 +171,7 @@ export default function DirectOfferDetailScreen() {
   async function handleViewDoc(docId: string, storagePath: string) {
     const win = openDocumentPreWindow();
     setViewingDocId(docId);
-    const { url, error } = await getDocumentSignedUrl(storagePath, 120, true);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120, false);
     setViewingDocId(null);
     if (error || !url) {
       win?.close();

@@ -9,7 +9,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
-import { ArrowLeft, SlidersHorizontal } from 'lucide-react-native';
+import { ArrowLeft, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react-native';
 import { SafeTechnicianView, AvailabilityStatus, VerificationStatus } from '../types';
 import { MapFilters, MapFilterValue } from '../types/filters';
 import { MapOfferMatchOption } from '../types/mapOffers';
@@ -339,11 +339,12 @@ export default function TechnicianMapLeafletImpl({
 }: TechnicianMapProps) {
   useLeafletCss();
   const { width } = useWindowDimensions();
+  const isCompactMap = width < 760;
   const [filterOpen, setFilterOpen] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(isCompactMap);
   const [selectedOfferTechId, setSelectedOfferTechId] = useState<string | null>(null);
   const [sendingOfferKey, setSendingOfferKey] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
-  const isCompactMap = width < 760;
   const sidePanelWidth = Math.min(width - 40, isCompactMap ? 224 : 232);
   const filterPanelFrame = isCompactMap
     ? { top: 320, left: 20, width: Math.min(width - 40, 320) }
@@ -520,8 +521,9 @@ export default function TechnicianMapLeafletImpl({
         ))}
       </MapContainer>
 
-      {/* ── Top overlay bar ── */}
+      {/* ── Side panel ── */}
       <View style={[styles.sidePanel, { width: sidePanelWidth }]}>
+        {/* Back + Results — always visible */}
         <View style={styles.panelTopRow}>
           <TouchableOpacity
             style={[styles.backButton, { flex: 1 }]}
@@ -546,48 +548,72 @@ export default function TechnicianMapLeafletImpl({
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.filterBtn, filterOpen && styles.filterBtnActive]}
-          onPress={() => setFilterOpen((v) => !v)}
-          activeOpacity={0.85}
-          accessibilityRole="button"
-          accessibilityLabel="Filters"
-        >
-          <SlidersHorizontal color={filterOpen ? colors.white : colors.navy} size={17} strokeWidth={2.2} />
-          <Text style={[styles.filterBtnText, filterOpen && styles.filterBtnTextActive]}>Filters</Text>
-          {filterCount > 0 ? (
-            <View style={[styles.filterBadge, filterOpen && styles.filterBadgeActive]}>
-              <Text style={[styles.filterBadgeText, filterOpen && styles.filterBadgeTextActive]}>{filterCount}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
+        {/* Expandable section — hidden on mobile when collapsed */}
+        {(!isCompactMap || !panelCollapsed) && (
+          <>
+            <TouchableOpacity
+              style={[styles.filterBtn, filterOpen && styles.filterBtnActive]}
+              onPress={() => setFilterOpen((v) => !v)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Filters"
+            >
+              <SlidersHorizontal color={filterOpen ? colors.white : colors.navy} size={17} strokeWidth={2.2} />
+              <Text style={[styles.filterBtnText, filterOpen && styles.filterBtnTextActive]}>Filters</Text>
+              {filterCount > 0 ? (
+                <View style={[styles.filterBadge, filterOpen && styles.filterBadgeActive]}>
+                  <Text style={[styles.filterBadgeText, filterOpen && styles.filterBadgeTextActive]}>{filterCount}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
 
-        {filterCount > 0 ? (
-          <View style={styles.activeFiltersBlock}>
-            {activeChips.map((chip) => (
-              <TouchableOpacity
-                key={`${chip.key}-${chip.value}`}
-                style={styles.activeChip}
-                onPress={() => setMultiFilter(
-                  chip.key,
-                  selectedFilterValues(filters, chip.key).filter((item) => item !== chip.value),
-                )}
-              >
-                <Text style={styles.activeChipText}>{chip.label} x</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : null}
+            {filterCount > 0 ? (
+              <View style={styles.activeFiltersBlock}>
+                {activeChips.map((chip) => (
+                  <TouchableOpacity
+                    key={`${chip.key}-${chip.value}`}
+                    style={styles.activeChip}
+                    onPress={() => setMultiFilter(
+                      chip.key,
+                      selectedFilterValues(filters, chip.key).filter((item) => item !== chip.value),
+                    )}
+                  >
+                    <Text style={styles.activeChipText}>{chip.label} x</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
 
-        <View style={styles.legendCard}>
-          <Text style={styles.panelLabel}>Availability</Text>
-          {legendItems.map(({ color, label }) => (
-            <View key={label} style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: color }]} />
-              <Text style={styles.legendText}>{label}</Text>
+            <View style={styles.legendCard}>
+              <Text style={styles.panelLabel}>Availability</Text>
+              {legendItems.map(({ color, label }) => (
+                <View key={label} style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: color }]} />
+                  <Text style={styles.legendText}>{label}</Text>
+                </View>
+              ))}
             </View>
-          ))}
-        </View>
+          </>
+        )}
+
+        {/* Collapse toggle — mobile only */}
+        {isCompactMap && (
+          <TouchableOpacity
+            style={styles.collapseToggle}
+            onPress={() => {
+              setPanelCollapsed((v) => !v);
+              if (!panelCollapsed) setFilterOpen(false);
+            }}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={panelCollapsed ? 'Expand panel' : 'Collapse panel'}
+          >
+            {panelCollapsed
+              ? <ChevronDown color={colors.textMuted} size={16} strokeWidth={2.5} />
+              : <ChevronUp color={colors.textMuted} size={16} strokeWidth={2.5} />
+            }
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── Active filter chips ── */}
@@ -1050,5 +1076,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '700',
+  },
+  collapseToggle: {
+    alignSelf: 'center',
+    paddingVertical: 2,
+    paddingHorizontal: 24,
   },
 });

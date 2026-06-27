@@ -168,7 +168,7 @@ export default function ApplicationDetailScreen() {
     // Must be called synchronously before any await — iOS Safari blocks window.open() after async gaps.
     const win = openDocumentPreWindow();
     setViewingDocId(docId);
-    const { url, error } = await getDocumentSignedUrl(storagePath, 120, true);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120, false);
     setViewingDocId(null);
     if (error || !url) {
       win?.close();

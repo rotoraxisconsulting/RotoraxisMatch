@@ -132,7 +132,7 @@ export function AdminDocumentCard({
     if (!storagePath) return;
     const win = openDocumentPreWindow();
     setViewLoading(true);
-    const { url, error } = await getDocumentSignedUrl(storagePath, 120, true);
+    const { url, error } = await getDocumentSignedUrl(storagePath, 120, false);
     setViewLoading(false);
     if (error || !url) {
       win?.close();
