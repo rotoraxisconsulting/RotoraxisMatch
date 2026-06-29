@@ -253,7 +253,7 @@ export const companyStyles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: 0.2,
-    color: companyUi.accent,
+    color: '#0891B2',
     marginBottom: 2,
   },
   pageTitle: {

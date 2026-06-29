@@ -205,6 +205,14 @@ export const offerRepository = {
     };
   },
 
+  async delete(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('offers')
+      .delete()
+      .eq('id', id);
+    throwIfError(error);
+  },
+
   async replaceRequirements(offerId: string, requirements: {
     technicianTypes: TechnicianTypeCode[];
     licenses: LicenseCode[];

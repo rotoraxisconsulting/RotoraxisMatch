@@ -16,6 +16,7 @@ import {
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   BriefcaseBusiness,
+  CalendarDays,
   CheckCircle,
   ClipboardCheck,
   Clock,
@@ -23,6 +24,7 @@ import {
   ListChecks,
   MapPin,
   Send,
+  Trash2,
   UserRound,
   XCircle,
 } from 'lucide-react-native';
@@ -135,6 +137,11 @@ function applicationActionColor(status: OfferApplication['status']): string {
   return companyUi.textSoft;
 }
 
+function formatPublishedDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 function shouldPreferRelation(next: OfferRelation, current?: OfferRelation): boolean {
   if (!current) return true;
   const currentOrder = OFFER_RELATION_STATUS_ORDER[current.status] ?? 4;
@@ -238,6 +245,39 @@ export default function OfferDetailScreen() {
         onPress: closeOffer,
       },
     ]);
+  }
+
+  async function deleteOffer() {
+    if (!id) return;
+    setStatusChanging(true);
+    try {
+      await offerRepository.delete(id);
+      router.replace('/company/offers' as any);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Could not delete the offer.');
+      setStatusChanging(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!offer || !id) return;
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window === 'undefined'
+        ? true
+        : window.confirm('Delete offer?\n\nThis action cannot be undone. All applications and direct offers linked to this offer will also be removed.');
+      if (!confirmed) return;
+      await deleteOffer();
+      return;
+    }
+
+    Alert.alert(
+      'Delete offer?',
+      'This action cannot be undone. All applications and direct offers linked to this offer will also be removed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: deleteOffer },
+      ],
+    );
   }
 
   async function handleSendOffer() {
@@ -396,6 +436,7 @@ export default function OfferDetailScreen() {
           <View style={styles.metaGrid}>
             <MetaTile label="Contract" value={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} />
             <MetaTile label="Experience" value={`${offer.minYearsExperience} yrs min`} />
+            <MetaTile label="Published" value={formatPublishedDate(offer.createdAt)} icon={CalendarDays} />
           </View>
 
           <View style={styles.locationLine}>
@@ -457,6 +498,17 @@ export default function OfferDetailScreen() {
                 >
                   {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <XCircle color={colors.white} size={16} strokeWidth={2} />}
                   <Text style={styles.primaryButtonText}>Close offer</Text>
+                </TouchableOpacity>
+              ) : null}
+              {offer.status === 'closed' ? (
+                <TouchableOpacity
+                  style={[styles.deleteButton, statusChanging && styles.btnDisabled]}
+                  onPress={handleDelete}
+                  disabled={statusChanging}
+                  activeOpacity={0.75}
+                >
+                  {statusChanging ? <ActivityIndicator color={colors.white} size="small" /> : <Trash2 color={colors.white} size={16} strokeWidth={2} />}
+                  <Text style={styles.primaryButtonText}>Delete offer</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -652,10 +704,17 @@ function SectionTitle({ title }: { title: string }) {
   return <Text style={styles.sectionTitle}>{title}</Text>;
 }
 
-function MetaTile({ label, value }: { label: string; value: string }) {
+function MetaTile({ label, value, icon: Icon }: { label: string; value: string; icon?: React.ComponentType<{ color: string; size: number; strokeWidth: number }> }) {
   return (
     <View style={styles.metaTile}>
-      <Text style={styles.metaLabel}>{label}</Text>
+      {Icon ? (
+        <View style={styles.metaLabelRow}>
+          <Icon color={companyUi.textMuted} size={11} strokeWidth={2} />
+          <Text style={styles.metaLabel}>{label}</Text>
+        </View>
+      ) : (
+        <Text style={styles.metaLabel}>{label}</Text>
+      )}
       <Text style={styles.metaValue}>{value}</Text>
     </View>
   );
@@ -735,6 +794,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: companyUi.borderSoft,
     padding: spacing.sm,
+  },
+  metaLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
   },
   metaLabel: {
     fontSize: 11,
@@ -836,6 +900,17 @@ const styles = StyleSheet.create({
     minHeight: 42,
     borderRadius: 15,
     backgroundColor: companyUi.red,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  deleteButton: {
+    flex: 1,
+    minWidth: 140,
+    minHeight: 42,
+    borderRadius: 15,
+    backgroundColor: companyUi.textMuted,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

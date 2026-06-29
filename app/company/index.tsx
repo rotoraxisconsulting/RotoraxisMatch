@@ -801,10 +801,10 @@ const styles = StyleSheet.create({
   actionFull: { width: '100%' },
   actionCard: {
     minHeight: 62,
-    backgroundColor: companyUi.surface,
+    backgroundColor: companyUi.surfaceSoft,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: companyUi.border,
+    borderColor: companyUi.borderSoft,
     paddingVertical: 12,
     paddingHorizontal: 14,
     flexDirection: 'row',

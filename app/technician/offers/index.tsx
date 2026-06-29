@@ -34,6 +34,11 @@ import { OfferApplication } from '../../../src/types/offerRequest';
 import { ContractTypeCode } from '../../../src/types/catalog';
 import { inferAircraftCategory, AircraftCategory } from '../../../src/constants/aircraftTypes';
 
+function formatPublishedDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 const CONTRACT_LABELS: Record<string, string> = {
   permanent: 'Permanent',
   long_term: 'Long-term',
@@ -280,6 +285,7 @@ export default function BrowseOffersScreen() {
                   {offer.locationCity}, {offer.locationCountry}
                   {offer.locationBaseAirport ? ` - ${offer.locationBaseAirport}` : ''}
                 </Text>
+                <Text style={styles.cardDate}>Published {formatPublishedDate(offer.createdAt)}</Text>
 
                 <View style={styles.metaRow}>
                   <TechnicianBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" small />
@@ -361,7 +367,8 @@ const styles = StyleSheet.create({
     marginBottom: 3,
   },
   cardCompany: { fontSize: 12, color: techUi.textSoft, fontWeight: '500' },
-  cardLocation: { fontSize: 12, color: techUi.textMuted, marginBottom: spacing.sm, fontWeight: '500' },
+  cardLocation: { fontSize: 12, color: techUi.textMuted, marginBottom: 3, fontWeight: '500' },
+  cardDate: { fontSize: 11, color: techUi.textMuted, marginBottom: spacing.sm, fontWeight: '500' },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.xs },
   reqRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
   cardFooter: {

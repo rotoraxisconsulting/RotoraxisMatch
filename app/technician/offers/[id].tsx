@@ -41,6 +41,11 @@ import { MatchScore } from '../../../src/types/matching';
 import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest';
 import { ChatRoom } from '../../../src/types/chat';
 
+function formatPublishedDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 const CONTRACT_LABELS: Record<string, string> = {
   permanent: 'Permanent',
   long_term: 'Long-term',
@@ -268,6 +273,7 @@ export default function OfferDetailScreen() {
             {offer.locationCity}, {offer.locationCountry}
             {offer.locationBaseAirport ? ` - ${offer.locationBaseAirport}` : ''}
           </Text>
+          <Text style={styles.publishedDate}>Published {formatPublishedDate(offer.createdAt)}</Text>
           <Text style={styles.description}>{offer.description}</Text>
         </TechnicianCard>
 
@@ -426,7 +432,8 @@ const styles = StyleSheet.create({
   closedBannerText: { fontSize: 12, color: techUi.textMuted, fontWeight: '600', lineHeight: 17 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.md },
   companyLine: { fontSize: 14, fontWeight: '600', color: techUi.textSoft, marginBottom: 3 },
-  location: { fontSize: 12, fontWeight: '500', color: techUi.textMuted, marginBottom: spacing.sm },
+  location: { fontSize: 12, fontWeight: '500', color: techUi.textMuted, marginBottom: 3 },
+  publishedDate: { fontSize: 11, fontWeight: '500', color: techUi.textMuted, marginBottom: spacing.sm },
   description: { fontSize: 13, color: techUi.textSoft, lineHeight: 20 },
   section: { marginBottom: spacing.md },
   sectionTitle: {

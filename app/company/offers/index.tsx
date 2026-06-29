@@ -11,6 +11,7 @@ import {
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import {
   BriefcaseBusiness,
+  CalendarDays,
   ClipboardCheck,
   Edit3,
   ListChecks,
@@ -65,6 +66,11 @@ const CONTRACT_LABELS: Record<string, string> = {
   long_term: 'Long-term',
   short_term: 'Short-term',
 };
+
+function formatPublishedDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
 function compactRequirements(offer: OfferWithRequirements): string[] {
   return [
@@ -202,6 +208,12 @@ export default function OffersListScreen() {
                     <Text style={styles.locationText} numberOfLines={1}>
                       {offer.locationCity}, {offer.locationCountry}
                       {offer.locationBaseAirport ? ` - ${offer.locationBaseAirport}` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.locationRow}>
+                    <CalendarDays color={companyUi.textMuted} size={14} strokeWidth={2} />
+                    <Text style={styles.locationText}>
+                      {offer.status === 'draft' ? 'Created' : 'Published'} {formatPublishedDate(offer.createdAt)}
                     </Text>
                   </View>
                 </View>
