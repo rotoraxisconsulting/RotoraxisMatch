@@ -28,6 +28,7 @@ import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '..
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
+import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import {
   CompanyBadge,
   CompanyCard,
@@ -46,6 +47,7 @@ import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianR
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { canReviewApplications } from '../../../src/utils/companyPermissionsV2';
@@ -111,6 +113,8 @@ export default function ApplicationDetailScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+
   const load = useCallback(async () => {
     if (!id) return;
     const application = await offerApplicationRepository.getById(id);
@@ -125,7 +129,7 @@ export default function ApplicationDetailScreen() {
 
     setOffer(o);
     setTechView(view);
-    if (o && rel) setScore(calculateOfferTechnicianMatch(o, rel));
+    if (o && rel) setScore(calculateOfferTechnicianMatch(o, rel, ratingIndex));
 
     if (application.status === 'accepted') {
       const rooms = await chatRepository.getRoomsForCompany(companyId);
@@ -135,7 +139,7 @@ export default function ApplicationDetailScreen() {
     }
 
     await activityRepository.markRead('company', companyId, id);
-  }, [companyId, id]);
+  }, [companyId, id, ratingIndex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -338,6 +342,7 @@ export default function ApplicationDetailScreen() {
             <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} />
             <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={5} />
+            <MatchExplanation score={score} />
           </CompanyCard>
         ) : null}
 

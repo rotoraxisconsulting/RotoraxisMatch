@@ -13,8 +13,10 @@ import {
 } from 'react-native';
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { colors, spacing } from '../../../src/theme';
+import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
+import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import { Button } from '../../../src/components/Button';
 import {
   EmptyPanel,
@@ -35,6 +37,7 @@ import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { CompanyProfileView } from '../../../src/types/company';
 import { MatchScore } from '../../../src/types/matching';
@@ -108,6 +111,8 @@ export default function OfferDetailScreen() {
   const [coverNote, setCoverNote] = useState('');
   const [applying, setApplying] = useState(false);
 
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+
   const load = useCallback(async () => {
     if (!id) return;
     const o = await offerRepository.getWithRequirements(id);
@@ -133,7 +138,7 @@ export default function OfferDetailScreen() {
     setCompany(c);
 
     if (techWithRelations) {
-      const matchScore = calculateOfferTechnicianMatch(o, techWithRelations);
+      const matchScore = calculateOfferTechnicianMatch(o, techWithRelations, ratingIndex);
       setScore(matchScore);
     }
 
@@ -151,7 +156,7 @@ export default function OfferDetailScreen() {
     } else {
       setChatRoom(null);
     }
-  }, [id, technicianId]);
+  }, [id, technicianId, ratingIndex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -279,12 +284,19 @@ export default function OfferDetailScreen() {
 
         {(offer.requiredTechnicianTypes.length > 0 ||
           offer.requiredLicenses.length > 0 ||
-          offer.requiredAircraftTypes.length > 0) && (
+          offer.requiredAircraftTypes.length > 0 ||
+          offer.requiredHabilitations.length > 0) && (
           <TechnicianCard style={styles.section}>
             <Text style={styles.sectionTitle}>Requirements</Text>
             {offer.requiredTechnicianTypes.length > 0 && <ReqRow label="Technician types" items={offer.requiredTechnicianTypes} />}
             {offer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={offer.requiredLicenses} />}
             {offer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft types" items={offer.requiredAircraftTypes} />}
+            {offer.requiredHabilitations.length > 0 && (
+              <ReqRow
+                label="Exact habilitations"
+                items={offer.requiredHabilitations.map((h) => `${h.licenseCode} + ${getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex)} (${h.requirementLevel})`)}
+              />
+            )}
           </TechnicianCard>
         )}
 
@@ -298,6 +310,7 @@ export default function OfferDetailScreen() {
             <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} accent={accent} />
             <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} accent={accent} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={5} accent={accent} />
+            <MatchExplanation score={score} />
           </TechnicianCard>
         )}
 

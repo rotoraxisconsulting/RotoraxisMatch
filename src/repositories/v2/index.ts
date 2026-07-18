@@ -8,3 +8,4 @@ export { offerApplicationRepository } from './offerApplicationRepository';
 export { documentRepositoryV2 } from './documentRepositoryV2';
 export { chatRepository } from './chatRepository';
 export { inboxRepository } from './inboxRepository';
+export { catalogRequestRepository } from './catalogRequestRepository';

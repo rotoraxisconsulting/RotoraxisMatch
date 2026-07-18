@@ -95,9 +95,12 @@ export function AdminTechnicianCard({ technician, details, onUpdateStatus }: Pro
   const licenseChips = compactValues(
     details?.licenses.map((license) => license.licenseCode) ?? technician.licenseCategories,
   );
-  const habilitationChips = compactValues(
-    details?.habilitations.map((habilitation) => habilitation.aircraftTypeCode) ?? technician.aircraftTypes,
-  );
+  // technician.aircraftTypes is already derived from the habilitations
+  // (via v2TechnicianToV1 -> habilitationAircraftCodes in useAdminDashboard,
+  // which has the aircraft ratings catalog loaded) — no need to recompute it
+  // here from `details.habilitations` with a second, separately-loaded copy
+  // of the catalog.
+  const habilitationChips = compactValues(technician.aircraftTypes);
 
   return (
     <AdminCard

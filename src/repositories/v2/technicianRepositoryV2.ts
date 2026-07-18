@@ -6,6 +6,8 @@ import {
 } from '../../types/technician';
 import { SafeTechnicianPreview, TechnicianView, isUnlocked } from '../../types/privacy';
 import { LicenseCode } from '../../types/catalog';
+import { AircraftRatingIndex, buildAircraftRatingIndex, ratingMatchesLegacyCode } from '../../constants/aircraftTypeRatings';
+import { catalogRepository } from './catalogRepository';
 import {
   DbRow,
   loadTechnicianRelations,
@@ -63,6 +65,7 @@ function matchesSearchFilters(
     availabilityStatus?: AvailabilityStatus;
     availableImmediately?: boolean;
   },
+  ratingIndex: AircraftRatingIndex,
 ): boolean {
   if (filters.technicianType && preview.technicianType !== filters.technicianType) return false;
   if (filters.country && preview.country !== filters.country) return false;
@@ -71,7 +74,17 @@ function matchesSearchFilters(
   if (filters.availabilityStatus && preview.availability.status !== filters.availabilityStatus) return false;
   if (filters.availableImmediately === true && !preview.availability.immediately) return false;
   if (filters.licenseCode && !preview.licenses.includes(filters.licenseCode as LicenseCode)) return false;
-  if (filters.aircraftTypeCode && !preview.habilitations.some((h) => h.aircraftTypeCode === filters.aircraftTypeCode)) return false;
+  if (
+    filters.aircraftTypeCode &&
+    !preview.habilitations.some((h) => {
+      if (h.aircraftTypeCode === filters.aircraftTypeCode) return true;
+      if (!h.aircraftTypeRatingId) return false;
+      const rating = ratingIndex.get(h.aircraftTypeRatingId);
+      return Boolean(rating) && ratingMatchesLegacyCode(rating!, filters.aircraftTypeCode as string);
+    })
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -218,25 +231,70 @@ export const technicianRepositoryV2 = {
     throwIfError(error);
   },
 
-  async updateAircraftTypes(technicianId: string, aircraftTypeCodes: string[]): Promise<void> {
+  /**
+   * @deprecated Unsafe: a flat aircraft-type list has no way to say which
+   * license each aircraft belongs to. The old implementation defaulted every
+   * aircraft to the technician's *first* license, which silently created
+   * false category+aircraft combinations (e.g. tagging a B2-only habilitation
+   * as if it were held under B1.3). Use replaceHabilitations() instead, which
+   * requires an explicit licenseCode per entry. This method is kept only so
+   * legacy call sites still type-check; calling it always throws so it can
+   * never re-create a false association.
+   */
+  async updateAircraftTypes(_technicianId: string, _aircraftTypeCodes: string[]): Promise<void> {
+    throw new Error(
+      'technicianRepositoryV2.updateAircraftTypes() is deprecated and unsafe — it cannot ' +
+      'determine which license an aircraft type belongs to. Use replaceHabilitations() with ' +
+      'explicit { licenseCode, aircraftTypeRatingId } pairs instead.',
+    );
+  },
+
+  /**
+   * Replaces a technician's normalized habilitations with an explicit set of
+   * { licenseCode, aircraftTypeRatingId } pairs. Never infers or defaults the
+   * license — every row must name its own category. Only rows that already
+   * carry a rating id are replaced; legacy rows (aircraft_type_code only,
+   * written before this rating catalog existed) are left untouched — they
+   * are never auto-migrated to a specific rating.
+   */
+  async replaceHabilitations(
+    technicianId: string,
+    entries: {
+      licenseCode: string;
+      aircraftTypeRatingId: string;
+      issuedAt?: string;
+      expiresAt?: string;
+      experienceYears?: number;
+      isCurrent?: boolean;
+    }[],
+  ): Promise<void> {
     const { error: deleteError } = await supabase
       .from('technician_habilitations')
       .delete()
-      .eq('technician_id', technicianId);
+      .eq('technician_id', technicianId)
+      .not('aircraft_type_rating_id', 'is', null);
     throwIfError(deleteError);
 
-    if (aircraftTypeCodes.length === 0) return;
-    const licenses = await this.getLicenses(technicianId);
-    const defaultLicenseCode = licenses[0]?.licenseCode;
-    if (!defaultLicenseCode) return;
-
+    if (entries.length === 0) return;
     const { error } = await supabase
       .from('technician_habilitations')
-      .insert(aircraftTypeCodes.map((code) => ({
-        technician_id: technicianId,
-        license_code: defaultLicenseCode,
-        aircraft_type_code: code,
-      })));
+      .insert(
+        entries.map((entry) => ({
+          technician_id: technicianId,
+          license_code: entry.licenseCode,
+          aircraft_type_rating_id: entry.aircraftTypeRatingId,
+          issued_at: entry.issuedAt ?? null,
+          expires_at: entry.expiresAt ?? null,
+          experience_years: entry.experienceYears ?? null,
+          is_current: entry.isCurrent ?? true,
+        })),
+      );
+    throwIfError(error);
+  },
+
+  /** Deletes a single habilitation row (legacy or normalized) by id. */
+  async deleteHabilitation(id: string): Promise<void> {
+    const { error } = await supabase.from('technician_habilitations').delete().eq('id', id);
     throwIfError(error);
   },
 
@@ -269,9 +327,13 @@ export const technicianRepositoryV2 = {
     throwIfError(error);
 
     const rows = (data ?? []) as DbRow[];
-    const relations = await loadTechnicianRelations(rows.map((row) => row.id));
+    const [relations, ratings] = await Promise.all([
+      loadTechnicianRelations(rows.map((row) => row.id)),
+      catalogRepository.getAircraftTypeRatings(),
+    ]);
+    const ratingIndex = buildAircraftRatingIndex(ratings);
     return rows
       .map((row) => mapPublicTechnicianRow(row, relations[row.id]))
-      .filter((preview) => matchesSearchFilters(preview, filters));
+      .filter((preview) => matchesSearchFilters(preview, filters, ratingIndex));
   },
 };

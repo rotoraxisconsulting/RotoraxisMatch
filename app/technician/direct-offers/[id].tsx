@@ -14,6 +14,7 @@ import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-rou
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
+import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import { Button } from '../../../src/components/Button';
 import {
   EmptyPanel,
@@ -34,6 +35,7 @@ import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { OfferRequest } from '../../../src/types/offerRequest';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { CompanyProfileView } from '../../../src/types/company';
@@ -103,6 +105,8 @@ export default function DirectOfferDetailScreen() {
   const [confirmAction, setConfirmAction] = useState<'accept' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+
   const load = useCallback(async () => {
     if (!id) return;
     const req = await offerRequestRepository.getById(id);
@@ -121,7 +125,7 @@ export default function DirectOfferDetailScreen() {
     // Compute score when offer is active, or when the direct offer is accepted (historical context).
     const offerActive = isOfferOpenForTechnicians(off);
     if (off && (offerActive || req.status === 'accepted') && techWithRelations) {
-      setScore(calculateOfferTechnicianMatch(off, techWithRelations));
+      setScore(calculateOfferTechnicianMatch(off, techWithRelations, ratingIndex));
     } else {
       setScore(null);
     }
@@ -134,7 +138,7 @@ export default function DirectOfferDetailScreen() {
     }
 
     await activityRepository.markRead('technician', technicianId, id);
-  }, [id, technicianId]);
+  }, [id, technicianId, ratingIndex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -288,6 +292,7 @@ export default function DirectOfferDetailScreen() {
                 <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} accent={accent} />
                 <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} accent={accent} />
                 <BreakdownRow label="Location" value={score.breakdown.location} max={5} accent={accent} />
+                <MatchExplanation score={score} />
               </View>
             )}
           </TechnicianCard>

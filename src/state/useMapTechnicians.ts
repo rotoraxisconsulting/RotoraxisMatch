@@ -5,6 +5,8 @@ import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
+import { catalogRepository } from '../repositories/v2/catalogRepository';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { canRevealIdentity, getUnlockedTechnicianView } from '../utils/privacyV2';
 import {
   v2SafePreviewToSafeView,
@@ -56,11 +58,13 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
       verification: selectedValues(filters.verificationStatuses, filters.verificationStatus),
       availability: selectedValues(filters.availabilityStatuses, filters.availabilityStatus),
     };
-    const [previews, offerRequests, offerApplications] = await Promise.all([
+    const [previews, offerRequests, offerApplications, ratings] = await Promise.all([
       technicianRepositoryV2.search({}),
       offerRequestRepository.getForCompany(companyId),
       offerApplicationRepository.getForCompany(companyId),
+      catalogRepository.getAircraftTypeRatings(),
     ]);
+    const ratingIndex = buildAircraftRatingIndex(ratings);
 
     const views = await Promise.all(
       previews.map(async (preview) => {
@@ -71,15 +75,15 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
           offerApplications,
         });
 
-        if (!accepted) return v2SafePreviewToSafeView(preview);
+        if (!accepted) return v2SafePreviewToSafeView(preview, ratingIndex);
 
         const [withRelations, documents] = await Promise.all([
           technicianRepositoryV2.getWithRelations(preview.id),
           documentRepositoryV2.getVerifiedForTechnician(preview.id),
         ]);
 
-        if (!withRelations) return v2SafePreviewToSafeView(preview);
-        return v2UnlockedViewToSafeView(getUnlockedTechnicianView(withRelations, documents));
+        if (!withRelations) return v2SafePreviewToSafeView(preview, ratingIndex);
+        return v2UnlockedViewToSafeView(getUnlockedTechnicianView(withRelations, documents), ratingIndex);
       }),
     );
 

@@ -40,6 +40,9 @@ import { isOfferOpenForTechnicians, offerRepository } from '../../src/repositori
 import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { calculateOfferTechnicianMatch } from '../../src/utils/matchingV2';
+import { habilitationAircraftCodes } from '../../src/utils/v2CompatAdapters';
+import { useAircraftTypeRatingsCatalog } from '../../src/state/useAircraftTypeRatingsCatalog';
+import { AircraftRatingIndex } from '../../src/constants/aircraftTypeRatings';
 import { AIRPLANES, HELICOPTERS, inferAircraftCategory, AircraftCategory } from '../../src/constants/aircraftTypes';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
 import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
@@ -91,6 +94,7 @@ export default function TechnicianSearchScreen() {
   const isWide = width >= 960;
   const { results, filters, loading, hasSearched, updateFilter, clearFilters, search } =
     useTechnicianSearch();
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
   const { companyId, companyMemberRole } = useCompanySession();
   const canSendRole = canSendDirectOffers(companyMemberRole);
   const { offerId: preselectedOfferId } = useLocalSearchParams<{ offerId?: string }>();
@@ -172,7 +176,7 @@ export default function TechnicianSearchScreen() {
           results.map(async (tech) => {
             const full = await technicianRepositoryV2.getWithRelations(tech.id);
             if (!full) return [tech.id, null] as const;
-            return [tech.id, calculateOfferTechnicianMatch(selectedOffer, full)] as const;
+            return [tech.id, calculateOfferTechnicianMatch(selectedOffer, full, ratingIndex)] as const;
           }),
         );
         scoreEntries.forEach(([id, score]) => {
@@ -189,7 +193,7 @@ export default function TechnicianSearchScreen() {
     return () => {
       active = false;
     };
-  }, [results, selectedOffer]);
+  }, [results, selectedOffer, ratingIndex]);
 
   async function handleSearch() {
     await search();
@@ -433,6 +437,7 @@ export default function TechnicianSearchScreen() {
             onSendOffer={() => handleSendOffer(item.id)}
             sendingThis={sendingTechId === item.id}
             canSendRole={canSendRole}
+            ratingIndex={ratingIndex}
           />
         )}
       />
@@ -473,6 +478,7 @@ function TechnicianResultCard({
   onSendOffer,
   sendingThis,
   canSendRole,
+  ratingIndex,
 }: {
   technician: SafeTechnicianView;
   preview?: SafeTechnicianPreview;
@@ -482,6 +488,7 @@ function TechnicianResultCard({
   onSendOffer: () => void;
   sendingThis: boolean;
   canSendRole: boolean;
+  ratingIndex: AircraftRatingIndex;
 }) {
   const displayName = technician.fullName ?? technician.anonymousCode;
   const technicianType = preview?.technicianType
@@ -489,7 +496,7 @@ function TechnicianResultCard({
     : 'Technician';
   const licenseChips = preview?.licenses?.length ? preview.licenses : technician.licenseCategories;
   const aircraftChips = preview?.habilitations?.length
-    ? [...new Set(preview.habilitations.map((h) => h.aircraftTypeCode))]
+    ? habilitationAircraftCodes(preview.habilitations, ratingIndex)
     : technician.aircraftTypes;
   const aircraftCat = aircraftChips.length > 0 ? inferAircraftCategory(aircraftChips) : null;
 

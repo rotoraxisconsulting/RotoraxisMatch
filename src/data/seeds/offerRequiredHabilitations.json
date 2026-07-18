@@ -1,0 +1,5 @@
+[
+  { "id": "orh-001", "offerId": "offer-001", "licenseCode": "B1.1", "aircraftTypeRatingId": "00000000-0000-4000-a000-000000000016", "requirementLevel": "preferred", "notes": "General B737 experience also considered." },
+  { "id": "orh-002", "offerId": "offer-005", "licenseCode": "B1.1", "aircraftTypeRatingId": "00000000-0000-4000-a000-000000000001", "requirementLevel": "mandatory", "notes": "CFM56 preferred; other A320 Family engines considered with confirmation." },
+  { "id": "orh-003", "offerId": "offer-008", "licenseCode": "B1.3", "aircraftTypeRatingId": "00000000-0000-4000-a000-000000000078", "requirementLevel": "mandatory", "notes": null }
+]

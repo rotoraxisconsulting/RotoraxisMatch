@@ -30,8 +30,30 @@ import { supabase } from '../../src/lib/supabase';
 import { Technician, AvailabilityStatus } from '../../src/types';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
-import { AIRPLANES, HELICOPTERS } from '../../src/constants/aircraftTypes';
+import { AIRCRAFT_TYPE_CATALOG } from '../../src/constants/aircraftTypes';
+import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
+import { AircraftTypeRatingPicker } from '../../src/components/AircraftTypeRatingPicker';
+import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
+import { catalogRepository } from '../../src/repositories/v2/catalogRepository';
+import { catalogRequestRepository } from '../../src/repositories/v2/catalogRequestRepository';
 import { colors, spacing } from '../../src/theme';
+
+interface HabRow {
+  id?: string;
+  licenseCode: string;
+  aircraftTypeRatingId: string;
+  experienceYears?: number;
+}
+
+interface LegacyHabRow {
+  id: string;
+  licenseCode: string;
+  aircraftTypeCode: string;
+}
+
+function aircraftTypeLabel(code: string): string {
+  return AIRCRAFT_TYPE_CATALOG.find((a) => a.code === code)?.label ?? code;
+}
 
 type AvailabilityContract = Technician['availability']['contractTypes'][number];
 
@@ -152,6 +174,30 @@ export default function TechnicianProfileScreen() {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [noTechProfile, setNoTechProfile] = useState(false);
 
+  // Habilitations are stored as explicit { licenseCode, aircraftTypeRatingId }
+  // rows — never as a flat aircraft-type list saved against a "default"
+  // license. See technicianRepositoryV2.replaceHabilitations().
+  const [habilitations, setHabilitations] = useState<HabRow[]>([]);
+  const [legacyHabilitations, setLegacyHabilitations] = useState<LegacyHabRow[]>([]);
+  const [habDirty, setHabDirty] = useState(false);
+  const [newHabLicense, setNewHabLicense] = useState<string | null>(null);
+  const [newHabRating, setNewHabRating] = useState<string | null>(null);
+  const [newHabExperienceYears, setNewHabExperienceYears] = useState('');
+  // Resolves BOTH active and inactive rating ids referenced by this
+  // technician's own habilitations (loaded ones + newly picked ones) — not
+  // the same as the picker's own active-only search list. Needed so a
+  // previously-selected, now-deactivated rating still shows a real label
+  // instead of a bare UUID (see catalogRepository.getAircraftTypeRatingsByIds).
+  const [ratingsById, setRatingsById] = useState<AircraftRatingIndex>(new Map());
+
+  const [requestPanelOpen, setRequestPanelOpen] = useState(false);
+  const [requestLicense, setRequestLicense] = useState<string | null>(null);
+  const [requestAircraft, setRequestAircraft] = useState('');
+  const [requestLabel, setRequestLabel] = useState('');
+  const [requestNotes, setRequestNotes] = useState('');
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestSubmitted, setRequestSubmitted] = useState(false);
+
   // Auth guards
   useEffect(() => {
     if (!authLoading && !profile) {
@@ -197,7 +243,7 @@ export default function TechnicianProfileScreen() {
           .eq('technician_id', techRow.id),
         supabase
           .from('technician_habilitations')
-          .select('aircraft_type_code')
+          .select('id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years')
           .eq('technician_id', techRow.id),
         supabase
           .from('technician_aircraft_experience')
@@ -206,7 +252,46 @@ export default function TechnicianProfileScreen() {
       ]);
 
       const licenses = (licResult.data ?? []).map((r: any) => r.license_code as string);
-      const aircraftTypes = (habResult.data ?? []).map((r: any) => r.aircraft_type_code as string);
+
+      const habRows = (habResult.data ?? []) as {
+        id: string;
+        license_code: string;
+        aircraft_type_code: string | null;
+        aircraft_type_rating_id: string | null;
+        experience_years: number | null;
+      }[];
+      const normalizedHabs: HabRow[] = habRows
+        .filter((r) => r.aircraft_type_rating_id)
+        .map((r) => ({
+          id: r.id,
+          licenseCode: r.license_code,
+          aircraftTypeRatingId: r.aircraft_type_rating_id as string,
+          experienceYears: r.experience_years ?? undefined,
+        }));
+      const legacyHabs: LegacyHabRow[] = habRows
+        .filter((r) => !r.aircraft_type_rating_id && r.aircraft_type_code)
+        .map((r) => ({ id: r.id, licenseCode: r.license_code, aircraftTypeCode: r.aircraft_type_code as string }));
+      setHabilitations(normalizedHabs);
+      setLegacyHabilitations(legacyHabs);
+      setHabDirty(false);
+
+      // Resolve every referenced rating id in one batched call — includes
+      // inactive ratings, since an existing habilitation may point at one.
+      const resolvedRatings = await catalogRepository.getAircraftTypeRatingsByIds(
+        normalizedHabs.map((h) => h.aircraftTypeRatingId),
+      );
+      const resolvedIndex = buildAircraftRatingIndex(resolvedRatings);
+      setRatingsById(resolvedIndex);
+
+      // Derived only for the V1-shaped completeness score / summary card —
+      // never used as the source of truth for saving.
+      const aircraftTypes = [...new Set([
+        ...legacyHabs.map((h) => h.aircraftTypeCode),
+        ...normalizedHabs
+          .map((h) => resolvedIndex.get(h.aircraftTypeRatingId)?.aircraftFamily)
+          .filter((v): v is string => Boolean(v)),
+      ])];
+
       const expRows = (expResult.data ?? []) as { value: number; unit: string }[];
       const yearsExperience =
         expRows.length > 0
@@ -261,12 +346,49 @@ export default function TechnicianProfileScreen() {
     updateField('licenseCategories', next);
   }
 
-  function toggleAircraftType(code: string) {
-    if (!form) return;
-    const next = form.aircraftTypes.includes(code)
-      ? form.aircraftTypes.filter((c) => c !== code)
-      : [...form.aircraftTypes, code];
-    updateField('aircraftTypes', next);
+  function addHabilitation() {
+    if (!newHabLicense || !newHabRating) return;
+    if (habilitations.some((h) => h.licenseCode === newHabLicense && h.aircraftTypeRatingId === newHabRating)) return;
+    const trimmedYears = newHabExperienceYears.trim();
+    const experienceYears = trimmedYears ? Number(trimmedYears) : undefined;
+    setHabilitations((prev) => [
+      ...prev,
+      { licenseCode: newHabLicense, aircraftTypeRatingId: newHabRating, experienceYears },
+    ]);
+    setNewHabLicense(null);
+    setNewHabRating(null);
+    setNewHabExperienceYears('');
+    setHabDirty(true);
+    setIsDirty(true);
+  }
+
+  function removeHabilitation(index: number) {
+    setHabilitations((prev) => prev.filter((_, i) => i !== index));
+    setHabDirty(true);
+    setIsDirty(true);
+  }
+
+  async function submitCatalogRequest() {
+    if (!profile?.id || !requestLabel.trim()) return;
+    setRequestSubmitting(true);
+    try {
+      await catalogRequestRepository.create({
+        requestedBy: profile.id,
+        rawText: requestLabel.trim(),
+        context: [
+          requestLicense && `License: ${requestLicense}`,
+          requestAircraft.trim() && `Aircraft/family: ${requestAircraft.trim()}`,
+          requestNotes.trim(),
+        ]
+          .filter(Boolean)
+          .join(' — ') || undefined,
+      });
+      setRequestSubmitted(true);
+    } catch (err: any) {
+      setProfileError(err?.message ?? 'Could not send the request. Please try again.');
+    } finally {
+      setRequestSubmitting(false);
+    }
   }
 
   function toggleContractType(type: AvailabilityContract) {
@@ -294,7 +416,18 @@ export default function TechnicianProfileScreen() {
         ? (form.availability.availableFrom ?? null)
         : null;
 
-    const newCompleteness = computeProfileCompleteness(form);
+    // Habilitation rows can only reference a license the technician is
+    // keeping — filter out any that referenced a license removed in this
+    // same save (the FK on technician_habilitations requires the pair to
+    // exist in technician_licenses).
+    const validHabilitations = habilitations.filter((h) => form.licenseCategories.includes(h.licenseCode));
+    const derivedAircraftTypes = [...new Set([
+      ...legacyHabilitations.map((h) => h.aircraftTypeCode),
+      ...validHabilitations
+        .map((h) => ratingsById.get(h.aircraftTypeRatingId)?.aircraftFamily)
+        .filter((v): v is string => Boolean(v)),
+    ])];
+    const newCompleteness = computeProfileCompleteness({ ...form, aircraftTypes: derivedAircraftTypes });
 
     setSaving(true);
     setProfileError(null);
@@ -338,28 +471,23 @@ export default function TechnicianProfileScreen() {
         if (insLicErr) throw insLicErr;
       }
 
-      // Replace habilitations (each needs a license_code FK from license_categories)
-      const { error: delHabErr } = await supabase
-        .from('technician_habilitations')
-        .delete()
-        .eq('technician_id', techId);
-      if (delHabErr) throw delHabErr;
-
-      if (form.aircraftTypes.length > 0 && form.licenseCategories.length > 0) {
-        const defaultLicense = form.licenseCategories[0];
-        const { error: insHabErr } = await supabase
-          .from('technician_habilitations')
-          .insert(
-            form.aircraftTypes.map((code) => ({
-              technician_id: techId,
-              license_code: defaultLicense,
-              aircraft_type_code: code,
-            })),
-          );
-        if (insHabErr) throw insHabErr;
+      // Replace normalized habilitations — each row carries its own explicit
+      // licenseCode, never a "default" license applied to every aircraft.
+      // Legacy rows (aircraft_type_rating_id IS NULL) are left untouched.
+      if (habDirty) {
+        await technicianRepositoryV2.replaceHabilitations(
+          techId,
+          validHabilitations.map((h) => ({
+            licenseCode: h.licenseCode,
+            aircraftTypeRatingId: h.aircraftTypeRatingId,
+            experienceYears: h.experienceYears,
+          })),
+        );
+        setHabilitations(validHabilitations);
+        setHabDirty(false);
       }
 
-      setForm((prev) => (prev ? { ...prev, profileCompleteness: newCompleteness } : prev));
+      setForm((prev) => (prev ? { ...prev, profileCompleteness: newCompleteness, aircraftTypes: derivedAircraftTypes } : prev));
       setIsDirty(false);
     } catch (err: any) {
       setProfileError(err?.message ?? 'Save failed. Please try again.');
@@ -646,32 +774,159 @@ export default function TechnicianProfileScreen() {
             </View>
           </TechnicianCard>
 
-          <SectionTitle title="Aircraft types" subtitle="Select aircraft types you have experience with." />
+          <SectionTitle
+            title="Habilitations"
+            subtitle="Each rating is linked to the Part-66 category it was issued under — never guessed."
+          />
           <TechnicianCard style={styles.sectionCard}>
-            <FieldLabel>Airplanes</FieldLabel>
-            <View style={styles.chipRow}>
-              {AIRPLANES.map((a) => (
-                <TechnicianChip
-                  key={a.code}
-                  label={a.code}
-                  selected={form.aircraftTypes.includes(a.code)}
-                  onPress={() => toggleAircraftType(a.code)}
-                />
-              ))}
-            </View>
+            {habilitations.length === 0 && legacyHabilitations.length === 0 ? <EmptyValue /> : null}
+
+            {habilitations.map((h, index) => (
+              <View key={h.id ?? `new-${h.licenseCode}-${h.aircraftTypeRatingId}`} style={styles.habRow}>
+                <View style={styles.habInfo}>
+                  <Text style={styles.habLicense}>{h.licenseCode}</Text>
+                  <Text style={styles.habRating}>
+                    {getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingsById)}
+                    {h.experienceYears ? ` — ${h.experienceYears} yrs` : ''}
+                  </Text>
+                  <View style={styles.chipRow}>
+                    <TechnicianBadge label="Declared" tone="cyan" small />
+                    {ratingsById.get(h.aircraftTypeRatingId)?.isActive === false ? (
+                      <TechnicianBadge label="Inactive catalog entry" tone="warning" small />
+                    ) : null}
+                  </View>
+                </View>
+                <TouchableOpacity onPress={() => removeHabilitation(index)} accessibilityRole="button">
+                  <Text style={styles.habRemove}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+
+            {legacyHabilitations.map((h) => (
+              <View key={h.id} style={styles.habRow}>
+                <View style={styles.habInfo}>
+                  <Text style={styles.habLicense}>{h.licenseCode}</Text>
+                  <Text style={styles.habRating}>{aircraftTypeLabel(h.aircraftTypeCode)} — general, engine not specified</Text>
+                  <TechnicianBadge label="Legacy" tone="muted" small />
+                </View>
+              </View>
+            ))}
+
             <View style={styles.fieldGap} />
-            <FieldLabel>Helicopters</FieldLabel>
-            <View style={styles.chipRow}>
-              {HELICOPTERS.map((a) => (
-                <TechnicianChip
-                  key={a.code}
-                  label={a.code}
-                  selected={form.aircraftTypes.includes(a.code)}
-                  onPress={() => toggleAircraftType(a.code)}
-                />
-              ))}
-            </View>
+            <FieldLabel>Add habilitation — category</FieldLabel>
+            {form.licenseCategories.length === 0 ? (
+              <Text style={styles.emptyValue}>Add a license above first.</Text>
+            ) : (
+              <View style={styles.chipRow}>
+                {form.licenseCategories.map((code) => (
+                  <TechnicianChip
+                    key={code}
+                    label={code}
+                    selected={newHabLicense === code}
+                    onPress={() => setNewHabLicense(code)}
+                  />
+                ))}
+              </View>
+            )}
+
+            <View style={styles.fieldGap} />
+            <FieldLabel>Add habilitation — aircraft + engine rating</FieldLabel>
+            <AircraftTypeRatingPicker
+              value={newHabRating}
+              onSelect={(r) => {
+                setNewHabRating(r.id);
+                setRatingsById((prev) => new Map(prev).set(r.id, r));
+              }}
+            />
+
+            <View style={styles.fieldGap} />
+            <FieldLabel>Years of experience on this rating (optional)</FieldLabel>
+            <TextInput
+              style={styles.input}
+              value={newHabExperienceYears}
+              onChangeText={setNewHabExperienceYears}
+              placeholder="e.g. 4"
+              placeholderTextColor={techUi.textMuted}
+              keyboardType="numeric"
+            />
+
+            <View style={styles.fieldGap} />
+            <Button
+              label="Add habilitation"
+              variant="secondary"
+              size="sm"
+              disabled={!newHabLicense || !newHabRating}
+              onPress={addHabilitation}
+            />
+
+            <TouchableOpacity onPress={() => setRequestPanelOpen((v) => !v)} style={styles.linkRow}>
+              <Text style={styles.linkText}>Can&apos;t find your habilitation? Request it.</Text>
+            </TouchableOpacity>
           </TechnicianCard>
+
+          {requestPanelOpen && (
+            <TechnicianCard style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Request a catalog addition</Text>
+              <Text style={styles.sectionSub}>
+                Sent to the platform team for review — it will not be used for matching until added.
+              </Text>
+              <View style={styles.fieldGap} />
+              <FieldLabel>Category</FieldLabel>
+              <View style={styles.chipRow}>
+                {LICENSE_CATEGORIES.map((lic) => (
+                  <TechnicianChip
+                    key={lic.code}
+                    label={lic.code}
+                    selected={requestLicense === lic.code}
+                    onPress={() => setRequestLicense(lic.code)}
+                  />
+                ))}
+              </View>
+              <View style={styles.fieldGap} />
+              <FieldLabel>Aircraft or family</FieldLabel>
+              <TextInput
+                style={styles.input}
+                value={requestAircraft}
+                onChangeText={setRequestAircraft}
+                placeholder="e.g. AW169"
+                placeholderTextColor={techUi.textMuted}
+              />
+              <View style={styles.fieldGap} />
+              <FieldLabel>Name as it appears on your license</FieldLabel>
+              <TextInput
+                style={styles.input}
+                value={requestLabel}
+                onChangeText={setRequestLabel}
+                placeholder="e.g. AW169 (PWC 210)"
+                placeholderTextColor={techUi.textMuted}
+              />
+              <View style={styles.fieldGap} />
+              <FieldLabel>Notes (optional)</FieldLabel>
+              <TextInput
+                style={[styles.input, styles.textarea]}
+                value={requestNotes}
+                onChangeText={setRequestNotes}
+                placeholder="Anything else that helps identify it"
+                placeholderTextColor={techUi.textMuted}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+              <View style={styles.fieldGap} />
+              {requestSubmitted ? (
+                <Text style={styles.privacyNote}>Request pending catalog addition.</Text>
+              ) : (
+                <Button
+                  label={requestSubmitting ? 'Sending...' : 'Send request'}
+                  variant="secondary"
+                  size="sm"
+                  loading={requestSubmitting}
+                  disabled={!requestLabel.trim() || requestSubmitting}
+                  onPress={submitCatalogRequest}
+                />
+              )}
+            </TechnicianCard>
+          )}
 
           <SectionTitle title="Specialties" />
           <TechnicianCard style={styles.sectionCard}>
@@ -870,6 +1125,51 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
+  },
+  textarea: {
+    minHeight: 88,
+    paddingTop: spacing.sm,
+  },
+  habRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: techUi.borderSoft,
+  },
+  habInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  habLicense: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: techUi.text,
+  },
+  habRating: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: techUi.textSoft,
+  },
+  habRemove: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: techUi.red,
+  },
+  linkRow: {
+    marginTop: spacing.sm,
+  },
+  linkText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: techUi.accent,
   },
   tagRow: {
     flexDirection: 'row',

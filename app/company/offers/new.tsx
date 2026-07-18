@@ -28,10 +28,20 @@ import { TECHNICIAN_TYPES } from '../../../src/constants/technicianTypes';
 import { LICENSE_CATEGORIES } from '../../../src/constants/licenses';
 import { AIRPLANES, HELICOPTERS, inferAircraftCategory } from '../../../src/constants/aircraftTypes';
 import type { AircraftCategory } from '../../../src/constants/aircraftTypes';
+import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
+import { AircraftTypeRatingPicker } from '../../../src/components/AircraftTypeRatingPicker';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
-import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
+import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from '../../../src/types/catalog';
 import { OfferStatus } from '../../../src/types/enums';
 import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
+
+interface ExactHabilitationRow {
+  licenseCode: LicenseCode;
+  aircraftTypeRatingId: string;
+  requirementLevel: RequirementLevel;
+  notes?: string;
+}
 
 interface FormState {
   title: string;
@@ -45,6 +55,7 @@ interface FormState {
   requiredTechnicianTypes: TechnicianTypeCode[];
   requiredLicenses: LicenseCode[];
   requiredAircraftTypes: string[];
+  requiredHabilitations: ExactHabilitationRow[];
 }
 
 function toggle<T>(arr: T[], item: T): T[] {
@@ -67,6 +78,7 @@ export default function NewOfferScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { companyId } = useCompanySession();
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const [form, setForm] = useState<FormState>({
     title: '',
@@ -80,10 +92,15 @@ export default function NewOfferScreen() {
     requiredTechnicianTypes: [],
     requiredLicenses: [],
     requiredAircraftTypes: [],
+    requiredHabilitations: [],
   });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [aircraftTab, setAircraftTab] = useState<AircraftCategory>('airplane');
+  const [newHabLicense, setNewHabLicense] = useState<LicenseCode | null>(null);
+  const [newHabRating, setNewHabRating] = useState<string | null>(null);
+  const [newHabLevel, setNewHabLevel] = useState<RequirementLevel>('preferred');
+  const [newHabNotes, setNewHabNotes] = useState('');
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -92,6 +109,23 @@ export default function NewOfferScreen() {
     if (['locationCityId', 'locationCountry', 'locationCity'].includes(key as string)) {
       setErrors((e) => ({ ...e, location: undefined }));
     }
+  }
+
+  function addExactHabilitation() {
+    if (!newHabLicense || !newHabRating) return;
+    if (form.requiredHabilitations.some((h) => h.licenseCode === newHabLicense && h.aircraftTypeRatingId === newHabRating)) return;
+    set('requiredHabilitations', [
+      ...form.requiredHabilitations,
+      { licenseCode: newHabLicense, aircraftTypeRatingId: newHabRating, requirementLevel: newHabLevel, notes: newHabNotes.trim() || undefined },
+    ]);
+    setNewHabLicense(null);
+    setNewHabRating(null);
+    setNewHabLevel('preferred');
+    setNewHabNotes('');
+  }
+
+  function removeExactHabilitation(index: number) {
+    set('requiredHabilitations', form.requiredHabilitations.filter((_, i) => i !== index));
   }
 
   async function handleSave(status: OfferStatus) {
@@ -111,6 +145,7 @@ export default function NewOfferScreen() {
         requiredTechnicianTypes: form.requiredTechnicianTypes,
         requiredLicenses: form.requiredLicenses,
         requiredAircraftTypes: form.requiredAircraftTypes,
+        requiredHabilitations: form.requiredHabilitations,
       });
       router.back();
     } catch (e: any) {
@@ -269,6 +304,68 @@ export default function NewOfferScreen() {
             </Text>
           )}
         </ChoiceSection>
+
+        <CompanyCard style={styles.section}>
+          <Text style={styles.sectionTitle}>Exact habilitations (optional)</Text>
+          <Text style={styles.sectionSubtitle}>
+            Require a specific category + rating combination, e.g. B1.1 + A320 Family — CFM56. Leave empty to
+            rely only on the broad requirements above.
+          </Text>
+
+          {form.requiredHabilitations.map((h, index) => (
+            <View key={`${h.licenseCode}-${h.aircraftTypeRatingId}`} style={styles.habRow}>
+              <View style={styles.habInfo}>
+                <Text style={styles.habText}>
+                  {h.licenseCode} + {getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex)} — {h.requirementLevel}
+                </Text>
+                {h.notes ? <Text style={styles.habNotes}>{h.notes}</Text> : null}
+              </View>
+              <TouchableOpacity onPress={() => removeExactHabilitation(index)}>
+                <Text style={styles.habRemove}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+
+          <Text style={styles.fieldLabel}>Category</Text>
+          <View style={styles.choiceWrap}>
+            {LICENSE_CATEGORIES.map((l) => (
+              <CompanyChip
+                key={l.code}
+                label={l.code}
+                selected={newHabLicense === l.code}
+                onPress={() => setNewHabLicense(l.code as LicenseCode)}
+              />
+            ))}
+          </View>
+
+          <Text style={styles.fieldLabel}>Aircraft + engine rating</Text>
+          <AircraftTypeRatingPicker value={newHabRating} onSelect={(r) => setNewHabRating(r.id)} />
+
+          <Text style={styles.fieldLabel}>Level</Text>
+          <View style={styles.choiceWrap}>
+            <CompanyChip label="Mandatory" selected={newHabLevel === 'mandatory'} onPress={() => setNewHabLevel('mandatory')} />
+            <CompanyChip label="Preferred" selected={newHabLevel === 'preferred'} onPress={() => setNewHabLevel('preferred')} />
+          </View>
+
+          <FormField label="Note (optional)">
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Also considering V2500 or recent A320 experience"
+              placeholderTextColor={companyUi.textMuted}
+              value={newHabNotes}
+              onChangeText={setNewHabNotes}
+            />
+          </FormField>
+
+          <TouchableOpacity
+            style={[styles.secondaryButton, (!newHabLicense || !newHabRating) && styles.disabled]}
+            onPress={addExactHabilitation}
+            disabled={!newHabLicense || !newHabRating}
+            activeOpacity={0.75}
+          >
+            <Text style={styles.secondaryButtonText}>Add exact habilitation</Text>
+          </TouchableOpacity>
+        </CompanyCard>
 
         <View style={styles.actions}>
           <TouchableOpacity
@@ -430,6 +527,38 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: companyUi.textMuted,
     marginTop: 2,
+  },
+  habRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: companyUi.borderSoft,
+  },
+  habInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  habText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  habNotes: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: companyUi.textSoft,
+  },
+  habRemove: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.red,
   },
   stepper: {
     flexDirection: 'row',

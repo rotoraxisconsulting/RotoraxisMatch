@@ -1,0 +1,671 @@
+// Standalone tests — no Supabase/DB connection required. Exercises the pure
+// functions in src/utils/offerMatchExplain.ts, src/constants/aircraftTypeRatings.ts,
+// src/repositories/v2/aircraftTypeRatingsCache.ts and
+// src/utils/aircraftRatingBackfillPlan.ts against small in-memory fixtures.
+//
+// Deliberately does NOT import or duplicate the real 80-row aircraft_type_ratings
+// catalog — that catalog lives exclusively in Supabase now (see
+// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md) and is validated
+// against the live database by `npm run validate:aircraft-ratings`
+// (scripts/validateAircraftTypeRatingsCatalog.ts), not here. Every function
+// under test here takes its catalog/index as an argument, so a handful of
+// fabricated fixtures is enough to exercise every code path.
+//
+// Run via: npm run test:matching  (compiles with tsc to a scratch dir, then
+// runs the plain JS output with node — see package.json).
+import assert from 'node:assert/strict';
+import { calculateOfferTechnicianMatch } from '../src/utils/offerMatchExplain';
+import { OfferWithRequirements, OfferRequiredHabilitation } from '../src/types/offer';
+import { TechnicianWithRelations, TechnicianHabilitation, TechnicianLicense } from '../src/types/technician';
+import { AircraftTypeRatingCatalog } from '../src/types/catalog';
+import {
+  buildAircraftRatingIndex,
+  getAircraftTypeRatingLabel,
+  sortAircraftTypeRatings,
+  filterAircraftTypeRatings,
+  mapAircraftTypeRatingRow,
+  AircraftTypeRatingRow,
+} from '../src/constants/aircraftTypeRatings';
+import { createAircraftTypeRatingsCache } from '../src/repositories/v2/aircraftTypeRatingsCache';
+import {
+  planLegacyAircraftRatingBackfill,
+  summarizeBackfillPlan,
+  LegacyHabilitationRow,
+  ExistingNormalizedHabilitation,
+} from '../src/utils/aircraftRatingBackfillPlan';
+
+let passed = 0;
+let failed = 0;
+
+async function test(name: string, fn: () => void | Promise<void>) {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`PASS — ${name}`);
+  } catch (err) {
+    failed += 1;
+    console.error(`FAIL — ${name}`);
+    console.error(err instanceof Error ? err.message : err);
+  }
+}
+
+// ── Offer/technician fixture builders ─────────────────────────────────────
+
+function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithRequirements {
+  return {
+    id: 'offer-test',
+    companyId: 'company-test',
+    title: 'Test offer',
+    description: 'Test',
+    contractType: 'permanent',
+    locationCityId: 'airport:XXXX',
+    locationCountry: 'Nowhere',
+    locationCity: 'Nowhere City',
+    locationBaseAirport: 'XXXX',
+    minYearsExperience: 0,
+    status: 'published',
+    visible: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    requiredTechnicianTypes: [],
+    requiredLicenses: [],
+    requiredAircraftTypes: [],
+    requiredHabilitations: [],
+    ...overrides,
+  };
+}
+
+function makeHabReq(
+  licenseCode: string,
+  aircraftTypeRatingId: string,
+  requirementLevel: 'mandatory' | 'preferred',
+): OfferRequiredHabilitation {
+  return {
+    offerId: 'offer-test',
+    licenseCode: licenseCode as any,
+    aircraftTypeRatingId,
+    requirementLevel,
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function makeHab(licenseCode: string, extra: Partial<TechnicianHabilitation> = {}): TechnicianHabilitation {
+  return {
+    id: `hab-${Math.random()}`,
+    technicianId: 'tech-test',
+    licenseCode: licenseCode as any,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    ...extra,
+  };
+}
+
+function makeLicense(licenseCode: string): TechnicianLicense {
+  return { id: `lic-${Math.random()}`, technicianId: 'tech-test', licenseCode: licenseCode as any, createdAt: '2026-01-01T00:00:00.000Z' };
+}
+
+function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): TechnicianWithRelations {
+  return {
+    id: 'tech-test',
+    userId: 'user-test',
+    anonymousCode: 'AVT-0000',
+    firstName: 'Test',
+    lastName: 'Technician',
+    email: 'test@example.com',
+    birthDate: '1990-01-01',
+    technicianType: 'mechanic',
+    locationCityId: 'airport:YYYY',
+    availability: { immediately: true, contractTypes: ['permanent'] },
+    verificationStatus: 'pending',
+    profileCompleteness: 50,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    licenses: [],
+    habilitations: [],
+    aircraftExperience: [],
+    ...overrides,
+  };
+}
+
+// ── Aircraft rating fixture builder + small fixture catalog ──────────────
+// Deliberately 7 rows, never the real 80 — every field the domain type
+// requires gets a sane default so each fixture below only needs to override
+// what the test actually cares about.
+
+function makeRating(
+  overrides: Partial<AircraftTypeRatingCatalog> & Pick<AircraftTypeRatingCatalog, 'id'>,
+): AircraftTypeRatingCatalog {
+  return {
+    manufacturer: 'TestMfr',
+    aircraftFamily: 'TestFamily',
+    easaEndorsement: `EASA-${overrides.id}`,
+    displayName: `Test rating ${overrides.id}`,
+    commercialAliases: [],
+    aircraftCategory: 'general_aviation',
+    priority: 50,
+    isActive: true,
+    ...overrides,
+  };
+}
+
+const FIXTURES: AircraftTypeRatingCatalog[] = [
+  makeRating({
+    id: 'fx-a320-cfm56',
+    manufacturer: 'Airbus',
+    aircraftFamily: 'A318/A319/A320/A321',
+    engineManufacturer: 'CFM International',
+    engineFamily: 'CFM56',
+    easaEndorsement: 'A320 CFM56-5',
+    displayName: 'Airbus A320 family — CFM56',
+    commercialAliases: ['A318', 'A319', 'A320', 'A321', 'CFM56'],
+    aircraftCategory: 'commercial_airplane',
+    priority: 100,
+  }),
+  makeRating({
+    id: 'fx-a320-v2500',
+    manufacturer: 'Airbus',
+    aircraftFamily: 'A318/A319/A320/A321',
+    engineManufacturer: 'IAE',
+    engineFamily: 'V2500',
+    easaEndorsement: 'A320 V2500',
+    displayName: 'Airbus A320 family — V2500',
+    commercialAliases: ['A320', 'V2500'],
+    aircraftCategory: 'commercial_airplane',
+    priority: 90,
+  }),
+  makeRating({
+    id: 'fx-a320neo-leap1a',
+    manufacturer: 'Airbus',
+    aircraftFamily: 'A319neo/A320neo/A321neo',
+    engineManufacturer: 'CFM International',
+    engineFamily: 'LEAP-1A',
+    easaEndorsement: 'A320 LEAP-1A',
+    displayName: 'Airbus A320neo family — LEAP-1A',
+    commercialAliases: ['A319neo', 'A320neo', 'A321neo', 'LEAP-1A', 'LEAP'],
+    aircraftCategory: 'commercial_airplane',
+    priority: 95,
+  }),
+  makeRating({
+    id: 'fx-b777-ge90',
+    manufacturer: 'Boeing',
+    aircraftFamily: '777',
+    engineManufacturer: 'GE Aviation',
+    engineFamily: 'GE90',
+    easaEndorsement: 'B777 GE90',
+    displayName: 'Boeing 777 — GE90',
+    commercialAliases: ['777', 'B777', 'GE90'],
+    aircraftCategory: 'commercial_airplane',
+    priority: 80,
+  }),
+  makeRating({
+    id: 'fx-b787-genx',
+    manufacturer: 'Boeing',
+    aircraftFamily: '787',
+    engineManufacturer: 'GE Aviation',
+    engineFamily: 'GEnx',
+    easaEndorsement: 'B787 GEnx',
+    displayName: 'Boeing 787 — GEnx',
+    commercialAliases: ['787', 'B787', 'GEnx', 'Dreamliner'],
+    aircraftCategory: 'commercial_airplane',
+    priority: 85,
+  }),
+  makeRating({
+    id: 'fx-aw139-pt6',
+    manufacturer: 'Leonardo',
+    aircraftFamily: 'AW139',
+    engineManufacturer: 'Pratt & Whitney Canada',
+    engineFamily: 'PT6',
+    easaEndorsement: 'AW139 PT6C',
+    displayName: 'Leonardo AW139 — PT6',
+    commercialAliases: ['AW139', 'PT6'],
+    aircraftCategory: 'helicopter',
+    priority: 70,
+  }),
+  makeRating({
+    id: 'fx-bell412-pt6-inactive',
+    manufacturer: 'Bell',
+    aircraftFamily: '412',
+    engineManufacturer: 'Pratt & Whitney Canada',
+    engineFamily: 'PT6',
+    easaEndorsement: 'Bell 412 PT6 (test)',
+    displayName: 'Bell 412 — PT6 (test, inactive)',
+    commercialAliases: ['Bell412', '412'],
+    aircraftCategory: 'helicopter',
+    priority: 10,
+    isActive: false,
+  }),
+];
+
+const RATING_INDEX = buildAircraftRatingIndex(FIXTURES);
+const NOT_A_REAL_RATING = 'fx-pending-catalog-request'; // never in FIXTURES — models a rating still awaiting admin resolution
+
+async function main() {
+  // ── Matching ─────────────────────────────────────────────────────────
+
+  await test('Matching — Case 1: exact category+rating match', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'exact', `expected level 'exact', got '${result.level}'`);
+    assert.equal(result.mandatoryMissing.length, 0);
+  });
+
+  await test('Matching — Case 2: no false combination across categories', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.3', 'fx-aw139-pt6', 'mandatory')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B2'), makeLicense('B1.3')],
+      // AW139 habilitation exists ONLY under B2, never under B1.3.
+      habilitations: [makeHab('B2', { aircraftTypeRatingId: 'fx-aw139-pt6' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.notEqual(result.level, 'exact', 'must not report exact — B1.3+AW139 was never held together');
+    assert.ok(
+      result.mandatoryMissing.some((m) => m.includes('B1.3')),
+      'mandatoryMissing should flag the unmet B1.3 + AW139 requirement',
+    );
+  });
+
+  await test('Matching — Case 3: same family, different engine => related + clarification', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'related');
+    assert.ok(result.clarifications.length > 0, 'expected at least one clarification about the engine mismatch');
+  });
+
+  await test('Matching — Case 4: technician can hold several distinct ratings under one license at once', () => {
+    const habilitations = [
+      makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' }),
+      makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' }),
+      makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320neo-leap1a' }),
+    ];
+    const uniqueKeys = new Set(habilitations.map((h) => `${h.technicianId}|${h.licenseCode}|${h.aircraftTypeRatingId}`));
+    assert.equal(uniqueKeys.size, 3, 'all three (technicianId, licenseCode, aircraftTypeRatingId) keys must be distinct');
+
+    // Each one independently resolves to an exact match for its own requirement.
+    const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations });
+    for (const ratingId of ['fx-a320-cfm56', 'fx-a320-v2500', 'fx-a320neo-leap1a']) {
+      const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', ratingId, 'mandatory')] });
+      const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+      assert.equal(result.level, 'exact', `expected exact match for ${ratingId}`);
+    }
+  });
+
+  await test('Matching — Case 5: legacy broad requirement does not combine independent license/aircraft rows', () => {
+    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: ['A320'] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      // A320 habilitation exists, but only under B2 — never under B1.1.
+      habilitations: [makeHab('B2', { aircraftTypeCode: 'A320' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.notEqual(result.level, 'legacy', 'must not report a full legacy match from two unrelated rows');
+    assert.equal(result.breakdown.habilitation, 0);
+    assert.equal(result.breakdown.license, 0);
+  });
+
+  await test('Matching — Case 6: preferred requirement mismatch stays related, never excluded', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'related');
+    assert.equal(result.mandatoryMissing.length, 0, 'preferred misses must not appear in mandatoryMissing');
+  });
+
+  await test('Matching — Case 7: mandatory requirement mismatch is flagged but the profile still surfaces as related', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'related', 'unmet mandatory must not silently become exact');
+    assert.ok(result.mandatoryMissing.length > 0, 'expected the unmet mandatory requirement to be listed');
+  });
+
+  await test('Matching — Case 8: a pending catalog request id is never a resolvable rating', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.3', NOT_A_REAL_RATING, 'mandatory')] });
+    const technician = makeTechnician({ licenses: [makeLicense('B1.3')], habilitations: [] });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.notEqual(result.level, 'exact');
+    assert.ok(result.mandatoryMissing.length > 0);
+  });
+
+  await test('Matching — Case 9: no match from sharing only a manufacturer (Boeing 777 vs Boeing 787)', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-b787-genx', 'mandatory')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-b777-ge90' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'not_met', 'Boeing 777 and Boeing 787 are different families — same manufacturer alone must not count as related');
+    assert.equal(result.clarifications.some((c) => c.includes('777')), false);
+  });
+
+  await test('Matching — Case 10: a habilitation referencing a deactivated rating still matches exactly, and its label still resolves', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.3', 'fx-bell412-pt6-inactive', 'mandatory')] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.3')],
+      habilitations: [makeHab('B1.3', { aircraftTypeRatingId: 'fx-bell412-pt6-inactive' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'exact', 'matching must not penalize a rating just because it was later deactivated');
+    assert.equal(
+      getAircraftTypeRatingLabel('fx-bell412-pt6-inactive', RATING_INDEX),
+      'Bell 412 — PT6 (test, inactive)',
+      'an inactive rating referenced by an existing row must still resolve to its real display name, never a bare id',
+    );
+  });
+
+  // ── Mapper ───────────────────────────────────────────────────────────
+
+  await test('Mapper — mapAircraftTypeRatingRow converts a Supabase snake_case row to the domain shape', () => {
+    const row: AircraftTypeRatingRow = {
+      id: 'fx-row-1',
+      manufacturer: 'Airbus',
+      aircraft_family: 'A320',
+      engine_manufacturer: null,
+      engine_family: null,
+      easa_endorsement: 'A320 GENERIC',
+      display_name: 'Airbus A320 (generic)',
+      commercial_aliases: null,
+      aircraft_category: 'commercial_airplane',
+      easa_group: null,
+      source_revision: null,
+      priority: 42,
+      is_active: true,
+    };
+    const mapped = mapAircraftTypeRatingRow(row);
+    assert.equal(mapped.id, 'fx-row-1');
+    assert.equal(mapped.aircraftFamily, 'A320');
+    assert.equal(mapped.engineManufacturer, undefined, 'null engine_manufacturer must map to undefined, not null');
+    assert.equal(mapped.engineFamily, undefined);
+    assert.deepEqual(mapped.commercialAliases, [], 'null commercial_aliases must map to an empty array, not null');
+    assert.equal(mapped.easaGroup, undefined);
+    assert.equal(mapped.sourceRevision, undefined);
+    assert.equal(mapped.priority, 42);
+    assert.equal(mapped.isActive, true);
+  });
+
+  // ── Sort ─────────────────────────────────────────────────────────────
+
+  await test('Sort — sortAircraftTypeRatings orders by priority descending', () => {
+    const shuffled = [...FIXTURES].reverse();
+    const sorted = sortAircraftTypeRatings(shuffled);
+    const expectedIds = [...FIXTURES].sort((a, b) => b.priority - a.priority).map((r) => r.id);
+    assert.deepEqual(sorted.map((r) => r.id), expectedIds);
+  });
+
+  await test('Sort — ties on priority break by manufacturer, then family, then engine', () => {
+    const tied = [
+      makeRating({ id: 'fx-tie-b', manufacturer: 'Bravo', aircraftFamily: 'F2', engineFamily: 'E1', priority: 50 }),
+      makeRating({ id: 'fx-tie-a2', manufacturer: 'Alpha', aircraftFamily: 'F2', engineFamily: 'E1', priority: 50 }),
+      makeRating({ id: 'fx-tie-a1', manufacturer: 'Alpha', aircraftFamily: 'F1', engineFamily: 'E2', priority: 50 }),
+    ];
+    const sorted = sortAircraftTypeRatings(tied);
+    assert.deepEqual(sorted.map((r) => r.id), ['fx-tie-a1', 'fx-tie-a2', 'fx-tie-b'], 'expected Alpha/F1 < Alpha/F2 < Bravo/F2');
+  });
+
+  // ── Search ───────────────────────────────────────────────────────────
+
+  await test('Search — filterAircraftTypeRatings finds an alias match (A320neo)', () => {
+    const results = filterAircraftTypeRatings(FIXTURES, 'A320neo');
+    assert.ok(results.some((r) => r.id === 'fx-a320neo-leap1a'));
+    assert.ok(
+      results.every(
+        (r) => r.commercialAliases.some((a) => a.toLowerCase().includes('a320neo')) || r.displayName.toLowerCase().includes('a320neo'),
+      ),
+    );
+  });
+
+  await test('Search — is case-insensitive and tolerates surrounding whitespace', () => {
+    const a = filterAircraftTypeRatings(FIXTURES, 'A320neo');
+    const b = filterAircraftTypeRatings(FIXTURES, '  a320NEO  ');
+    assert.deepEqual(b.map((r) => r.id), a.map((r) => r.id));
+  });
+
+  await test('Search — is a pure text filter; it does not exclude inactive rows on its own', () => {
+    const results = filterAircraftTypeRatings(FIXTURES, 'PT6');
+    const ids = results.map((r) => r.id);
+    assert.ok(ids.includes('fx-aw139-pt6'));
+    assert.ok(
+      ids.includes('fx-bell412-pt6-inactive'),
+      'excluding inactive rows for NEW selections is the repository/UI layer\'s job (getAircraftTypeRatings filters is_active=true before the picker ever calls this), not this function\'s',
+    );
+  });
+
+  await test('Search — matches by commercial nickname (Dreamliner)', () => {
+    const results = filterAircraftTypeRatings(FIXTURES, 'Dreamliner');
+    assert.equal(results.length, 1);
+    assert.equal(results[0].aircraftFamily, '787');
+  });
+
+  // ── Cache ────────────────────────────────────────────────────────────
+
+  await test('Cache — serves the cached result within the TTL without refetching', async () => {
+    let calls = 0;
+    let clock = 0;
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => {
+        calls += 1;
+        return FIXTURES.filter((f) => f.isActive);
+      },
+      fetchByIds: async (ids) => FIXTURES.filter((f) => ids.includes(f.id)),
+      ttlMs: 1000,
+      now: () => clock,
+    });
+    await cache.getActiveRatings();
+    await cache.getActiveRatings();
+    assert.equal(calls, 1, 'a second call within the TTL must not refetch');
+  });
+
+  await test('Cache — refetches once the TTL has expired', async () => {
+    let calls = 0;
+    let clock = 0;
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => {
+        calls += 1;
+        return FIXTURES.filter((f) => f.isActive);
+      },
+      fetchByIds: async () => [],
+      ttlMs: 1000,
+      now: () => clock,
+    });
+    await cache.getActiveRatings();
+    clock += 1001;
+    await cache.getActiveRatings();
+    assert.equal(calls, 2, 'a call after TTL expiry must refetch');
+  });
+
+  await test('Cache — invalidate() forces the next call to refetch even within the TTL', async () => {
+    let calls = 0;
+    const clock = 0;
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => {
+        calls += 1;
+        return FIXTURES.filter((f) => f.isActive);
+      },
+      fetchByIds: async () => [],
+      ttlMs: 10_000,
+      now: () => clock,
+    });
+    await cache.getActiveRatings();
+    cache.invalidate();
+    await cache.getActiveRatings();
+    assert.equal(calls, 2, 'invalidate() must force a refetch on the next call');
+  });
+
+  await test('Cache — a failed background refresh keeps serving the last good catalog', async () => {
+    let attempt = 0;
+    let clock = 0;
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => {
+        attempt += 1;
+        if (attempt === 1) return FIXTURES.filter((f) => f.isActive);
+        throw new Error('network down');
+      },
+      fetchByIds: async () => [],
+      ttlMs: 1000,
+      now: () => clock,
+    });
+    const first = await cache.getActiveRatings();
+    assert.ok(first.length > 0);
+    clock += 1001;
+    const second = await cache.getActiveRatings();
+    assert.deepEqual(second.map((r) => r.id), first.map((r) => r.id), 'must keep serving the previous catalog when a refresh fails');
+    assert.equal(cache.getState().status, 'success', 'status must stay success, not flip to error, when stale data exists');
+    assert.ok(cache.getState().error, 'the failure must still be recorded on state.error');
+  });
+
+  await test("Cache — a failed fetch with no previous data rejects and leaves status 'error'", async () => {
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => {
+        throw new Error('network down');
+      },
+      fetchByIds: async () => [],
+    });
+    await assert.rejects(() => cache.getActiveRatings());
+    assert.equal(cache.getState().status, 'error');
+  });
+
+  await test('Cache — retrying after an error (with no previous data) can succeed', async () => {
+    let attempt = 0;
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('network down');
+        return FIXTURES.filter((f) => f.isActive);
+      },
+      fetchByIds: async () => [],
+    });
+    await assert.rejects(() => cache.getActiveRatings());
+    const retried = await cache.getActiveRatings();
+    assert.ok(retried.length > 0);
+    assert.equal(cache.getState().status, 'success');
+  });
+
+  await test('Cache — fetchActive resolving to zero rows is status \'success\' with an empty array (the hook derives the UI "empty" state from this)', async () => {
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => [],
+      fetchByIds: async () => [],
+    });
+    const result = await cache.getActiveRatings();
+    assert.deepEqual(result, []);
+    assert.equal(cache.getState().status, 'success');
+  });
+
+  await test('Cache — concurrent calls while a fetch is in flight share a single fetchActive request', async () => {
+    let calls = 0;
+    let resolveFetch: (v: AircraftTypeRatingCatalog[]) => void = () => {};
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: () => {
+        calls += 1;
+        return new Promise((resolve) => {
+          resolveFetch = resolve;
+        });
+      },
+      fetchByIds: async () => [],
+    });
+    const p1 = cache.getActiveRatings();
+    const p2 = cache.getActiveRatings();
+    resolveFetch(FIXTURES.filter((f) => f.isActive));
+    const [r1, r2] = await Promise.all([p1, p2]);
+    assert.equal(calls, 1, 'expected exactly one fetchActive call for two concurrent requests');
+    assert.equal(r1.length, r2.length);
+  });
+
+  await test('Cache getRatingsByIds — includes inactive ratings so existing references still resolve', async () => {
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => [],
+      fetchByIds: async (ids) => FIXTURES.filter((f) => ids.includes(f.id)),
+    });
+    const result = await cache.getRatingsByIds(['fx-aw139-pt6', 'fx-bell412-pt6-inactive']);
+    const byId = new Map(result.map((r) => [r.id, r]));
+    assert.ok(byId.has('fx-bell412-pt6-inactive'), 'an inactive rating id must still resolve via getRatingsByIds');
+    assert.equal(byId.get('fx-bell412-pt6-inactive')?.isActive, false);
+    assert.equal(byId.get('fx-bell412-pt6-inactive')?.displayName, 'Bell 412 — PT6 (test, inactive)');
+  });
+
+  await test('Cache getRatingsByIds — batches missing ids into a single fetchByIds call, never one request per id', async () => {
+    const fetchByIdsCalls: string[][] = [];
+    const cache = createAircraftTypeRatingsCache({
+      fetchActive: async () => [],
+      fetchByIds: async (ids) => {
+        fetchByIdsCalls.push([...ids]);
+        return FIXTURES.filter((f) => ids.includes(f.id));
+      },
+    });
+    const ids = ['fx-a320-cfm56', 'fx-a320-v2500', 'fx-a320neo-leap1a'];
+    const first = await cache.getRatingsByIds(ids);
+    assert.equal(first.length, 3);
+    assert.equal(fetchByIdsCalls.length, 1, 'expected exactly one fetchByIds call for three unknown ids');
+    assert.deepEqual([...fetchByIdsCalls[0]].sort(), [...ids].sort());
+
+    const idsAgain = ['fx-a320-cfm56', 'fx-a320-v2500', 'fx-b777-ge90'];
+    const second = await cache.getRatingsByIds(idsAgain);
+    assert.equal(second.length, 3);
+    assert.equal(fetchByIdsCalls.length, 2, 'expected exactly one more fetchByIds call for the single newly-seen id');
+    assert.deepEqual(fetchByIdsCalls[1], ['fx-b777-ge90']);
+  });
+
+  // ── Backfill plan ────────────────────────────────────────────────────
+
+  await test('Backfill plan — an unambiguous alias maps a legacy row to its rating', () => {
+    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-1', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' }];
+    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, []);
+    assert.equal(plan[0].outcome, 'mapped');
+    assert.equal(plan[0].ratingId, 'fx-b777-ge90');
+  });
+
+  await test('Backfill plan — an alias shared by two ratings is left ambiguous, never guessed', () => {
+    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-2', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'A320' }];
+    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, []);
+    assert.equal(plan[0].outcome, 'ambiguous');
+    assert.deepEqual([...(plan[0].candidateIds ?? [])].sort(), ['fx-a320-cfm56', 'fx-a320-v2500']);
+  });
+
+  await test('Backfill plan — a code with no matching alias is left untouched', () => {
+    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-3', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'NOT-A-REAL-CODE' }];
+    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, []);
+    assert.equal(plan[0].outcome, 'no_match');
+  });
+
+  await test('Backfill plan — a mapping that would collide with an existing normalized row is avoided, not double-written', () => {
+    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-4', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' }];
+    const existing: ExistingNormalizedHabilitation[] = [{ technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeRatingId: 'fx-b777-ge90' }];
+    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, existing);
+    assert.equal(plan[0].outcome, 'collision_avoided');
+    assert.equal(plan[0].ratingId, 'fx-b777-ge90');
+  });
+
+  await test('Backfill plan — summarizeBackfillPlan tallies every outcome across a mixed batch', () => {
+    const legacyRows: LegacyHabilitationRow[] = [
+      { id: 'hab-1', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' },
+      { id: 'hab-2', technicianId: 'tech-2', licenseCode: 'B1.1', aircraftTypeCode: 'A320' },
+      { id: 'hab-3', technicianId: 'tech-3', licenseCode: 'B1.1', aircraftTypeCode: 'NOT-A-REAL-CODE' },
+      { id: 'hab-4', technicianId: 'tech-4', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' },
+    ];
+    const existing: ExistingNormalizedHabilitation[] = [{ technicianId: 'tech-4', licenseCode: 'B1.1', aircraftTypeRatingId: 'fx-b777-ge90' }];
+    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, existing);
+    const summary = summarizeBackfillPlan(plan);
+    assert.deepEqual(summary, { analyzed: 4, mapped: 1, ambiguous: 1, noMatch: 1, collisionsAvoided: 1 });
+  });
+}
+
+main()
+  .then(() => {
+    console.log(`\n${passed} passed, ${failed} failed`);
+    if (failed > 0) process.exit(1);
+  })
+  .catch((err) => {
+    console.error('Test runner crashed:', err);
+    process.exit(1);
+  });

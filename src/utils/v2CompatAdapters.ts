@@ -26,6 +26,26 @@ import { SafeTechnicianPreview, UnlockedTechnicianView } from '../types/privacy'
 import { OfferRequest } from '../types/offerRequest';
 import { MatchRequest, MatchRequestStatus } from '../types/matchRequest';
 import { resolveLocationSnapshot } from '../constants/locationCities';
+import { AircraftRatingIndex } from '../constants/aircraftTypeRatings';
+import { TechnicianHabilitation } from '../types/technician';
+
+// A habilitation may now be rating-only (aircraftTypeCode undefined). For
+// V1-shaped flat lists we fall back to the rating's aircraft family so
+// legacy screens still see *some* aircraft label instead of `undefined`.
+// ratingIndex is loaded by the caller (via catalogRepository /
+// useAircraftTypeRatingsCatalog) — this stays a pure function, never a
+// Supabase call of its own.
+export function habilitationAircraftCodes(habilitations: TechnicianHabilitation[], ratingIndex: AircraftRatingIndex): string[] {
+  const codes = new Set<string>();
+  for (const h of habilitations) {
+    if (h.aircraftTypeCode) codes.add(h.aircraftTypeCode);
+    else if (h.aircraftTypeRatingId) {
+      const rating = ratingIndex.get(h.aircraftTypeRatingId);
+      if (rating) codes.add(rating.aircraftFamily);
+    }
+  }
+  return [...codes];
+}
 
 // ---------------------------------------------------------------------------
 // Availability helpers
@@ -108,7 +128,7 @@ function compatLocation(reference: {
  * - No firstName, lastName, email, phone
  * - No matchingScore (general search has no offer context)
  */
-export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview): SafeTechnicianView {
+export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview, ratingIndex: AircraftRatingIndex): SafeTechnicianView {
   const location = compatLocation(preview);
 
   return {
@@ -121,7 +141,7 @@ export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview): SafeTec
     latitude: location.latitude,
     longitude: location.longitude,
     licenseCategories: preview.licenses,
-    aircraftTypes: [...new Set(preview.habilitations.map((h) => h.aircraftTypeCode))],
+    aircraftTypes: habilitationAircraftCodes(preview.habilitations, ratingIndex),
     specialties: [],
     availability: withAvailabilityStatus(preview.availability),
     verificationStatus: preview.verificationStatus,
@@ -139,9 +159,9 @@ export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview): SafeTec
  * Convert a V2 UnlockedTechnicianView (post-acceptance) to SafeTechnicianView.
  * Only call this after canRevealIdentity() returns true.
  */
-export function v2UnlockedViewToSafeView(view: UnlockedTechnicianView): SafeTechnicianView {
+export function v2UnlockedViewToSafeView(view: UnlockedTechnicianView, ratingIndex: AircraftRatingIndex): SafeTechnicianView {
   return {
-    ...v2SafePreviewToSafeView(view),
+    ...v2SafePreviewToSafeView(view, ratingIndex),
     fullName: `${view.firstName} ${view.lastName}`,
     email: view.email,
     phone: view.phone,
@@ -156,7 +176,7 @@ export function v2UnlockedViewToSafeView(view: UnlockedTechnicianView): SafeTech
  * Convert a full V2 TechnicianWithRelations to the V1 Technician type.
  * Always reveals identity — only call for own-profile or admin views.
  */
-export function v2TechnicianToV1(tech: TechnicianWithRelations): Technician {
+export function v2TechnicianToV1(tech: TechnicianWithRelations, ratingIndex: AircraftRatingIndex): Technician {
   const location = compatLocation(tech);
 
   return {
@@ -172,7 +192,7 @@ export function v2TechnicianToV1(tech: TechnicianWithRelations): Technician {
     latitude: location.latitude,
     longitude: location.longitude,
     licenseCategories: tech.licenses.map((l) => l.licenseCode),
-    aircraftTypes: [...new Set(tech.habilitations.map((h) => h.aircraftTypeCode))],
+    aircraftTypes: habilitationAircraftCodes(tech.habilitations, ratingIndex),
     specialties: [],
     availability: withAvailabilityStatus(tech.availability),
     verificationStatus: tech.verificationStatus,

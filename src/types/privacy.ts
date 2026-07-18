@@ -50,7 +50,7 @@ export interface SafeTechnicianPreview {
   aircraftExperience: TechnicianAircraftExperience[];
   availability: Availability;
   verificationStatus: VerificationStatus;
-  // matchingScore is NOT stored here — use calculateOfferTechnicianMatch(offer, technician) instead.
+  // matchingScore is NOT stored here — use calculateOfferTechnicianMatch(offer, technician, ratingIndex) instead.
   // A score only exists in the context of a specific offer+technician pair.
 }
 

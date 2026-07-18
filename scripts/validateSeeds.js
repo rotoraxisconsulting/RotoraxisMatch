@@ -9,10 +9,20 @@
 //
 // Local demo IDs (tech-001, comp-001, prof-t001, etc.) are intentionally
 // human-readable and are NOT Supabase UUIDs. This script does NOT check
-// UUID format — that check is irrelevant for the local demo.
+// UUID format for those — that check is irrelevant for the local demo.
 //
 // Supabase starts clean (catalog data only). These seeds must NOT be
 // inserted directly into a Supabase database.
+//
+// aircraft_type_ratings NOTE: public.aircraft_type_ratings (Supabase) is the
+// ONLY source of truth for the 80-entry rating catalog — there is no
+// TypeScript copy left to parse here (see
+// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md). This script can
+// therefore only check that aircraftTypeRatingId / resolvedAircraftTypeRatingId
+// values in local seeds LOOK like a rating id (UUID shape) — it cannot
+// confirm they point at a real, still-existing catalog row. Run
+// `npm run validate:aircraft-ratings` (scripts/validateAircraftTypeRatingsCatalog.ts)
+// against the real Supabase project for that.
 // ============================================================
 const fs = require('fs');
 const path = require('path');
@@ -36,8 +46,12 @@ const chatMessages = read('chatMessages.json');
 const offerRequiredAircraftTypes = read('offerRequiredAircraftTypes.json');
 const offerRequiredTechnicianTypes = read('offerRequiredTechnicianTypes.json');
 const offerRequiredLicenses = read('offerRequiredLicenses.json');
+const offerRequiredHabilitations = read('offerRequiredHabilitations.json');
+const catalogRequests = read('catalogRequests.json');
 const locationCatalogText = fs.readFileSync(path.join(__dirname, '..', 'src', 'constants', 'locationCities.ts'), 'utf8');
 const aircraftTypesText = fs.readFileSync(path.join(__dirname, '..', 'src', 'constants', 'aircraftTypes.ts'), 'utf8');
+// UUID-shape check only — the real catalog lives in Supabase, see note above.
+const RATING_ID_FORMAT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const techIds = new Set(techProfiles.map((t) => t.id));
 const companyIds = new Set(companies.map((c) => c.id));
@@ -59,6 +73,8 @@ const VALID_TECHNICIAN_TYPE_CODES = new Set(['mechanic', 'avionic', 'sheet_metal
 const VALID_COMPANY_TYPE_CODES = new Set(['MRO', 'airline', 'recruitment_agency', 'helicopter_operator', 'other']);
 const VALID_CONTRACT_TYPE_CODES = new Set(['permanent', 'long_term', 'short_term']);
 const VALID_COMPANY_MEMBER_ROLES = new Set(['admin', 'recruiter', 'viewer']);
+const VALID_REQUIREMENT_LEVELS = new Set(['mandatory', 'preferred']);
+const VALID_CATALOG_REQUEST_STATUSES = new Set(['pending', 'approved', 'rejected', 'merged']);
 const LOCATION_BY_ID = new Map();
 let currentCountry = null;
 for (const line of locationCatalogText.split(/\r?\n/)) {
@@ -203,13 +219,65 @@ for (const l of licenses) {
   if (!VALID_LICENSE_CODES.has(l.licenseCode)) errors.push('license ' + l.id + ': invalid licenseCode ' + l.licenseCode);
 }
 
-// habilitations
+// habilitations — a row must have aircraftTypeCode (legacy/general) and/or
+// aircraftTypeRatingId (normalized, exact). Never both missing. Normalized
+// rows must be unique per (technicianId, licenseCode, aircraftTypeRatingId)
+// — mirrors the DB's partial unique index uq_technician_habilitations_rating,
+// i.e. prevents the technician from declaring the same rating twice under
+// the same license.
+const seenHabRatingKeys = new Set();
 for (const h of habilitations) {
   if (!techIds.has(h.technicianId)) errors.push('hab ' + h.id + ': technicianId ' + h.technicianId + ' not found');
   if (!VALID_LICENSE_CODES.has(h.licenseCode)) errors.push('hab ' + h.id + ': invalid licenseCode ' + h.licenseCode);
-  if (!h.aircraftTypeCode) errors.push('hab ' + h.id + ': missing aircraftTypeCode');
-  else if (h.aircraftTypeCode === 'GENERAL') errors.push('hab ' + h.id + ': aircraftTypeCode "GENERAL" is not a valid catalog code');
-  else if (!VALID_AIRCRAFT_TYPE_CODES.has(h.aircraftTypeCode)) errors.push('hab ' + h.id + ': invalid aircraftTypeCode ' + h.aircraftTypeCode);
+  if (!h.aircraftTypeCode && !h.aircraftTypeRatingId) {
+    errors.push('hab ' + h.id + ': must have aircraftTypeCode and/or aircraftTypeRatingId');
+  }
+  if (h.aircraftTypeCode) {
+    if (h.aircraftTypeCode === 'GENERAL') errors.push('hab ' + h.id + ': aircraftTypeCode "GENERAL" is not a valid catalog code');
+    else if (!VALID_AIRCRAFT_TYPE_CODES.has(h.aircraftTypeCode)) errors.push('hab ' + h.id + ': invalid aircraftTypeCode ' + h.aircraftTypeCode);
+  }
+  if (h.aircraftTypeRatingId) {
+    if (!RATING_ID_FORMAT.test(h.aircraftTypeRatingId)) {
+      errors.push('hab ' + h.id + ': aircraftTypeRatingId ' + h.aircraftTypeRatingId + ' is not UUID-shaped');
+    }
+    // Whether this id still exists (and is active) in public.aircraft_type_ratings
+    // can only be confirmed against Supabase — see validateAircraftTypeRatingsCatalog.ts.
+    const habKey = h.technicianId + '|' + h.licenseCode + '|' + h.aircraftTypeRatingId;
+    if (seenHabRatingKeys.has(habKey)) errors.push('hab ' + h.id + ': duplicate technician habilitation for (technicianId, licenseCode, aircraftTypeRatingId) — ' + habKey);
+    seenHabRatingKeys.add(habKey);
+  }
+  if (h.experienceYears !== undefined && (typeof h.experienceYears !== 'number' || h.experienceYears < 0)) {
+    errors.push('hab ' + h.id + ': invalid experienceYears ' + h.experienceYears);
+  }
+}
+
+// offerRequiredHabilitations — composite PK: (offerId, licenseCode, aircraftTypeRatingId)
+const seenOrhKeys = new Set();
+for (const orh of offerRequiredHabilitations) {
+  if (!offerIds.has(orh.offerId)) errors.push('orh ' + (orh.id || '?') + ': offerId ' + orh.offerId + ' not found');
+  if (!VALID_LICENSE_CODES.has(orh.licenseCode)) errors.push('orh ' + (orh.id || '?') + ': invalid licenseCode ' + orh.licenseCode);
+  if (!RATING_ID_FORMAT.test(orh.aircraftTypeRatingId)) errors.push('orh ' + (orh.id || '?') + ': aircraftTypeRatingId ' + orh.aircraftTypeRatingId + ' is not UUID-shaped');
+  if (!VALID_REQUIREMENT_LEVELS.has(orh.requirementLevel)) errors.push('orh ' + (orh.id || '?') + ': invalid requirementLevel ' + orh.requirementLevel);
+  const orhKey = orh.offerId + '|' + orh.licenseCode + '|' + orh.aircraftTypeRatingId;
+  if (seenOrhKeys.has(orhKey)) errors.push('orh ' + (orh.id || '?') + ': duplicate composite key offerId+licenseCode+aircraftTypeRatingId');
+  seenOrhKeys.add(orhKey);
+}
+
+// catalogRequests — status/resolvedAircraftTypeRatingId/adminNotes are
+// server-owned in the real DB (force_catalog_request_defaults trigger forces
+// them on INSERT regardless of what the client sends); local seeds may model
+// any status, including 'merged', to demonstrate the resolved lifecycle
+// (see catreq-001, resolved into the AW169/PW210 catalog entry).
+for (const cr of catalogRequests) {
+  if (!profileIds.has(cr.requestedBy)) errors.push('catreq ' + cr.id + ': requestedBy ' + cr.requestedBy + ' not found in profiles');
+  if (!VALID_CATALOG_REQUEST_STATUSES.has(cr.status)) errors.push('catreq ' + cr.id + ': invalid status ' + cr.status);
+  if (!cr.rawText || !String(cr.rawText).trim()) errors.push('catreq ' + cr.id + ': missing rawText');
+  if (cr.resolvedAircraftTypeRatingId && !RATING_ID_FORMAT.test(cr.resolvedAircraftTypeRatingId)) {
+    errors.push('catreq ' + cr.id + ': resolvedAircraftTypeRatingId ' + cr.resolvedAircraftTypeRatingId + ' is not UUID-shaped');
+  }
+  if ((cr.status === 'merged' || cr.status === 'approved') && !cr.resolvedAircraftTypeRatingId) {
+    errors.push('catreq ' + cr.id + ': status ' + cr.status + ' should set resolvedAircraftTypeRatingId');
+  }
 }
 
 // aircraft experience
@@ -461,7 +529,10 @@ console.log('AircraftExperience: ' + experience.length);
 console.log('OfferRequiredTechnicianTypes: ' + offerRequiredTechnicianTypes.length);
 console.log('OfferRequiredLicenses: ' + offerRequiredLicenses.length);
 console.log('OfferRequiredAircraftTypes: ' + offerRequiredAircraftTypes.length);
+console.log('OfferRequiredHabilitations: ' + offerRequiredHabilitations.length);
+console.log('CatalogRequests: ' + catalogRequests.length);
 console.log('AircraftTypeCatalogCodes: ' + VALID_AIRCRAFT_TYPE_CODES.size);
+console.log('AircraftTypeRatingCatalog: validated against Supabase separately — run `npm run validate:aircraft-ratings`');
 console.log('CompanyMembers: ' + companyMembers.length);
 console.log('ChatRooms: ' + chatRooms.length);
 console.log('ChatMessages: ' + chatMessages.length);

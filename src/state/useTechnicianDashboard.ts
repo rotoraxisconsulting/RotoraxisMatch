@@ -4,6 +4,8 @@ import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
 import { companyRepositoryV2 } from '../repositories/v2/companyRepositoryV2';
+import { catalogRepository } from '../repositories/v2/catalogRepository';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import {
   v2TechnicianToV1,
   v2OfferRequestToMatchRequest,
@@ -51,14 +53,15 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [withRelations, v2Requests, v2Docs, companies] = await Promise.all([
+    const [withRelations, v2Requests, v2Docs, companies, ratings] = await Promise.all([
       technicianRepositoryV2.getWithRelations(technicianId),
       offerRequestRepository.getForTechnician(technicianId),
       documentRepositoryV2.getForTechnician(technicianId),
       companyRepositoryV2.getAll(),
+      catalogRepository.getAircraftTypeRatings(),
     ]);
 
-    if (withRelations) setTechnician(v2TechnicianToV1(withRelations));
+    if (withRelations) setTechnician(v2TechnicianToV1(withRelations, buildAircraftRatingIndex(ratings)));
 
     // Technician sees their direct offer requests as MatchRequest[] (V1 compat)
     // Maps V2 'pending' → V1 'sent'; 'expired'/'withdrawn' → 'rejected'

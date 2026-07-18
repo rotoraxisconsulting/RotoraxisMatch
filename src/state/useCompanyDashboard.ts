@@ -16,6 +16,8 @@ import { offerRequestRepository } from '../repositories/v2/offerRequestRepositor
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
+import { catalogRepository } from '../repositories/v2/catalogRepository';
+import { AircraftRatingIndex, buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { OfferRequest } from '../types/offerRequest';
 import { canRevealIdentity } from '../utils/privacyV2';
 import { getUnlockedTechnicianView } from '../utils/privacyV2';
@@ -43,6 +45,7 @@ async function buildTechnicianMapV2(
   companyId: string,
   offerRequests: OfferRequest[],
   allOfferRequests: OfferRequest[],
+  ratingIndex: AircraftRatingIndex,
 ): Promise<Record<string, SafeTechnicianView>> {
   const map: Record<string, SafeTechnicianView> = {};
   const allApplications = await offerApplicationRepository.getForCompany(companyId);
@@ -60,7 +63,7 @@ async function buildTechnicianMapV2(
 
       if (!accepted) {
         const preview = await technicianRepositoryV2.getSafeView(techId);
-        if (preview) map[techId] = v2SafePreviewToSafeView(preview);
+        if (preview) map[techId] = v2SafePreviewToSafeView(preview, ratingIndex);
         return;
       }
 
@@ -71,6 +74,7 @@ async function buildTechnicianMapV2(
       if (withRelations) {
         map[techId] = v2UnlockedViewToSafeView(
           getUnlockedTechnicianView(withRelations, documents),
+          ratingIndex,
         );
       }
     }),
@@ -88,9 +92,10 @@ export function useCompanyDashboard(): CompanyDashboardState {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [companyProfile, v2Requests] = await Promise.all([
+    const [companyProfile, v2Requests, ratings] = await Promise.all([
       companyRepositoryV2.getById(companyId),
       offerRequestRepository.getForCompany(companyId),
+      catalogRepository.getAircraftTypeRatings(),
     ]);
 
     setCompany(companyProfile ? v2CompanyToV1(companyProfile) : null);
@@ -100,7 +105,7 @@ export function useCompanyDashboard(): CompanyDashboardState {
     const compatRequests = v2Requests.map(v2OfferRequestToMatchRequest);
     setRequests(compatRequests);
 
-    setTechnicianMap(await buildTechnicianMapV2(companyId, v2Requests, v2Requests));
+    setTechnicianMap(await buildTechnicianMapV2(companyId, v2Requests, v2Requests, buildAircraftRatingIndex(ratings)));
     setLoading(false);
   }, [companyId]);
 

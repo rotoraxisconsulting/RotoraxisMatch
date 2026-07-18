@@ -10,7 +10,8 @@ export * from './offerRequest'; // OfferRequest, OfferApplication, OfferInboxRec
 export * from './chat';        // ChatRoom, ChatMessage
 export * from './document';    // Document, TechnicianDocument, DocumentType + V1 compat: TechnicianDocument
 export * from './filters';     // TechnicianSearchFilters, OfferSearchFilters + V1 compat: TechnicianFilters, MapFilters
-export * from './matching';    // MatchScore, MatchLabel
+export * from './matching';    // MatchScore, MatchLabel, MatchLevel
+export * from './catalogRequest'; // CatalogRequest, CatalogRequestStatus
 
 // V1 unchanged files
 export * from './session';     // UserRole, DemoSession

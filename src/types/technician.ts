@@ -58,11 +58,29 @@ export interface TechnicianLicense {
   createdAt: string;
 }
 
+// A habilitation row always carries an explicit licenseCode — category and
+// aircraft/rating are never inferred by combining independent lists.
+//
+// aircraftTypeRatingId: normalized exact aircraft+engine rating (FK into
+//   aircraft_type_ratings, e.g. "Airbus A320 family — CFM56"). New/edited
+//   rows created via technicianRepositoryV2.replaceHabilitations() always
+//   set this.
+// aircraftTypeCode: legacy/general aircraft code with no motorization info.
+//   Present on rows written before this rating catalog existed; kept
+//   readable, never auto-migrated to a specific rating unless unambiguous
+//   (see docs/AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md).
+// At least one of the two is always set (DB CHECK constraint).
+// experienceYears / isCurrent are optional, per-rating declarations —
+// independent of technicianAircraftExperience (which is per legacy
+// aircraft_type_code, not per exact rating).
 export interface TechnicianHabilitation {
   id: string;
   technicianId: string;
   licenseCode: LicenseCode;
-  aircraftTypeCode: string;
+  aircraftTypeCode?: string;
+  aircraftTypeRatingId?: string;
+  experienceYears?: number;
+  isCurrent?: boolean;
   issuedAt?: string;
   expiresAt?: string;
   createdAt: string;

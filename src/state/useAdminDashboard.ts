@@ -19,6 +19,8 @@ import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
 import { offerRepository } from '../repositories/v2/offerRepository';
+import { catalogRepository } from '../repositories/v2/catalogRepository';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import {
   v2TechnicianToV1,
   v2CompanyToV1,
@@ -88,7 +90,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const load = useCallback(async () => {
     setLoading(true);
 
-    const [profiles, v2Docs, v2Requests, v2Offers, v2Applications, companiesRes, membersRes] =
+    const [profiles, v2Docs, v2Requests, v2Offers, v2Applications, companiesRes, membersRes, ratings] =
       await Promise.all([
         technicianRepositoryV2.getAll(),
         documentRepositoryV2.getAll(),
@@ -106,7 +108,9 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
         supabase
           .from('company_members')
           .select('id, company_id, user_id, role, created_at'),
+        catalogRepository.getAircraftTypeRatings(),
       ]);
+    const ratingIndex = buildAircraftRatingIndex(ratings);
 
     // Load relations for each technician so admin can see licenseCategories, etc.
     const withRelationsAll = await Promise.all(
@@ -116,7 +120,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
       (t): t is NonNullable<typeof t> => t !== null,
     );
     setTechnicianDetails(technicianDetailsResult);
-    setTechnicians(technicianDetailsResult.map(v2TechnicianToV1));
+    setTechnicians(technicianDetailsResult.map((t) => v2TechnicianToV1(t, ratingIndex)));
 
     // Map Supabase companies rows → CompanyProfileView (camelCase + resolved location)
     const companyProfilesResult: CompanyProfileView[] = (companiesRes.data ?? []).map((row) => {

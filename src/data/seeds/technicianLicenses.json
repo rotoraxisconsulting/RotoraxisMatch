@@ -42,5 +42,7 @@
   { "id": "lic-027", "technicianId": "tech-017", "licenseCode": "B1.3", "issuedAt": "2016-08-10", "expiresAt": "2028-08-09", "createdAt": "2023-05-18T10:00:00.000Z" },
 
   { "id": "lic-028", "technicianId": "tech-018", "licenseCode": "B1.1", "issuedAt": "2009-12-15", "expiresAt": "2027-12-14", "createdAt": "2023-04-02T08:00:00.000Z" },
-  { "id": "lic-029", "technicianId": "tech-018", "licenseCode": "C",   "issuedAt": "2012-09-28", "expiresAt": "2028-09-27", "createdAt": "2023-04-02T08:00:00.000Z" }
+  { "id": "lic-029", "technicianId": "tech-018", "licenseCode": "C",   "issuedAt": "2012-09-28", "expiresAt": "2028-09-27", "createdAt": "2023-04-02T08:00:00.000Z" },
+
+  { "id": "lic-030", "technicianId": "tech-014", "licenseCode": "B2",  "issuedAt": "2020-01-05", "expiresAt": "2028-01-04", "createdAt": "2026-07-08T09:00:00.000Z" }
 ]

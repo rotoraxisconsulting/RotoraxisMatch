@@ -1,82 +1,18 @@
-import { OfferWithRequirements } from '../types/offer';
-import { TechnicianWithRelations } from '../types/technician';
-import { MatchScore, MatchLabel } from '../types/matching';
 import { offerRepository } from '../repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
+import { catalogRepository } from '../repositories/v2/catalogRepository';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
+import { OfferWithRequirements } from '../types/offer';
+import { MatchScore } from '../types/matching';
 import { SafeTechnicianPreview } from '../types/privacy';
-import { resolveLocationSnapshot } from '../constants/locationCities';
 
-// A match score is always computed for a specific offer + technician pair.
-// Never store this value on a technician_profile row.
-export function calculateOfferTechnicianMatch(
-  offer: OfferWithRequirements,
-  technician: TechnicianWithRelations,
-): MatchScore {
-  let verified = 0;
-  let habilitation = 0;
-  let license = 0;
-  let availability = 0;
-  let experience = 0;
-  let location = 0;
-
-  if (technician.verificationStatus === 'verified') verified = 25;
-
-  if (offer.requiredAircraftTypes.length === 0) {
-    habilitation = 25;
-  } else if (technician.habilitations.some((h) => offer.requiredAircraftTypes.includes(h.aircraftTypeCode))) {
-    habilitation = 25;
-  }
-
-  if (offer.requiredLicenses.length === 0) {
-    license = 20;
-  } else {
-    const techLicenseCodes = technician.licenses.map((l) => l.licenseCode as string);
-    if (offer.requiredLicenses.some((code) => techLicenseCodes.includes(code))) {
-      license = 20;
-    }
-  }
-
-  const techContractTypes = technician.availability.contractTypes as string[];
-  if (techContractTypes.includes(offer.contractType)) availability = 15;
-
-  const totalYears = technician.aircraftExperience.reduce((sum, e) => {
-    return sum + (e.unit === 'years' ? e.value : e.value / 2000);
-  }, 0);
-  if (totalYears >= offer.minYearsExperience) experience = 10;
-
-  const technicianLocation = resolveLocationSnapshot(technician);
-  const offerLocation = resolveLocationSnapshot({
-    locationCityId: offer.locationCityId,
-    country: offer.locationCountry,
-    city: offer.locationCity,
-    baseAirport: offer.locationBaseAirport,
-  });
-
-  if (
-    (technicianLocation?.locationCityId && offerLocation?.locationCityId && technicianLocation.locationCityId === offerLocation.locationCityId) ||
-    (technicianLocation?.baseAirport && offerLocation?.baseAirport && technicianLocation.baseAirport === offerLocation.baseAirport) ||
-    (technicianLocation?.city && offerLocation?.city && technicianLocation.city.toLowerCase() === offerLocation.city.toLowerCase())
-  ) {
-    location = 5;
-  }
-
-  const total = verified + habilitation + license + availability + experience + location;
-
-  return {
-    offerId: offer.id,
-    technicianId: technician.id,
-    total,
-    label: getMatchLabel(total),
-    breakdown: { verified, habilitation, license, availability, experience, location },
-  };
-}
-
-export function getMatchLabel(total: number): MatchLabel {
-  if (total >= 80) return 'Excellent match';
-  if (total >= 60) return 'Strong match';
-  if (total >= 40) return 'Partial match';
-  return 'Low match';
-}
+// The actual scoring/explanation logic is a pure function with no
+// Supabase/repository imports so it can be unit-tested directly — see
+// src/utils/offerMatchExplain.ts and scripts/testMatching.ts. These two
+// functions are the I/O boundary: load the offer/technician data AND the
+// aircraft ratings catalog, then hand everything to the pure function.
+export { calculateOfferTechnicianMatch, getMatchLabel } from './offerMatchExplain';
+import { calculateOfferTechnicianMatch } from './offerMatchExplain';
 
 export interface TechnicianMatchResult {
   technician: SafeTechnicianPreview;
@@ -93,7 +29,11 @@ export async function getTechnicianMatchesForOffer(offerId: string): Promise<Tec
   const offer = await offerRepository.getWithRequirements(offerId);
   if (!offer) return [];
 
-  const profiles = await technicianRepositoryV2.getPublicProfiles();
+  const [profiles, ratings] = await Promise.all([
+    technicianRepositoryV2.getPublicProfiles(),
+    catalogRepository.getAircraftTypeRatings(),
+  ]);
+  const ratingIndex = buildAircraftRatingIndex(ratings);
   const results: TechnicianMatchResult[] = [];
 
   for (const profile of profiles) {
@@ -101,7 +41,7 @@ export async function getTechnicianMatchesForOffer(offerId: string): Promise<Tec
     if (!full) continue;
     const safeView = await technicianRepositoryV2.getSafeView(profile.id);
     if (!safeView) continue;
-    const score = calculateOfferTechnicianMatch(offer, full);
+    const score = calculateOfferTechnicianMatch(offer, full, ratingIndex);
     results.push({ technician: safeView, score });
   }
 
@@ -110,14 +50,17 @@ export async function getTechnicianMatchesForOffer(offerId: string): Promise<Tec
 
 // Returns all published offers ranked by match % for a specific technician.
 export async function getOfferMatchesForTechnician(technicianId: string): Promise<OfferMatchResult[]> {
-  const full = await technicianRepositoryV2.getWithRelations(technicianId);
+  const [full, offers, ratings] = await Promise.all([
+    technicianRepositoryV2.getWithRelations(technicianId),
+    offerRepository.getPublishedWithRequirements(),
+    catalogRepository.getAircraftTypeRatings(),
+  ]);
   if (!full) return [];
-
-  const offers = await offerRepository.getPublishedWithRequirements();
+  const ratingIndex = buildAircraftRatingIndex(ratings);
   const results: OfferMatchResult[] = [];
 
   for (const offer of offers) {
-    const score = calculateOfferTechnicianMatch(offer, full);
+    const score = calculateOfferTechnicianMatch(offer, full, ratingIndex);
     results.push({ offer, score });
   }
 

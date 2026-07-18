@@ -30,6 +30,7 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { getSafeTechnicianPreview } from '../../../src/utils/privacyV2';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { OfferApplication } from '../../../src/types/offerRequest';
@@ -90,6 +91,8 @@ export default function ApplicationsListScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+
   const load = useCallback(async () => {
     const apps = await offerApplicationRepository.getForCompany(companyId);
 
@@ -110,7 +113,7 @@ export default function ApplicationsListScreen() {
         offer,
         tech,
         safePreview: tech ? getSafeTechnicianPreview(tech) : null,
-        score: offer && tech ? calculateOfferTechnicianMatch(offer, tech) : null,
+        score: offer && tech ? calculateOfferTechnicianMatch(offer, tech, ratingIndex) : null,
       };
     });
 
@@ -133,7 +136,7 @@ export default function ApplicationsListScreen() {
 
     setUnreadIds(ids);
     setEntries(built);
-  }, [companyId]);
+  }, [companyId, ratingIndex]);
 
   useFocusEffect(
     useCallback(() => {

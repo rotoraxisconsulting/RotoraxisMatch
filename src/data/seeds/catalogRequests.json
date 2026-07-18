@@ -1,0 +1,13 @@
+[
+  {
+    "id": "catreq-001",
+    "requestedBy": "prof-t009",
+    "rawText": "AW169 (PWC 210)",
+    "context": "License: B1.3 — Aircraft/family: AW169 — not yet in the catalog.",
+    "status": "merged",
+    "resolvedAircraftTypeRatingId": "00000000-0000-4000-a000-000000000076",
+    "adminNotes": "Matches the Leonardo AW169 — PW210 entry added in the 80-rating Part-66 catalog.",
+    "createdAt": "2026-07-01T09:00:00.000Z",
+    "updatedAt": "2026-07-08T09:00:00.000Z"
+  }
+]

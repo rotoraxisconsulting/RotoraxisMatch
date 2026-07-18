@@ -21,6 +21,8 @@ import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
+import { catalogRepository } from '../repositories/v2/catalogRepository';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { canRevealIdentity } from '../utils/privacyV2';
 import { getUnlockedTechnicianView } from '../utils/privacyV2';
 import {
@@ -79,12 +81,14 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
         availabilityStatus: filters.availabilityStatus as AvailabilityStatus | undefined,
       };
 
-      // Load previews and the acceptance records in parallel
-      const [previews, offerRequests, offerApplications] = await Promise.all([
+      // Load previews, the acceptance records and the ratings catalog in parallel
+      const [previews, offerRequests, offerApplications, ratings] = await Promise.all([
         technicianRepositoryV2.search(v2Filters),
         offerRequestRepository.getForCompany(companyId),
         offerApplicationRepository.getForCompany(companyId),
+        catalogRepository.getAircraftTypeRatings(),
       ]);
+      const ratingIndex = buildAircraftRatingIndex(ratings);
 
       // Apply privacy gate per technician result
       const views: SafeTechnicianView[] = await Promise.all(
@@ -96,16 +100,16 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
             offerApplications,
           });
 
-          if (!accepted) return v2SafePreviewToSafeView(preview);
+          if (!accepted) return v2SafePreviewToSafeView(preview, ratingIndex);
 
           // Identity unlocked — load full profile + verified documents
           const [withRelations, documents] = await Promise.all([
             technicianRepositoryV2.getWithRelations(preview.id),
             documentRepositoryV2.getVerifiedForTechnician(preview.id),
           ]);
-          if (!withRelations) return v2SafePreviewToSafeView(preview);
+          if (!withRelations) return v2SafePreviewToSafeView(preview, ratingIndex);
 
-          return v2UnlockedViewToSafeView(getUnlockedTechnicianView(withRelations, documents));
+          return v2UnlockedViewToSafeView(getUnlockedTechnicianView(withRelations, documents), ratingIndex);
         }),
       );
 

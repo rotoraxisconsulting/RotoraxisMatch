@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase';
-import { Offer, OfferWithRequirements } from '../../types/offer';
-import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
+import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
+import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
 import {
@@ -168,6 +168,7 @@ export const offerRepository = {
     requiredTechnicianTypes?: TechnicianTypeCode[];
     requiredLicenses?: LicenseCode[];
     requiredAircraftTypes?: string[];
+    requiredHabilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
   }): Promise<OfferWithRequirements> {
     const status = data.status ?? 'draft';
     const location = controlledOfferLocation(data);
@@ -195,14 +196,15 @@ export const offerRepository = {
       technicianTypes: data.requiredTechnicianTypes ?? [],
       licenses: data.requiredLicenses ?? [],
       aircraftTypes: data.requiredAircraftTypes ?? [],
+      habilitations: data.requiredHabilitations ?? [],
     };
     await this.replaceRequirements(offer.id, requirements);
-    return {
-      ...offer,
+    return withRequirements(offer, {
       requiredTechnicianTypes: requirements.technicianTypes,
       requiredLicenses: requirements.licenses,
       requiredAircraftTypes: requirements.aircraftTypes,
-    };
+      requiredHabilitations: requirements.habilitations.map((h) => ({ ...h, offerId: offer.id, createdAt: offer.createdAt })),
+    });
   },
 
   async delete(id: string): Promise<void> {
@@ -217,6 +219,10 @@ export const offerRepository = {
     technicianTypes: TechnicianTypeCode[];
     licenses: LicenseCode[];
     aircraftTypes: string[];
+    // Optional — omit to leave existing exact habilitation requirements
+    // untouched (callers that only manage the broad requirement chips don't
+    // need to know about this table).
+    habilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
   }): Promise<void> {
     const deletes = await Promise.all([
       supabase.from('offer_required_technician_types').delete().eq('offer_id', offerId),
@@ -249,5 +255,35 @@ export const offerRepository = {
     }
     const results = await Promise.all(inserts);
     results.forEach((result) => throwIfError(result.error));
+
+    if (requirements.habilitations !== undefined) {
+      await this.replaceRequiredHabilitations(offerId, requirements.habilitations);
+    }
+  },
+
+  // Exact category+rating requirements. Independent from replaceRequirements()
+  // above so a caller that only edits the broad chips never has to reload or
+  // resend the exact-habilitation rows it doesn't manage.
+  async replaceRequiredHabilitations(
+    offerId: string,
+    habilitations: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[],
+  ): Promise<void> {
+    const { error: deleteError } = await supabase
+      .from('offer_required_habilitations')
+      .delete()
+      .eq('offer_id', offerId);
+    throwIfError(deleteError);
+
+    if (habilitations.length === 0) return;
+    const { error } = await supabase.from('offer_required_habilitations').insert(
+      habilitations.map((h) => ({
+        offer_id: offerId,
+        license_code: h.licenseCode,
+        aircraft_type_rating_id: h.aircraftTypeRatingId,
+        requirement_level: h.requirementLevel,
+        notes: h.notes ?? null,
+      })),
+    );
+    throwIfError(error);
   },
 };

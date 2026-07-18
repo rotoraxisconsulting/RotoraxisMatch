@@ -7,7 +7,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "ts": "tsc --noEmit"
+    "ts": "tsc --noEmit",
+    "test:matching": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-test-matching scripts/testMatching.ts && node .tmp-test-matching/scripts/testMatching.js",
+    "validate:aircraft-ratings": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-validate-aircraft-ratings scripts/validateAircraftTypeRatingsCatalog.ts && node .tmp-validate-aircraft-ratings/scripts/validateAircraftTypeRatingsCatalog.js",
+    "backfill:aircraft-ratings": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-backfill-aircraft-ratings scripts/backfillLegacyAircraftRatings.ts && node .tmp-backfill-aircraft-ratings/scripts/backfillLegacyAircraftRatings.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",

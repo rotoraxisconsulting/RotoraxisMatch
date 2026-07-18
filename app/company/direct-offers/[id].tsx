@@ -25,6 +25,7 @@ import {
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
+import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import {
   CompanyBadge,
   CompanyCard,
@@ -43,6 +44,7 @@ import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianR
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
 import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '../../../src/lib/documentStorage';
 import { useCompanySession } from '../../../src/state/SessionContext';
@@ -100,6 +102,8 @@ export default function DirectOfferDetailScreen() {
   const [withdrawing, setWithdrawing] = useState(false);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+
   const load = useCallback(async () => {
     if (!id) return;
     const request = await offerRequestRepository.getById(id);
@@ -116,7 +120,7 @@ export default function DirectOfferDetailScreen() {
     if (request.offerId) {
       linkedOffer = await offerRepository.getWithRequirements(request.offerId);
       setOffer(linkedOffer);
-      if (linkedOffer && rel) setScore(calculateOfferTechnicianMatch(linkedOffer, rel));
+      if (linkedOffer && rel) setScore(calculateOfferTechnicianMatch(linkedOffer, rel, ratingIndex));
     }
 
     if (request.status === 'accepted') {
@@ -127,7 +131,7 @@ export default function DirectOfferDetailScreen() {
     }
 
     await activityRepository.markRead('company', companyId, id);
-  }, [companyId, id]);
+  }, [companyId, id, ratingIndex]);
 
   useFocusEffect(
     useCallback(() => {
@@ -240,7 +244,10 @@ export default function DirectOfferDetailScreen() {
             </View>
           </View>
           {score ? (
-            <InlineScore score={score.total} quality={score.label} context="match for this offer" />
+            <>
+              <InlineScore score={score.total} quality={score.label} context="match for this offer" />
+              <MatchExplanation score={score} />
+            </>
           ) : null}
           {req.message ? (
             <View style={styles.messageBlock}>

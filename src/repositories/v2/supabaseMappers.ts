@@ -13,10 +13,12 @@ import {
   TechnicianWithRelations,
 } from '../../types/technician';
 import { SafeTechnicianPreview, TechnicianView, UnlockedTechnicianView } from '../../types/privacy';
-import { Offer, OfferWithRequirements } from '../../types/offer';
+import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
 import { OfferApplication, OfferRequest } from '../../types/offerRequest';
 import { ChatMessage, ChatRoom } from '../../types/chat';
 import { SenderRole } from '../../types/enums';
+import { CatalogRequest } from '../../types/catalogRequest';
+import { RequirementLevel } from '../../types/catalog';
 
 export type DbRow = Record<string, any>;
 
@@ -117,22 +119,40 @@ export function mapOfferRow(row: DbRow): Offer {
   };
 }
 
-export async function loadOfferRequirements(offerIds: string[]): Promise<Record<string, Pick<OfferWithRequirements, 'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredAircraftTypes'>>> {
+type OfferRequirementsPick = Pick<
+  OfferWithRequirements,
+  'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredAircraftTypes' | 'requiredHabilitations'
+>;
+
+export function mapOfferRequiredHabilitationRow(row: DbRow): OfferRequiredHabilitation {
+  return {
+    offerId: row.offer_id,
+    licenseCode: row.license_code as LicenseCode,
+    aircraftTypeRatingId: row.aircraft_type_rating_id,
+    requirementLevel: row.requirement_level as RequirementLevel,
+    notes: row.notes ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+export async function loadOfferRequirements(offerIds: string[]): Promise<Record<string, OfferRequirementsPick>> {
   const uniqueIds = [...new Set(offerIds)].filter(Boolean);
-  const empty: Record<string, Pick<OfferWithRequirements, 'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredAircraftTypes'>> = {};
+  const empty: Record<string, OfferRequirementsPick> = {};
   for (const id of uniqueIds) {
-    empty[id] = { requiredTechnicianTypes: [], requiredLicenses: [], requiredAircraftTypes: [] };
+    empty[id] = { requiredTechnicianTypes: [], requiredLicenses: [], requiredAircraftTypes: [], requiredHabilitations: [] };
   }
   if (uniqueIds.length === 0) return empty;
 
-  const [typesRes, licensesRes, aircraftRes] = await Promise.all([
+  const [typesRes, licensesRes, aircraftRes, habilitationsRes] = await Promise.all([
     supabase.from('offer_required_technician_types').select('offer_id, technician_type_code').in('offer_id', uniqueIds),
     supabase.from('offer_required_licenses').select('offer_id, license_code').in('offer_id', uniqueIds),
     supabase.from('offer_required_aircraft_types').select('offer_id, aircraft_type_code').in('offer_id', uniqueIds),
+    supabase.from('offer_required_habilitations').select('offer_id, license_code, aircraft_type_rating_id, requirement_level, notes, created_at').in('offer_id', uniqueIds),
   ]);
   throwIfError(typesRes.error);
   throwIfError(licensesRes.error);
   throwIfError(aircraftRes.error);
+  throwIfError(habilitationsRes.error);
 
   for (const row of (typesRes.data ?? []) as DbRow[]) {
     empty[row.offer_id]?.requiredTechnicianTypes.push(row.technician_type_code as TechnicianTypeCode);
@@ -143,15 +163,19 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   for (const row of (aircraftRes.data ?? []) as DbRow[]) {
     empty[row.offer_id]?.requiredAircraftTypes.push(row.aircraft_type_code);
   }
+  for (const row of (habilitationsRes.data ?? []) as DbRow[]) {
+    empty[row.offer_id]?.requiredHabilitations.push(mapOfferRequiredHabilitationRow(row));
+  }
   return empty;
 }
 
-export function withRequirements(offer: Offer, reqs?: Pick<OfferWithRequirements, 'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredAircraftTypes'>): OfferWithRequirements {
+export function withRequirements(offer: Offer, reqs?: OfferRequirementsPick): OfferWithRequirements {
   return {
     ...offer,
     requiredTechnicianTypes: reqs?.requiredTechnicianTypes ?? [],
     requiredLicenses: reqs?.requiredLicenses ?? [],
     requiredAircraftTypes: reqs?.requiredAircraftTypes ?? [],
+    requiredHabilitations: reqs?.requiredHabilitations ?? [],
   };
 }
 
@@ -226,7 +250,7 @@ export async function loadTechnicianRelations(technicianIds: string[]): Promise<
 
   const [licensesRes, habsRes, expRes] = await Promise.all([
     supabase.from('technician_licenses').select('id, technician_id, license_code, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
-    supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_code, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
+    supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
     supabase.from('technician_aircraft_experience').select('id, technician_id, aircraft_type_code, value, unit, created_at').in('technician_id', uniqueIds),
   ]);
   throwIfError(licensesRes.error);
@@ -248,7 +272,10 @@ export async function loadTechnicianRelations(technicianIds: string[]): Promise<
       id: row.id,
       technicianId: row.technician_id,
       licenseCode: row.license_code,
-      aircraftTypeCode: row.aircraft_type_code,
+      aircraftTypeCode: row.aircraft_type_code ?? undefined,
+      aircraftTypeRatingId: row.aircraft_type_rating_id ?? undefined,
+      experienceYears: row.experience_years ?? undefined,
+      isCurrent: row.is_current ?? undefined,
       issuedAt: row.issued_at ?? undefined,
       expiresAt: row.expires_at ?? undefined,
       createdAt: row.created_at,
@@ -325,6 +352,20 @@ export function mapPublicTechnicianView(row: DbRow, relations?: Awaited<ReturnTy
     documents,
   };
   return unlocked;
+}
+
+export function mapCatalogRequestRow(row: DbRow): CatalogRequest {
+  return {
+    id: row.id,
+    requestedBy: row.requested_by,
+    rawText: row.raw_text,
+    context: row.context ?? undefined,
+    status: row.status,
+    resolvedAircraftTypeRatingId: row.resolved_aircraft_type_rating_id ?? undefined,
+    adminNotes: row.admin_notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnType<typeof loadTechnicianRelations>>[string]): TechnicianWithRelations {

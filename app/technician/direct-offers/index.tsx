@@ -28,6 +28,7 @@ import { companyRepositoryV2 } from '../../../src/repositories/v2/companyReposit
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { OfferRequest } from '../../../src/types/offerRequest';
 import { MatchScore } from '../../../src/types/matching';
@@ -89,6 +90,8 @@ export default function DirectOffersListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+
   const load = useCallback(async () => {
     const [requests, techWithRelations] = await Promise.all([
       offerRequestRepository.getForTechnician(technicianId),
@@ -104,7 +107,7 @@ export default function DirectOffersListScreen() {
 
         let score: MatchScore | null = null;
         if (offer && techWithRelations) {
-          score = calculateOfferTechnicianMatch(offer, techWithRelations);
+          score = calculateOfferTechnicianMatch(offer, techWithRelations, ratingIndex);
         }
 
         return {
@@ -135,7 +138,7 @@ export default function DirectOffersListScreen() {
 
     setUnreadIds(ids);
     setEntries(built);
-  }, [technicianId]);
+  }, [technicianId, ratingIndex]);
 
   useFocusEffect(
     useCallback(() => {

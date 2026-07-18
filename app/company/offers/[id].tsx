@@ -50,6 +50,8 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { canManageOffers, canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
+import { habilitationAircraftCodes } from '../../../src/utils/v2CompatAdapters';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
 
@@ -156,6 +158,7 @@ export default function OfferDetailScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { companyId, companyMemberRole } = useCompanySession();
+  const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
   const [matches, setMatches] = useState<TechnicianMatchResult[]>([]);
@@ -538,7 +541,7 @@ export default function OfferDetailScreen() {
           const relation = offerRelationByTechnician[technician.id];
           const accent = scoreColor(score.total);
           const licenses = technician.licenses.slice(0, 4);
-          const aircraft = [...new Set(technician.habilitations.map((h) => h.aircraftTypeCode))].slice(0, 4);
+          const aircraft = habilitationAircraftCodes(technician.habilitations, ratingIndex).slice(0, 4);
 
           return (
             <CompanyCard key={technician.id} style={[styles.techCard, { borderLeftColor: accent }]}>
