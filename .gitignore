@@ -2,9 +2,7 @@ node_modules/
 .expo/
 dist/
 web-build/
-.tmp-test-matching/
-.tmp-validate-aircraft-ratings/
-.tmp-backfill-aircraft-ratings/
+.tmp-*/
 *.jks
 *.p8
 *.p12

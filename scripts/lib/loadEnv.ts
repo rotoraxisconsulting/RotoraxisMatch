@@ -8,11 +8,25 @@ import path from 'node:path';
 // secrets / shell exports always win over the .env file).
 //
 // Path note: the npm scripts compile with `--outDir .tmp-<script-name>`
-// (never in place), so at runtime this file lives at
-// <repo>/.tmp-<script-name>/scripts/lib/loadEnv.js — three levels below the
-// repo root (lib -> scripts -> .tmp-<script-name> -> repo root), not two.
+// (never in place). tsc infers its rootDir from the common ancestor of every
+// .ts file actually reachable from the entry point — which is `scripts/` for
+// a script that only imports other scripts/ files, but the repo root for one
+// that also imports from src/ — so this file's compiled depth under
+// .tmp-<script-name>/ is NOT constant across scripts. A fixed count of '..'
+// broke the very first time a script with a different import graph used it.
+// Walking up to the nearest package.json is robust to that.
+export function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  while (!fs.existsSync(path.join(dir, 'package.json'))) {
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error(`Could not locate repo root (package.json) above ${startDir}`);
+    dir = parent;
+  }
+  return dir;
+}
+
 export function loadEnvFile(fileName = '.env'): void {
-  const filePath = path.join(__dirname, '..', '..', '..', fileName);
+  const filePath = path.join(findRepoRoot(__dirname), fileName);
   if (!fs.existsSync(filePath)) return;
 
   const content = fs.readFileSync(filePath, 'utf8');
