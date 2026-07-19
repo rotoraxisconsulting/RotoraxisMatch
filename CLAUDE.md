@@ -21,17 +21,15 @@ The app must run on:
 - React Native
 - TypeScript
 - Expo Router
-- AsyncStorage
-- JSON seed data
-- Architecture prepared for future Supabase migration
+- Supabase (Postgres + Auth + Storage + Edge Functions) — the active backend, not a future migration target. `src/repositories/v2/*` query Supabase directly (`src/lib/supabase.ts`); real Supabase Auth is wired (`AuthContext`, `/auth/*` screens); RLS is enabled on every table.
+- `supabase/migrations/*.sql` — ~20 numbered, idempotent, hand-reviewed migrations (see "Backend / data model notes" below). Never edit an already-applied migration; add a new one.
+
+`src/data/seeds/*.json` is legacy from the pre-Supabase phase. Nothing under `src/` or `app/` reads it anymore — its only remaining consumer is `scripts/validateSeeds.js`, which validates local-JSON *structural* invariants (kept as a cheap offline sanity check), not the live database. Do not build new features against it.
 
 Do not use yet:
-- Supabase
 - Firebase
 - Stripe
 - Paddle
-- real auth
-- external backend
 
 ## Core concept
 
@@ -81,15 +79,18 @@ screens/components
 → storage adapter
 
 Current storage:
-- JSON seed data
-- AsyncStorage local persistence
-
-Future storage:
+- Supabase Postgres (via `src/repositories/v2/*`)
 - Supabase Auth
-- Supabase Postgres
-- Supabase Storage
+- Supabase Storage (documents)
 
-Do not couple UI directly to AsyncStorage.
+Do not couple UI directly to Supabase — go through a repository (`src/repositories/v2/*`), never call `src/lib/supabase.ts` from a screen/component/hook directly.
+
+## Backend / data model notes
+
+- **Migrations**: numbered, additive, idempotent SQL files in `supabase/migrations/`. Never `DROP`/`DELETE`/`TRUNCATE` existing data in a migration; deactivate (`is_active = false`) rather than delete when a catalog row becomes obsolete. `016_part66_ratings_habilitations.sql` is the reference style for a well-commented, idempotent migration (header explaining intent/rationale, explicit backfill logic guarded against double-writes).
+- **Catalog tables with a TTL cache**: `aircraft_type_ratings` (EASA Part-66 aircraft-engine type ratings) is read through `src/repositories/v2/catalogRepository.ts`, backed by a dependency-injected, unit-testable TTL cache (`src/repositories/v2/aircraftTypeRatingsCache.ts`) and a shared hook (`src/state/useAircraftTypeRatingsCatalog.ts`) with explicit `loading`/`success`/`empty`/`error` states — never a hardcoded catalog baked into a TypeScript constant. `src/constants/aircraftTypeRatings.ts` holds only types and pure functions that take the loaded catalog/index as an argument.
+- **Same-row matching rule** (`src/utils/offerMatchExplain.ts`): a license category and an aircraft/engine rating only ever count as "held together" when they come from the SAME `technician_habilitations` row. Holding a license and separately having an unrelated habilitation must never be combined into a false match. This is a previously-fixed real bug — do not reintroduce it.
+- **Matching's business principle**: a technician who holds exactly what an offer requires must score clearly above one who does not, regardless of how good the rest of their profile looks — a missing mandatory qualification is a legal blocker (the technician cannot sign that work), not a minor preference gap. Score design should make that unambiguous, not just directionally true.
 
 ## UI/UX rules
 
