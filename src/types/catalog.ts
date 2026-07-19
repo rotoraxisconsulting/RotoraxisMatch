@@ -94,6 +94,13 @@ export interface AircraftTypeRatingCatalog {
   easaGroup?: string;
   /** Which catalog batch/import this row came from, for future re-imports. */
   sourceRevision?: string;
+  /**
+   * The EASA source's own top-level classification, kept verbatim alongside
+   * the (heuristic) aircraftCategory above. Not populated for the initial
+   * 80 rows. Reserved for a later phase's category faceting/pre-filtering —
+   * nothing reads this yet.
+   */
+  productType?: 'Aeroplane' | 'Helicopter' | 'Gas Airship';
   priority: number;
   isActive: boolean;
 }

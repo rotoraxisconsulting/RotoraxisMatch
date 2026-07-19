@@ -28,14 +28,14 @@ Ninguna — las 80 filas activas actuales tienen correspondencia en la lista ofi
 
 | categoría | filas |
 |---|---|
-| general_aviation | 295 |
+| general_aviation | 299 |
 | helicopter | 82 |
-| commercial_airplane | 78 |
+| commercial_airplane | 74 |
 | business_jet | 72 |
 | regional_turboprop | 71 |
 | regional_airplane | 8 |
 
-## Motor: casos donde el parser no reconoció el patrón (18 de 606)
+## Motor: casos donde el parser no reconoció el patrón (16 de 606)
 
 `engine_manufacturer` queda con el texto crudo completo y `engine_family` en NULL — nunca se adivinó una separación. Revisar si alguno merece añadirse a la tabla de prefijos conocidos del generador.
 
@@ -54,8 +54,6 @@ Ninguna — las 80 filas activas actuales tienen correspondencia en la lista ofi
 - "Thrush S2R Series (TPE331)" — designation: "TPE331"
 - "Air Tractor AT-401 (PZL-3S)" — designation: "PZL-3S"
 - "Cessna 182/F182 Series (SMA)" — designation: "SMA"
-- "Cessna/Reims-Cessna 337 Series (Continental) (not pressurised)" — designation: "not pressurised"
-- "Cessna/Reims-Cessna 337 Series (Continental) (pressurised)" — designation: "pressurised"
 - "Thrush S2R (Wsk PZL-3S)" — designation: "Wsk PZL-3S"
 
 ## Todas las filas de Aeroplane grupo 1 clasificadas (222 filas) — para auditar la heurística de categoría
@@ -157,9 +155,9 @@ Ninguna — las 80 filas activas actuales tienen correspondencia en la lista ofi
 | Canadair CL-215 | commercial_airplane | group=1, default (no keyword match) |
 | Canadair CL-215 | commercial_airplane | group=1, default (no keyword match) |
 | Canadair CL-415 | commercial_airplane | group=1, default (no keyword match) |
-| Cessna 400 Series | commercial_airplane | group=1, default (no keyword match) |
-| Cessna 425 | commercial_airplane | group=1, default (no keyword match) |
-| Cessna 441 | commercial_airplane | group=1, default (no keyword match) |
+| Cessna 400 Series | general_aviation | group=1, general-aviation keyword match |
+| Cessna 425 | general_aviation | group=1, general-aviation keyword match |
+| Cessna 441 | general_aviation | group=1, general-aviation keyword match |
 | Cessna 500/550/560 | business_jet | group=1, business-jet keyword match |
 | Cessna 501 | business_jet | group=1, business-jet keyword match |
 | Cessna 501/551 | business_jet | group=1, business-jet keyword match |
@@ -272,7 +270,7 @@ Ninguna — las 80 filas activas actuales tienen correspondencia en la lista ofi
 | Piper PA-42 | general_aviation | group=1, general-aviation keyword match |
 | Piper PA-46-500TP/600TP | general_aviation | group=1, general-aviation keyword match |
 | RRJ-95 | regional_airplane | group=1, regional-jet keyword match |
-| Reims-Cessna F 406 | commercial_airplane | group=1, default (no keyword match) |
+| Reims-Cessna F 406 | general_aviation | group=1, general-aviation keyword match |
 | Saab (SF) 340 | regional_turboprop | group=1, regional-turboprop keyword match |
 | Saab 2000 | regional_turboprop | group=1, regional-turboprop keyword match |
 | Shorts SC7 | regional_turboprop | group=1, regional-turboprop keyword match |

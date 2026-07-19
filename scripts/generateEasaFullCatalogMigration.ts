@@ -60,6 +60,10 @@ interface CurrentRow {
   source_revision: string | null;
   priority: number;
   is_active: boolean;
+  // NOTE: product_type is NOT selected here — the column does not exist on
+  // the live table yet (this migration adds it, see section 0 below). There
+  // is nothing to reconcile it against; every row gets it freshly from the
+  // source JSON, for both the INSERT and UPDATE paths.
 }
 
 // ============================================================
@@ -127,10 +131,43 @@ const EXACT_DESIGNATION_OVERRIDES: Record<string, [string, string]> = {
   GEnx: ['General Electric', 'GEnx'],
 };
 
+// Source data quirk, found by manual review at CHECKPOINT 1 (only 2 of 606
+// rows match this): "Cessna/Reims-Cessna 337 Series (Continental) (not
+// pressurised)" / "(pressurised)" — the real engine ("Continental") is
+// embedded in aircraftFamily's OWN trailing parenthetical, and
+// engineDesignation was populated with the SECOND, unrelated trailing
+// qualifier instead ("pressurised"/"not pressurised" distinguishes the
+// naturally-aspirated variant from the turbocharged one — a real, separate
+// EASA endorsement each, never merged). Detected narrowly by matching
+// engineDesignation against this exact qualifier text, not by any "family
+// ends in parens" heuristic — two Bombardier CL-600 rows also end in a
+// parenthetical ("... (604 Variant)") but have a perfectly normal
+// engineDesignation ("GE CF34") and must be left alone.
+const PRESSURISATION_QUALIFIER = /^(not )?pressurised$/i;
+
 interface ParsedEngine {
   manufacturer: string | null;
   family: string | null;
   uncertain: boolean;
+}
+
+// Returns the engine AND the aircraft_family value to use for this row —
+// normally just the source's own aircraftFamily unchanged, except for the
+// pressurisation-qualifier quirk above, where the engine is pulled out of
+// family's trailing parenthetical and family is returned with that
+// parenthetical stripped (matching the engine-free family convention every
+// other row in the catalog already follows).
+function resolveEngineAndFamily(entry: EasaSourceEntry): { engine: ParsedEngine; aircraftFamily: string } {
+  if (entry.engineDesignation && PRESSURISATION_QUALIFIER.test(entry.engineDesignation.trim())) {
+    const match = entry.aircraftFamily.match(/^(.*)\s*\(([^()]+)\)\s*$/);
+    if (match) {
+      return {
+        engine: { manufacturer: match[2].trim(), family: null, uncertain: false },
+        aircraftFamily: match[1].trim(),
+      };
+    }
+  }
+  return { engine: parseEngineDesignation(entry.engineDesignation), aircraftFamily: entry.aircraftFamily };
 }
 
 function parseEngineDesignation(designation: string | null): ParsedEngine {
@@ -221,6 +258,9 @@ const GENERAL_AVIATION_KEYWORDS = [
   'beech 90', 'beech 200', 'beech 300', 'beech b100', 'king air',
   'piper pa-46', 'piper pa-31t', 'piper pa-42', 'twin commander', 'nomad',
   'vulcanair', 'pzl m', 'grob', 'britten-norman', 'bn2t', 'emb-121',
+  // Added per CHECKPOINT 1 review: Cessna piston/turboprop twins and the
+  // Reims-Cessna F 406 utility twin, all general aviation, not airliners.
+  'cessna 400 series', 'cessna 425', 'cessna 441', 'reims-cessna f 406',
 ];
 
 function matchesAny(haystack: string, needles: string[]): boolean {
@@ -316,18 +356,18 @@ async function main() {
   const engineParseFallbacks: { easaEndorsement: string; designation: string | null }[] = [];
   const categoryCounts: Record<string, number> = {};
   const rows = source.map((entry) => {
-    const engine = parseEngineDesignation(entry.engineDesignation);
+    const { engine, aircraftFamily } = resolveEngineAndFamily(entry);
     if (engine.uncertain) engineParseFallbacks.push({ easaEndorsement: entry.easaEndorsement, designation: entry.engineDesignation });
     const { category, heuristicNote } = classifyCategory(entry);
     categoryCounts[category] = (categoryCounts[category] ?? 0) + 1;
-    const manufacturer = entry.tcHolders[0] ?? entry.aircraftFamily.split(/\s+/)[0];
+    const manufacturer = entry.tcHolders[0] ?? aircraftFamily.split(/\s+/)[0];
     const aliases = Array.from(new Set([...entry.modelAliases, ...entry.commercialAliases]));
     const displayName = engine.family
-      ? `${entry.aircraftFamily} — ${engine.family}`
+      ? `${aircraftFamily} — ${engine.family}`
       : engine.manufacturer
-        ? `${entry.aircraftFamily} — ${engine.manufacturer}`
-        : entry.aircraftFamily;
-    return { entry, engine, category, heuristicNote, manufacturer, aliases, displayName };
+        ? `${aircraftFamily} — ${engine.manufacturer}`
+        : aircraftFamily;
+    return { entry, engine, aircraftFamily, category, heuristicNote, manufacturer, aliases, displayName };
   });
 
   if (!rows.every((r) => VALID_CATEGORIES.has(r.category))) {
@@ -358,9 +398,12 @@ async function main() {
 --   2. INSERT ... ON CONFLICT (easa_endorsement) DO UPDATE reconciles the
 --      remaining ${source.length} official rows against whatever is live:
 --        - existing row (same easa_endorsement) -> id is preserved (never
---          in the SET clause); only easa_group, source_revision and
---          commercial_aliases (unioned with what's already there) are
---          refreshed. display_name/manufacturer/aircraft_family/
+--          in the SET clause); only easa_group, source_revision,
+--          product_type and commercial_aliases (unioned with what's already
+--          there) are refreshed — product_type is new to every row (no
+--          prior curated value exists to protect) so it is always set from
+--          the source, unlike the fields below. display_name/manufacturer/
+--          aircraft_family/
 --          engine_manufacturer/engine_family/aircraft_category/priority are
 --          intentionally left untouched for existing rows — the initial 80
 --          were hand-curated with more care (real commercial nicknames,
@@ -376,11 +419,26 @@ async function main() {
 --      from technician_habilitations / offer_required_habilitations /
 --      catalog_requests stay valid either way.
 --
+--   4. Adds a new product_type column (Aeroplane/Helicopter/Gas Airship —
+--      the source JSON's own top-level classification, kept verbatim
+--      alongside the heuristic aircraft_category) and populates it for all
+--      ${source.length} rows. Reserved for a later phase's category
+--      faceting/pre-filtering — nothing reads it yet.
+--
 -- What this migration does NOT do: it does not touch technician_habilitations,
 -- offer_required_habilitations or catalog_requests at all — those still
 -- reference ratings by id, and every id that existed before this migration
 -- still exists after it (updated in place, never replaced).
 -- ============================================================
+
+
+-- ============================================================
+-- 0. Add product_type (Aeroplane / Helicopter / Gas Airship) — new column,
+--    nullable (not every future row is guaranteed to have it), populated
+--    for every row by the upsert in section 2 below.
+-- ============================================================
+ALTER TABLE aircraft_type_ratings
+  ADD COLUMN IF NOT EXISTS product_type TEXT CHECK (product_type IN ('Aeroplane', 'Helicopter', 'Gas Airship'));
 
 
 -- ============================================================
@@ -399,15 +457,16 @@ async function main() {
 -- 2. Upsert all ${source.length} official EASA endorsements
 -- ============================================================
 INSERT INTO aircraft_type_ratings
-  (manufacturer, aircraft_family, engine_manufacturer, engine_family, easa_endorsement, display_name, commercial_aliases, aircraft_category, easa_group, source_revision, priority)
+  (manufacturer, aircraft_family, engine_manufacturer, engine_family, easa_endorsement, display_name, commercial_aliases, aircraft_category, easa_group, source_revision, priority, product_type)
 VALUES`);
 
-  const valueLines = rows.map(({ entry, engine, category, manufacturer, aliases, displayName }) => {
-    return `  (${sqlString(manufacturer)}, ${sqlString(entry.aircraftFamily)}, ${sqlStringOrNull(engine.manufacturer)}, ${sqlStringOrNull(engine.family)}, ${sqlString(entry.easaEndorsement)}, ${sqlString(displayName)}, ${sqlStringArray(aliases)}, ${sqlString(category)}, ${sqlString(entry.easaGroup)}, ${sqlString(entry.sourceRevision)}, 0)`;
+  const valueLines = rows.map(({ entry, engine, aircraftFamily, category, manufacturer, aliases, displayName }) => {
+    return `  (${sqlString(manufacturer)}, ${sqlString(aircraftFamily)}, ${sqlStringOrNull(engine.manufacturer)}, ${sqlStringOrNull(engine.family)}, ${sqlString(entry.easaEndorsement)}, ${sqlString(displayName)}, ${sqlStringArray(aliases)}, ${sqlString(category)}, ${sqlString(entry.easaGroup)}, ${sqlString(entry.sourceRevision)}, 0, ${sqlString(entry.productType)})`;
   });
   sqlParts.push(valueLines.join(',\n') + '\nON CONFLICT (easa_endorsement) DO UPDATE SET\n' +
     '  easa_group = EXCLUDED.easa_group,\n' +
     '  source_revision = EXCLUDED.source_revision,\n' +
+    '  product_type = EXCLUDED.product_type,\n' +
     '  commercial_aliases = (SELECT ARRAY(SELECT DISTINCT unnest(aircraft_type_ratings.commercial_aliases || EXCLUDED.commercial_aliases))),\n' +
     '  updated_at = now();\n');
 

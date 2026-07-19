@@ -124,6 +124,7 @@ export interface AircraftTypeRatingRow {
   source_revision?: string | null;
   priority: number;
   is_active: boolean;
+  product_type?: string | null;
 }
 
 export function mapAircraftTypeRatingRow(row: AircraftTypeRatingRow): AircraftTypeRatingCatalog {
@@ -139,6 +140,7 @@ export function mapAircraftTypeRatingRow(row: AircraftTypeRatingRow): AircraftTy
     aircraftCategory: row.aircraft_category as AircraftTypeRatingCatalog['aircraftCategory'],
     easaGroup: row.easa_group ?? undefined,
     sourceRevision: row.source_revision ?? undefined,
+    productType: (row.product_type ?? undefined) as AircraftTypeRatingCatalog['productType'],
     priority: row.priority,
     isActive: row.is_active,
   };
