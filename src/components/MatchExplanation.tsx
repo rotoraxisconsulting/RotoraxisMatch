@@ -17,10 +17,26 @@ const LEVEL_COLOR: Record<MatchScore['level'], string> = {
   not_met: colors.textMuted,
 };
 
-// Renders the explainable part of a MatchScore — what matches, what needs
-// clarification, and which mandatory requirements are unmet. Never used to
-// hide or exclude the technician/offer; purely explanatory.
+const BREAKDOWN_LABELS: Record<keyof MatchScore['breakdown'], string> = {
+  habilitation: 'Habilitation',
+  license: 'License',
+  verified: 'Verified',
+  availability: 'Availability',
+  experience: 'Experience',
+  location: 'Location',
+};
+// Fixed display order — qualification first, since it dominates the score.
+const BREAKDOWN_ORDER: (keyof MatchScore['breakdown'])[] = ['habilitation', 'license', 'verified', 'availability', 'experience', 'location'];
+
+// Renders the explainable part of a MatchScore — the numeric breakdown per
+// criterion, what matches, what needs clarification, which mandatory
+// requirements are unmet, and — when the total was capped below the raw
+// breakdown sum — why. Never used to hide or exclude the technician/offer;
+// purely explanatory.
 export function MatchExplanation({ score }: { score: MatchScore }) {
+  const rawSum = Object.values(score.breakdown).reduce((sum, v) => sum + v, 0);
+  const wasCapped = rawSum > score.total;
+
   if (score.matches.length === 0 && score.clarifications.length === 0 && score.mandatoryMissing.length === 0) {
     return null;
   }
@@ -30,6 +46,24 @@ export function MatchExplanation({ score }: { score: MatchScore }) {
       <View style={styles.levelRow}>
         <View style={[styles.levelDot, { backgroundColor: LEVEL_COLOR[score.level] }]} />
         <Text style={[styles.levelText, { color: LEVEL_COLOR[score.level] }]}>{LEVEL_LABEL[score.level]}</Text>
+        <Text style={styles.scoreText}>{score.total}/100 — {score.label}</Text>
+      </View>
+
+      <View style={styles.block}>
+        <Text style={styles.blockTitle}>Score breakdown</Text>
+        {BREAKDOWN_ORDER.map((key) => (
+          <View key={key} style={styles.breakdownRow}>
+            <Text style={styles.breakdownLabel}>{BREAKDOWN_LABELS[key]}</Text>
+            <Text style={styles.breakdownValue}>{score.breakdown[key]}</Text>
+          </View>
+        ))}
+        {wasCapped && (
+          <Text style={styles.cappedNote}>
+            {score.mandatoryMissing.length > 0
+              ? 'Score capped: a mandatory requirement is not met exactly (see below).'
+              : 'Score capped: the offer requires a qualification this profile does not have.'}
+          </Text>
+        )}
       </View>
 
       {score.matches.length > 0 && (
@@ -81,8 +115,36 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  scoreText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+    marginLeft: 'auto',
+  },
   block: {
     gap: 2,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  breakdownLabel: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.text,
+  },
+  breakdownValue: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  cappedNote: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 15,
+    fontStyle: 'italic',
+    color: colors.warning,
   },
   blockTitle: {
     fontSize: 11,
