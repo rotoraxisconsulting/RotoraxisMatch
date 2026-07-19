@@ -19,13 +19,12 @@ import { throwIfError } from './supabaseMappers';
 // a failed/empty load surfaces as an explicit state (see
 // getAircraftTypeRatingsCacheStatus / useAircraftTypeRatingsCatalog), never
 // a silent switch to baked-in data.
-// product_type is NOT selected here yet: migration 020 (not applied at the
-// time this comment was written — see docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md)
-// adds that column. Querying it before the migration runs would 500 every
-// catalog read against the live (not-yet-migrated) table. Add it to this
-// list once 020 is confirmed applied — AircraftTypeRatingRow/
-// mapAircraftTypeRatingRow already accept it optionally, so this is the
-// only remaining step.
+// product_type (Aeroplane/Helicopter/Gas Airship, the EASA source's own
+// top-level classification) was added by migration 020, confirmed applied
+// and populated for all 606 rows — see
+// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md and
+// docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md. Not consumed by any UI
+// yet; reserved for a later phase's category faceting.
 const AIRCRAFT_TYPE_RATINGS_SELECT = `
   id,
   manufacturer,
@@ -40,6 +39,7 @@ const AIRCRAFT_TYPE_RATINGS_SELECT = `
   source_revision,
   priority,
   is_active,
+  product_type,
   created_at,
   updated_at
 `;

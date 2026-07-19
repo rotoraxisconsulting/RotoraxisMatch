@@ -1,6 +1,8 @@
 # Informe de reconciliación — migración 020 (catálogo EASA completo)
 
-Generado: 2026-07-19 por `scripts/generateEasaFullCatalogMigration.ts`. CHECKPOINT 1 — no aplicado contra Supabase.
+Generado: 2026-07-19 por `scripts/generateEasaFullCatalogMigration.ts`.
+
+> **APLICADA.** Tras la revisión de CHECKPOINT 1 (correcciones: motor de Cessna 337, 4 categorías reclasificadas, columna `product_type` añadida — ver historial de commits), la migración se aplicó contra `rotoaxismatch-dev` (`rwauwuremzkizeoginza`) en 9 pasos idempotentes (por límite de tamaño de una sola llamada, no por el contenido): `ALTER TABLE` de `product_type`, las 4 correcciones de deriva, 7 lotes del upsert de 606 filas, y el chequeo de sanidad final. Verificado en vivo: 606/606 filas activas, 0 `easa_group` NULL, 0 `product_type` NULL, los 80 ids originales preservados (ninguno cambió), Cessna 337 con `engine_manufacturer=Continental` en ambas filas. `get_advisors` re-ejecutado después: sin regresiones nuevas — los únicos hallazgos sobre `aircraft_type_ratings` son 2 índices sin uso (esperado, catálogo recién ampliado en un entorno de desarrollo) y el mismo patrón RLS preexistente `atr_admin`+`atr_read` de la migración 016.
 
 ## Resumen
 
