@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -33,7 +33,7 @@ import { companyRepositoryV2 } from '../../../src/repositories/v2/companyReposit
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { OfferRequest } from '../../../src/types/offerRequest';
@@ -152,6 +152,10 @@ export default function DirectOfferDetailScreen() {
       };
     }, [load]),
   );
+
+  // Real per-offer denominators — never hardcoded (see
+  // app/company/offers/[id].tsx / getMatchScoreWeights).
+  const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -286,13 +290,13 @@ export default function DirectOfferDetailScreen() {
             {score && (
               <View style={styles.breakdownBlock}>
                 <Text style={styles.sectionTitle}>Match breakdown</Text>
-                <BreakdownRow label="Verified" value={score.breakdown.verified} max={25} accent={accent} />
-                <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={25} accent={accent} />
-                <BreakdownRow label="License" value={score.breakdown.license} max={20} accent={accent} />
-                <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} accent={accent} />
-                <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} accent={accent} />
-                <BreakdownRow label="Location" value={score.breakdown.location} max={5} accent={accent} />
-                <MatchExplanation score={score} />
+                <BreakdownRow label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} accent={accent} />
+                <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} accent={accent} />
+                <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} accent={accent} />
+                <BreakdownRow label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} accent={accent} />
+                <BreakdownRow label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} accent={accent} />
+                <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} accent={accent} />
+                <MatchExplanation score={score} hideBreakdown />
               </View>
             )}
           </TechnicianCard>

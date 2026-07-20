@@ -33,7 +33,13 @@ const BREAKDOWN_ORDER: (keyof MatchScore['breakdown'])[] = ['habilitation', 'lic
 // requirements are unmet, and — when the total was capped below the raw
 // breakdown sum — why. Never used to hide or exclude the technician/offer;
 // purely explanatory.
-export function MatchExplanation({ score }: { score: MatchScore }) {
+//
+// hideBreakdown: set by callers that already render their own per-criterion
+// breakdown (e.g. a bar chart with real denominators from
+// getMatchScoreWeights) — avoids showing the same numbers twice. The cap
+// note, matches, clarifications and mandatory-missing sections always
+// render regardless, since those are never duplicated elsewhere.
+export function MatchExplanation({ score, hideBreakdown = false }: { score: MatchScore; hideBreakdown?: boolean }) {
   const rawSum = Object.values(score.breakdown).reduce((sum, v) => sum + v, 0);
   const wasCapped = rawSum > score.total;
 
@@ -49,22 +55,24 @@ export function MatchExplanation({ score }: { score: MatchScore }) {
         <Text style={styles.scoreText}>{score.total}/100 — {score.label}</Text>
       </View>
 
-      <View style={styles.block}>
-        <Text style={styles.blockTitle}>Score breakdown</Text>
-        {BREAKDOWN_ORDER.map((key) => (
-          <View key={key} style={styles.breakdownRow}>
-            <Text style={styles.breakdownLabel}>{BREAKDOWN_LABELS[key]}</Text>
-            <Text style={styles.breakdownValue}>{score.breakdown[key]}</Text>
-          </View>
-        ))}
-        {wasCapped && (
-          <Text style={styles.cappedNote}>
-            {score.mandatoryMissing.length > 0
-              ? 'Score capped: a mandatory requirement is not met exactly (see below).'
-              : 'Score capped: the offer requires a qualification this profile does not have.'}
-          </Text>
-        )}
-      </View>
+      {!hideBreakdown && (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Score breakdown</Text>
+          {BREAKDOWN_ORDER.map((key) => (
+            <View key={key} style={styles.breakdownRow}>
+              <Text style={styles.breakdownLabel}>{BREAKDOWN_LABELS[key]}</Text>
+              <Text style={styles.breakdownValue}>{score.breakdown[key]}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+      {wasCapped && (
+        <Text style={styles.cappedNote}>
+          {score.mandatoryMissing.length > 0
+            ? 'Score capped: a mandatory requirement is not met exactly (see below).'
+            : 'Score capped: the offer requires a qualification this profile does not have.'}
+        </Text>
+      )}
 
       {score.matches.length > 0 && (
         <View style={styles.block}>

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -35,7 +35,7 @@ import { companyRepositoryV2 } from '../../../src/repositories/v2/companyReposit
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { OfferWithRequirements } from '../../../src/types/offer';
@@ -166,6 +166,12 @@ export default function OfferDetailScreen() {
       return () => { active = false; };
     }, [load]),
   );
+
+  // Real per-offer denominators — same source the company side uses
+  // (app/company/offers/[id].tsx) — never hardcoded, since weights change
+  // per offer (qualification-requiring vs. not) and have changed once
+  // already (Fase 2 rebalance).
+  const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
 
   async function handleApply() {
     if (!offer) return;
@@ -304,13 +310,13 @@ export default function OfferDetailScreen() {
           <TechnicianCard style={styles.section}>
             <Text style={styles.sectionTitle}>Match</Text>
             <Text style={styles.sectionSub}>How your profile scores against this offer's criteria.</Text>
-            <BreakdownRow label="Verified" value={score.breakdown.verified} max={25} accent={accent} />
-            <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={25} accent={accent} />
-            <BreakdownRow label="License" value={score.breakdown.license} max={20} accent={accent} />
-            <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} accent={accent} />
-            <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} accent={accent} />
-            <BreakdownRow label="Location" value={score.breakdown.location} max={5} accent={accent} />
-            <MatchExplanation score={score} />
+            <BreakdownRow label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} accent={accent} />
+            <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} accent={accent} />
+            <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} accent={accent} />
+            <BreakdownRow label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} accent={accent} />
+            <BreakdownRow label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} accent={accent} />
+            <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} accent={accent} />
+            <MatchExplanation score={score} hideBreakdown />
           </TechnicianCard>
         )}
 

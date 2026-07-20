@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -46,7 +46,7 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
 import { useCompanySession } from '../../../src/state/SessionContext';
@@ -149,6 +149,10 @@ export default function ApplicationDetailScreen() {
       return () => { active = false; };
     }, [load]),
   );
+
+  // Real per-offer denominators — never hardcoded (see
+  // app/company/offers/[id].tsx / getMatchScoreWeights).
+  const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -336,13 +340,13 @@ export default function ApplicationDetailScreen() {
         {score ? (
           <CompanyCard style={styles.sectionCard}>
             <Text style={styles.sectionTitle}>Match breakdown</Text>
-            <BreakdownRow label="Verified" value={score.breakdown.verified} max={25} />
-            <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={25} />
-            <BreakdownRow label="License" value={score.breakdown.license} max={20} />
-            <BreakdownRow label="Availability" value={score.breakdown.availability} max={15} />
-            <BreakdownRow label="Experience" value={score.breakdown.experience} max={10} />
-            <BreakdownRow label="Location" value={score.breakdown.location} max={5} />
-            <MatchExplanation score={score} />
+            <BreakdownRow label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} />
+            <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} />
+            <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} />
+            <BreakdownRow label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} />
+            <BreakdownRow label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} />
+            <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} />
+            <MatchExplanation score={score} hideBreakdown />
           </CompanyCard>
         ) : null}
 
