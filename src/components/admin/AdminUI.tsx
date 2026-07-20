@@ -8,7 +8,7 @@ import {
   EmptyPanel,
   IconBox,
   InfoRow,
-  InitialAvatar,
+  InitialAvatar, 
   companyShadow,
   companyStyles,
   companyUi,

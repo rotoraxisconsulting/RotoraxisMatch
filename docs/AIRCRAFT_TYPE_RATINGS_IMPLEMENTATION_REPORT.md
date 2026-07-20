@@ -5,7 +5,7 @@
 > No se han hecho commits ni pushes.
 
 ---
-
+ 
 ## 1. Estado anterior encontrado
 
 El repositorio ya tenía una implementación **previa e incompleta** de este mismo problema, generada en una fase anterior ("Fase 1", ver `docs/PART66_AIRCRAFT_MODEL_ANALYSIS.md` y `docs/PART66_PHASE1_IMPLEMENTATION_REPORT.md`), sentada como archivos **sin commitear y sin aplicar a ningún Supabase real**:
