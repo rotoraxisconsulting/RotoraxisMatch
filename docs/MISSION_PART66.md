@@ -308,6 +308,15 @@ ANULA al amplio, no solo "gana" — si requiredHabilitations no está vacío, la
 rama amplia (evaluateLegacyBroadMatch) ni siquiera se ejecuta. Confirmado
 como comportamiento deseado, ningún cambio necesario antes de Fase 3.
 
+**Regla fijada (no re-audites, verifica solo al tocar):** exact requirements
+fully disable broad requirements in scoring; broad only scores when no exact
+habilitation exists. Consecuencia para la Fase 3b (formulario de oferta): el
+bloque amplio debe comunicar visualmente que no puntúa mientras haya
+requisitos exactos definidos (hint tipo "Not used for scoring while exact
+requirements are set", o colapsarlo) — la empresa nunca debe creer que el
+amplio puntúa cuando no lo hace. Decisión de diseño concreta (colapsar vs.
+hint) se toma al construir esa pantalla en 3b.
+
 ### Sesión 2026-07-20: Fase 3 y Fase 3b
 Alcance: Fase 3 y Fase 3b con sus checkpoints. Fases 4 y 5 NO se empiezan.
 Rama: part66-phase3, partiendo de main actualizado.
