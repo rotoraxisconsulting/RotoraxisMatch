@@ -29,10 +29,11 @@
 // catalog request, never a real catalog row) simply resolves to no match,
 // never a crash.
 import { OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer';
-import { TechnicianHabilitation, TechnicianWithRelations } from '../types/technician';
-import { MatchScore, MatchLabel, MatchLevel } from '../types/matching';
+import { TechnicianHabilitation, TechnicianLicense, TechnicianWithRelations } from '../types/technician';
+import { MatchScore, MatchLabel, MatchLevel, VigenciaNotice } from '../types/matching';
 import { resolveLocationSnapshot } from '../constants/locationCities';
 import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, ratingMatchesLegacyCode } from '../constants/aircraftTypeRatings';
+import { localDateToIso } from './dateField';
 
 // Qualification (habilitation + license) dominates the score whenever the
 // offer actually specifies one — the whole point of this rebalance. When an
@@ -77,6 +78,14 @@ export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWe
 // as a clarification, never silently equal to an exact match.
 const HABILITATION_TIER_FRACTIONS = { exact: 1, related_family: 0.57, related_legacy: 0.29, not_met: 0 } as const;
 
+// Fase 3 — vigencia: a SLIGHT cut, applied on top of whichever tier fraction
+// already applies, whenever the row that produced the winning match is
+// expired or explicitly marked not current. Deliberately small — holding an
+// expired-but-real qualification is not the same as not holding it (T1
+// stays T1, mandatoryMissing is never triggered by this alone); it is a
+// paperwork/renewal flag, not a disqualification.
+const VIGENCIA_DEGRADATION_FRACTION = 0.1;
+
 // A mandatory exact-habilitation requirement that isn't met at T1 caps the
 // total here, regardless of how high the raw sum would otherwise be.
 const MANDATORY_UNMET_CAP = 59;
@@ -95,29 +104,97 @@ interface RequirementOutcome {
   tier: HabilitationTier;
   matchText?: string;
   clarificationText?: string;
+  vigenciaDegraded?: boolean;
+  vigenciaNotice?: VigenciaNotice;
+}
+
+function toYearMonth(iso: string): string {
+  return iso.slice(0, 7); // 'YYYY-MM-DD' -> 'YYYY-MM'
+}
+
+// Fase 3 — vigencia. Checked against whichever row actually produced the
+// match (T1/T2/T3), plus the technician's own TechnicianLicense row for the
+// same category (licenses have no isCurrent — only issued/expiresAt).
+//
+// Precedence (fixed by design, not incidental): an expired date ALWAYS wins
+// over isCurrent, even isCurrent === true explicitly — the default true
+// never rescues a rating past its expiry date. isCurrent === false only
+// matters when the date is absent or still in the future (the "declared
+// not current ahead of expiry" case) — its own distinct message, never
+// combined with an "expired" one for the same row.
+//
+// A license-level expiry subsumes the row-level check entirely: it affects
+// every habilitation declared under that category, and if the row is ALSO
+// individually expired/not-current that would be a second, redundant
+// notice about the same underlying fact — so license expiry always wins
+// and produces exactly one notice, never two.
+function evaluateVigencia(
+  row: Pick<TechnicianHabilitation, 'expiresAt' | 'isCurrent'>,
+  license: TechnicianLicense | undefined,
+  licenseCode: string,
+  ratingLabel: string,
+  today: string,
+): { degraded: boolean; notice?: VigenciaNotice } {
+  const licenseExpired = Boolean(license?.expiresAt && license.expiresAt < today);
+  if (licenseExpired) {
+    return {
+      degraded: true,
+      notice: {
+        label: 'Expired',
+        detail: `License ${licenseCode} expired ${toYearMonth(license!.expiresAt!)} — all its ratings affected, including ${ratingLabel}.`,
+      },
+    };
+  }
+
+  const rowExpired = Boolean(row.expiresAt && row.expiresAt < today);
+  if (rowExpired) {
+    return {
+      degraded: true,
+      notice: { label: 'Expired', detail: `Rating expired ${toYearMonth(row.expiresAt!)}: ${ratingLabel}.` },
+    };
+  }
+
+  if (row.isCurrent === false) {
+    return {
+      degraded: true,
+      notice: { label: 'Not current', detail: `Rating marked as not current: ${ratingLabel}.` },
+    };
+  }
+
+  return { degraded: false };
 }
 
 function evaluateHabilitationRequirement(
   req: Pick<OfferRequiredHabilitation, 'licenseCode' | 'aircraftTypeRatingId'>,
   technician: TechnicianWithRelations,
   ratingIndex: AircraftRatingIndex,
+  today: string,
 ): RequirementOutcome {
   const reqLabel = getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex);
   const rating = ratingIndex.get(req.aircraftTypeRatingId);
   const sameLicenseRows = technician.habilitations.filter((h) => h.licenseCode === req.licenseCode);
+  const license = technician.licenses.find((l) => l.licenseCode === req.licenseCode);
 
   // T1 — exact: same license, same rating, in the same row. Deliberately
-  // does not look at experienceYears/isCurrent — those are optional,
-  // per-rating declarations (wired up in a later phase); their absence is
-  // neutral, never a penalty. A rating endorsed with no declared experience
-  // is still a full, legally valid match.
+  // does not look at experienceYears — optional, informational only, never
+  // a penalty (a rating endorsed with no declared experience is still a
+  // full, legally valid match). isCurrent/expiresAt DO matter — see
+  // evaluateVigencia — but only degrade the match slightly, never exclude
+  // it: this stays tier 'exact' either way.
   //
   // TODO(open regulatory question, see mission brief): EASA AMC 66.A.45
   // may record some B2 endorsements without an engine designation. Not
   // special-cased here — would affect this tier and T2 below, and the
   // category pre-filter planned for a later phase.
-  if (sameLicenseRows.some((h) => h.aircraftTypeRatingId === req.aircraftTypeRatingId)) {
-    return { tier: 'exact', matchText: `${req.licenseCode} + ${reqLabel}` };
+  const exactRow = sameLicenseRows.find((h) => h.aircraftTypeRatingId === req.aircraftTypeRatingId);
+  if (exactRow) {
+    const vigencia = evaluateVigencia(exactRow, license, req.licenseCode, reqLabel, today);
+    return {
+      tier: 'exact',
+      matchText: `${req.licenseCode} + ${reqLabel}`,
+      vigenciaDegraded: vigencia.degraded,
+      vigenciaNotice: vigencia.notice,
+    };
   }
 
   // T2 — related_family: same license, a different rating in the same
@@ -129,9 +206,12 @@ function evaluateHabilitationRequirement(
   );
   if (relatedRow) {
     const heldLabel = getAircraftTypeRatingLabel(relatedRow.aircraftTypeRatingId, ratingIndex);
+    const vigencia = evaluateVigencia(relatedRow, license, req.licenseCode, heldLabel, today);
     return {
       tier: 'related_family',
       clarificationText: `Same family, different engine: ${reqLabel} vs ${heldLabel}.`,
+      vigenciaDegraded: vigencia.degraded,
+      vigenciaNotice: vigencia.notice,
     };
   }
 
@@ -142,9 +222,12 @@ function evaluateHabilitationRequirement(
     (h) => h.aircraftTypeCode && rating && ratingMatchesLegacyCode(rating, h.aircraftTypeCode),
   );
   if (legacyRow) {
+    const vigencia = evaluateVigencia(legacyRow, license, req.licenseCode, `general habilitation in ${legacyRow.aircraftTypeCode}`, today);
     return {
       tier: 'related_legacy',
       clarificationText: `Approximate match without engine data: general habilitation in ${legacyRow.aircraftTypeCode} under ${req.licenseCode}.`,
+      vigenciaDegraded: vigencia.degraded,
+      vigenciaNotice: vigencia.notice,
     };
   }
 
@@ -212,14 +295,21 @@ function upgradeTier(current: HabilitationTier, next: HabilitationTier): Habilit
 
 // A match score is always computed for a specific offer + technician pair.
 // Never store this value on a technician_profile row.
+//
+// now: injectable "current time" for the vigencia (expired/not-current)
+// check — defaults to the real clock. Tests pass a fixed Date so expired-
+// vs-future fixtures are deterministic regardless of when they run (same
+// dependency-injection style as aircraftTypeRatingsCache.ts).
 export function calculateOfferTechnicianMatch(
   offer: OfferWithRequirements,
   technician: TechnicianWithRelations,
   ratingIndex: AircraftRatingIndex,
+  now: Date = new Date(),
 ): MatchScore {
   const hasQualificationRequirements =
     offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0;
   const weights = getMatchScoreWeights(offer);
+  const today = localDateToIso(now);
 
   let verified = 0;
   let habilitation = 0;
@@ -230,6 +320,7 @@ export function calculateOfferTechnicianMatch(
 
   const matches: string[] = [];
   const clarifications: string[] = [];
+  const vigenciaNotices: VigenciaNotice[] = [];
   const mandatoryMissing: string[] = [];
   let level: MatchLevel = 'not_met';
 
@@ -243,18 +334,33 @@ export function calculateOfferTechnicianMatch(
     // evaluated against the technician's own habilitation rows, never by
     // combining an independent license check with an independent aircraft
     // check.
+    //
+    // Evaluated once up front (not inline in the loop below) so the
+    // vigencia degradation can be scoped correctly: only the row(s) that
+    // actually produced the WINNING tier should shave points off the
+    // score, even though every degraded row's notice is still surfaced —
+    // same "always show, only the best one scores" pattern T2/T3
+    // clarifications already follow.
+    const evaluations = offer.requiredHabilitations.map((req) => ({
+      req,
+      outcome: evaluateHabilitationRequirement(req, technician, ratingIndex, today),
+    }));
+
     let bestTier: HabilitationTier = 'not_met';
+    for (const { outcome } of evaluations) {
+      bestTier = upgradeTier(bestTier, outcome.tier);
+    }
+    const vigenciaDegraded = evaluations.some(({ outcome }) => outcome.tier === bestTier && outcome.vigenciaDegraded);
+
     let everyMandatoryExact = true;
     let licenseHeldForAll = true;
 
-    for (const req of offer.requiredHabilitations) {
-      const outcome = evaluateHabilitationRequirement(req, technician, ratingIndex);
-      bestTier = upgradeTier(bestTier, outcome.tier);
-
+    for (const { req, outcome } of evaluations) {
       if (outcome.tier === 'exact' && outcome.matchText) matches.push(outcome.matchText);
       if ((outcome.tier === 'related_family' || outcome.tier === 'related_legacy') && outcome.clarificationText) {
         clarifications.push(outcome.clarificationText);
       }
+      if (outcome.vigenciaNotice) vigenciaNotices.push(outcome.vigenciaNotice);
 
       const licenseLabel = `${req.licenseCode} + ${getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}`;
       if (req.requirementLevel === 'mandatory') {
@@ -262,6 +368,8 @@ export function calculateOfferTechnicianMatch(
         // requirement was not met exactly — surfaced so the technician can
         // still appear as "related" without ever being presented as a full
         // match, and so the mandatory cap below has a reason to point to.
+        // A vigencia-degraded exact match is still tier 'exact' — degrading
+        // never demotes a requirement into mandatoryMissing.
         if (outcome.tier !== 'exact') {
           everyMandatoryExact = false;
           mandatoryMissing.push(licenseLabel);
@@ -277,7 +385,8 @@ export function calculateOfferTechnicianMatch(
     }
 
     level = bestTier === 'exact' && everyMandatoryExact ? 'exact' : bestTier !== 'not_met' ? 'related' : 'not_met';
-    habilitation = Math.round(weights.habilitation * HABILITATION_TIER_FRACTIONS[bestTier]);
+    const vigenciaFraction = vigenciaDegraded ? 1 - VIGENCIA_DEGRADATION_FRACTION : 1;
+    habilitation = Math.round(weights.habilitation * HABILITATION_TIER_FRACTIONS[bestTier] * vigenciaFraction);
     license = licenseHeldForAll ? weights.license : 0;
   } else if (hasQualificationRequirements) {
     // No exact requirements — fall back to the broad (legacy-compatible)
@@ -362,6 +471,7 @@ export function calculateOfferTechnicianMatch(
     level,
     matches,
     clarifications,
+    vigenciaNotices,
     mandatoryMissing,
   };
 }

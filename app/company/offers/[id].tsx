@@ -596,7 +596,7 @@ export default function OfferDetailScreen() {
 
               {aircraft.length > 0 ? (
                 <View style={styles.chipBlock}>
-                  <Text style={styles.chipBlockLabel}>Aircraft</Text>
+                  <Text style={styles.chipBlockLabel}>Type ratings</Text>
                   <View style={styles.chipRow}>{aircraft.map((a) => <CompanyChip key={a} label={a} />)}</View>
                 </View>
               ) : null}
@@ -611,6 +611,7 @@ export default function OfferDetailScreen() {
               </View>
 
               <CapReasonPanel score={score} />
+              <VigenciaNotices score={score} />
 
               {application ? (
                 <TouchableOpacity
@@ -810,6 +811,25 @@ function CapReasonPanel({ score }: { score: MatchScore }) {
       ))}
       {score.clarifications.map((c, i) => (
         <Text key={`cl-${i}`} style={styles.capClarificationLine}>{c}</Text>
+      ))}
+    </View>
+  );
+}
+
+// Fase 3 — vigencia: a slight, non-excluding degradation (never a cap, so
+// CapReasonPanel above never catches it — the breakdown bar already
+// reflects the reduced number). Shown unconditionally whenever present,
+// same "always visible" treatment as MatchExplanation's Validity section
+// on the other 3 audited screens.
+function VigenciaNotices({ score }: { score: MatchScore }) {
+  if (score.vigenciaNotices.length === 0) return null;
+  return (
+    <View style={styles.vigenciaBlock}>
+      {score.vigenciaNotices.map((n, i) => (
+        <View key={i} style={styles.vigenciaRow}>
+          <CompanyBadge label={n.label} tone="warning" small />
+          <Text style={styles.vigenciaDetail}>{n.detail}</Text>
+        </View>
       ))}
     </View>
   );
@@ -1165,6 +1185,20 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '500',
     color: companyUi.amber,
+  },
+  vigenciaBlock: {
+    gap: 4,
+  },
+  vigenciaRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+  },
+  vigenciaDetail: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: companyUi.textSoft,
   },
   stateNotice: {
     minHeight: 42,

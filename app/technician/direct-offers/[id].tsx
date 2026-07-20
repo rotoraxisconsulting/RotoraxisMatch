@@ -36,6 +36,7 @@ import { activityRepository } from '../../../src/repositories/v2/activityReposit
 import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
+import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
 import { OfferRequest } from '../../../src/types/offerRequest';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { CompanyProfileView } from '../../../src/types/company';
@@ -279,11 +280,18 @@ export default function DirectOfferDetailScreen() {
 
             {(visibleOffer.requiredTechnicianTypes.length > 0 ||
               visibleOffer.requiredLicenses.length > 0 ||
-              visibleOffer.requiredAircraftTypes.length > 0) && (
+              visibleOffer.requiredAircraftTypes.length > 0 ||
+              visibleOffer.requiredHabilitations.length > 0) && (
               <View style={styles.reqBlock}>
                 {visibleOffer.requiredTechnicianTypes.length > 0 && <ReqRow label="Types" items={visibleOffer.requiredTechnicianTypes} />}
                 {visibleOffer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={visibleOffer.requiredLicenses} />}
-                {visibleOffer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft" items={visibleOffer.requiredAircraftTypes} />}
+                {visibleOffer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft types" items={visibleOffer.requiredAircraftTypes} />}
+                {visibleOffer.requiredHabilitations.length > 0 && (
+                  <ReqRow
+                    label="Type rating requirements"
+                    items={visibleOffer.requiredHabilitations.map((h) => `${h.licenseCode} + ${getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex)} (${h.requirementLevel})`)}
+                  />
+                )}
               </View>
             )}
 

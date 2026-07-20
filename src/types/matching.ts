@@ -21,6 +21,16 @@
 //                *mandatory* requirement is surfaced via mandatoryMissing.
 export type MatchLevel = 'exact' | 'related' | 'legacy' | 'not_met';
 
+// A slight, non-excluding degradation signal (Fase 3 — vigencia): an
+// expired date always wins over an explicit isCurrent=false (see
+// offerMatchExplain.ts evaluateVigencia) so there is always at most ONE
+// notice per requirement, never two contradictory ones. `label` is the
+// short badge text; `detail` is the full explanation shown alongside it.
+export interface VigenciaNotice {
+  label: 'Expired' | 'Not current';
+  detail: string;
+}
+
 export interface MatchScore {
   offerId: string;      // the offer this score belongs to
   technicianId: string; // the technician this score belongs to
@@ -43,6 +53,7 @@ export interface MatchScore {
   level: MatchLevel;
   matches: string[];          // human-readable confirmed matches
   clarifications: string[];   // human-readable points that need confirming
+  vigenciaNotices: VigenciaNotice[]; // expired / not-current — informational, never excludes (see VigenciaNotice)
   mandatoryMissing: string[]; // mandatory requirements not met exactly
 }
 

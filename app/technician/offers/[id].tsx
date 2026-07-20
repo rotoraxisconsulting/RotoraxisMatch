@@ -299,7 +299,7 @@ export default function OfferDetailScreen() {
             {offer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft types" items={offer.requiredAircraftTypes} />}
             {offer.requiredHabilitations.length > 0 && (
               <ReqRow
-                label="Exact habilitations"
+                label="Type rating requirements"
                 items={offer.requiredHabilitations.map((h) => `${h.licenseCode} + ${getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex)} (${h.requirementLevel})`)}
               />
             )}

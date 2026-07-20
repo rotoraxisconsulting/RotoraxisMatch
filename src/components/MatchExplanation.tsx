@@ -43,7 +43,12 @@ export function MatchExplanation({ score, hideBreakdown = false }: { score: Matc
   const rawSum = Object.values(score.breakdown).reduce((sum, v) => sum + v, 0);
   const wasCapped = rawSum > score.total;
 
-  if (score.matches.length === 0 && score.clarifications.length === 0 && score.mandatoryMissing.length === 0) {
+  if (
+    score.matches.length === 0 &&
+    score.clarifications.length === 0 &&
+    score.vigenciaNotices.length === 0 &&
+    score.mandatoryMissing.length === 0
+  ) {
     return null;
   }
 
@@ -72,6 +77,20 @@ export function MatchExplanation({ score, hideBreakdown = false }: { score: Matc
             ? 'Score capped: a mandatory requirement is not met exactly (see below).'
             : 'Score capped: the offer requires a qualification this profile does not have.'}
         </Text>
+      )}
+
+      {score.vigenciaNotices.length > 0 && (
+        <View style={styles.block}>
+          <Text style={styles.blockTitle}>Validity</Text>
+          {score.vigenciaNotices.map((n, i) => (
+            <View key={i} style={styles.vigenciaRow}>
+              <View style={styles.vigenciaBadge}>
+                <Text style={styles.vigenciaBadgeText}>{n.label}</Text>
+              </View>
+              <Text style={styles.vigenciaDetail}>{n.detail}</Text>
+            </View>
+          ))}
+        </View>
       )}
 
       {score.matches.length > 0 && (
@@ -176,5 +195,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     color: colors.error,
+  },
+  vigenciaRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginBottom: 3,
+  },
+  vigenciaBadge: {
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: colors.warning + '18',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  vigenciaBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.warning,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  vigenciaDetail: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.text,
   },
 });

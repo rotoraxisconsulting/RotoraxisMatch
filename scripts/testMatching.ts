@@ -522,6 +522,84 @@ async function main() {
     assert.equal(getMatchLabel(80), 'Excellent match');
   });
 
+  // ── Fase 3 — vigencia (expired / not-current degradation) ────────────
+  // Fixed reference date so expired-vs-future fixtures are deterministic
+  // regardless of when the suite runs.
+  const NOW = new Date(2026, 5, 15); // 2026-06-15
+
+  await test('Vigencia — absent issuedAt/expiresAt/isCurrent is neutral: full T1 score, no notice', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const tech = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.equal(result.breakdown.habilitation, 35);
+    assert.deepEqual(result.vigenciaNotices, []);
+    assert.equal(result.mandatoryMissing.length, 0);
+  });
+
+  await test('Vigencia — an expired rating degrades slightly (never excludes) and adds one "Expired" notice', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const tech = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.ok(result.breakdown.habilitation < 35 && result.breakdown.habilitation > 0, `expected a slight cut, got ${result.breakdown.habilitation}`);
+    assert.equal(result.level, 'exact', 'still tier exact — degraded, never excluded');
+    assert.equal(result.mandatoryMissing.length, 0, 'a degraded exact match never becomes mandatoryMissing');
+    assert.equal(result.vigenciaNotices.length, 1);
+    assert.equal(result.vigenciaNotices[0].label, 'Expired');
+    assert.ok(result.vigenciaNotices[0].detail.includes('2026-03'));
+  });
+
+  await test('Vigencia — precedence: an expired date wins even when isCurrent is explicitly true', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const tech = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01', isCurrent: true })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.equal(result.vigenciaNotices.length, 1, 'exactly one notice — never two contradictory ones');
+    assert.equal(result.vigenciaNotices[0].label, 'Expired', 'expired date wins over isCurrent=true');
+  });
+
+  await test('Vigencia — inverse case: a future/absent expiry with isCurrent=false is a distinct "Not current" notice', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const tech = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2027-01-01', isCurrent: false })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.equal(result.vigenciaNotices.length, 1);
+    assert.equal(result.vigenciaNotices[0].label, 'Not current');
+  });
+
+  await test('Vigencia — an expired license affects a rating with no vigencia issues of its own, with one combined notice', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const tech = makeTechnician({
+      licenses: [{ ...makeLicense('B1.1'), expiresAt: '2026-01-01' }],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.equal(result.vigenciaNotices.length, 1);
+    assert.equal(result.vigenciaNotices[0].label, 'Expired');
+    assert.ok(result.vigenciaNotices[0].detail.startsWith('License B1.1 expired 2026-01'));
+    assert.ok(result.vigenciaNotices[0].detail.includes('all its ratings affected'));
+  });
+
+  await test('Vigencia — license AND rating both expired produce exactly one combined notice, not two', () => {
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const tech = makeTechnician({
+      licenses: [{ ...makeLicense('B1.1'), expiresAt: '2026-01-01' }],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-02-01' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.equal(result.vigenciaNotices.length, 1, 'one combined notice, not one per source');
+    assert.ok(result.vigenciaNotices[0].detail.startsWith('License B1.1 expired'), 'license-level message takes precedence');
+  });
+
   // ── Mapper ───────────────────────────────────────────────────────────
 
   await test('Mapper — mapAircraftTypeRatingRow converts a Supabase snake_case row to the domain shape', () => {
