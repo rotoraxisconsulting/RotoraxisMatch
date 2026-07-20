@@ -18,6 +18,7 @@ import {
   throwIfError,
 } from './supabaseMappers';
 import { documentRepositoryV2 } from './documentRepositoryV2';
+import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan';
 
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
@@ -217,18 +218,77 @@ export const technicianRepositoryV2 = {
     return profile;
   },
 
-  async updateLicenses(technicianId: string, licenseCodes: string[]): Promise<void> {
-    const { error: deleteError } = await supabase
-      .from('technician_licenses')
-      .delete()
-      .eq('technician_id', technicianId);
-    throwIfError(deleteError);
-
-    if (licenseCodes.length === 0) return;
+  /**
+   * Upserts (insert-or-update-in-place) the technician's held licenses —
+   * NEVER deletes. Callers that also save habilitations in the same flow
+   * (e.g. the profile screen) must call this BEFORE replaceHabilitations(),
+   * so a brand-new license code already has a row by the time a
+   * habilitation references it — technician_habilitations' composite FK
+   * (fk_technician_habilitations_license, migration 016/018) requires the
+   * (technician_id, license_code) pair to pre-exist. Pair with
+   * removeUnreferencedLicenses() for the deletion half.
+   */
+  async upsertLicenses(technicianId: string, entries: LicenseEntry[]): Promise<void> {
+    if (entries.length === 0) return;
     const { error } = await supabase
       .from('technician_licenses')
-      .insert(licenseCodes.map((code) => ({ technician_id: technicianId, license_code: code })));
+      .upsert(
+        entries.map((e) => ({
+          technician_id: technicianId,
+          license_code: e.code,
+          issued_at: e.issuedAt ?? null,
+          expires_at: e.expiresAt ?? null,
+        })),
+        { onConflict: 'technician_id,license_code' },
+      );
     throwIfError(error);
+  },
+
+  /**
+   * Deletes license rows the technician no longer wants (any existing code
+   * absent from `nextCodes`) — but ONLY the ones no habilitation still
+   * references; a delete-then-reinsert of a still-referenced row fails
+   * outright against fk_technician_habilitations_license (see
+   * upsertLicenses' comment), and deleting the technician's real
+   * habilitations just to force the license delete through would be worse.
+   * Call this AFTER replaceHabilitations() in any flow that saves both in
+   * the same action, so the dependency check reflects the technician's
+   * actual final state instead of a stale pre-save snapshot. Returns the
+   * codes that could NOT be removed, so the caller can tell the technician
+   * why instead of surfacing a DB error.
+   */
+  async removeUnreferencedLicenses(technicianId: string, nextCodes: string[]): Promise<{ blocked: string[] }> {
+    const { data: existingRows, error: selectError } = await supabase
+      .from('technician_licenses')
+      .select('license_code')
+      .eq('technician_id', technicianId);
+    throwIfError(selectError);
+    const existingCodes = (existingRows ?? []).map((r: any) => r.license_code as string);
+
+    const nextSet = new Set(nextCodes);
+    const candidateCodes = existingCodes.filter((c) => !nextSet.has(c));
+    if (candidateCodes.length === 0) return { blocked: [] };
+
+    const { data: depRows, error: depError } = await supabase
+      .from('technician_habilitations')
+      .select('license_code')
+      .eq('technician_id', technicianId)
+      .in('license_code', candidateCodes);
+    throwIfError(depError);
+    const dependentCodes = [...new Set((depRows ?? []).map((r: any) => r.license_code as string))];
+
+    const plan = planLicenseRemoval(candidateCodes, dependentCodes);
+
+    if (plan.deletes.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('technician_licenses')
+        .delete()
+        .eq('technician_id', technicianId)
+        .in('license_code', plan.deletes);
+      throwIfError(deleteError);
+    }
+
+    return { blocked: plan.blocked };
   },
 
   /**

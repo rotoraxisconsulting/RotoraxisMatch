@@ -119,7 +119,9 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
       );
       await technicianRepositoryV2.update(technicianId, v2Patch);
       if (patch.licenseCategories !== undefined) {
-        await technicianRepositoryV2.updateLicenses(technicianId, patch.licenseCategories);
+        const entries = patch.licenseCategories.map((code) => ({ code }));
+        await technicianRepositoryV2.upsertLicenses(technicianId, entries);
+        await technicianRepositoryV2.removeUnreferencedLicenses(technicianId, patch.licenseCategories);
       }
       if (patch.aircraftTypes !== undefined) {
         await technicianRepositoryV2.updateAircraftTypes(technicianId, patch.aircraftTypes);

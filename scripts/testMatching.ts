@@ -33,6 +33,8 @@ import {
   LegacyHabilitationRow,
   ExistingNormalizedHabilitation,
 } from '../src/utils/aircraftRatingBackfillPlan';
+import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
+import { isValidDateOrder } from '../src/utils/validityDates';
 
 let passed = 0;
 let failed = 0;
@@ -812,6 +814,55 @@ async function main() {
     const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, existing);
     const summary = summarizeBackfillPlan(plan);
     assert.deepEqual(summary, { analyzed: 4, mapped: 1, ambiguous: 1, noMatch: 1, collisionsAvoided: 1 });
+  });
+
+  // ── License update plan ─────────────────────────────────────────────
+  // Regression coverage for the profile save bug: deleting a
+  // technician_licenses row that technician_habilitations still
+  // references violates fk_technician_habilitations_license. These tests
+  // pin the invariant that closes it — an existing license/habilitation
+  // pair is never lost, whether or not the technician also deselects the
+  // license in the same save.
+
+  await test('License update plan — a license the technician keeps is never touched, regardless of dependents', () => {
+    const plan = planLicenseRemoval([], ['B1.1']);
+    assert.deepEqual(plan, { deletes: [], blocked: [] });
+  });
+
+  await test('License update plan — a deselected license with no dependent habilitations is safe to delete', () => {
+    const plan = planLicenseRemoval(['A1'], []);
+    assert.deepEqual(plan, { deletes: ['A1'], blocked: [] });
+  });
+
+  await test('License update plan — a deselected license with a dependent habilitation is blocked, not deleted', () => {
+    const plan = planLicenseRemoval(['B1.1'], ['B1.1']);
+    assert.deepEqual(plan, { deletes: [], blocked: ['B1.1'] });
+  });
+
+  await test('License update plan — a mixed batch splits correctly between safe deletes and blocked codes', () => {
+    const plan = planLicenseRemoval(['A1', 'B1.1', 'C1'], ['B1.1']);
+    assert.deepEqual(plan.deletes.sort(), ['A1', 'C1']);
+    assert.deepEqual(plan.blocked, ['B1.1']);
+  });
+
+  // ── Validity date order ──────────────────────────────────────────────
+
+  await test('Validity date order — an unset issuedAt or expiresAt is always valid (neutral)', () => {
+    assert.equal(isValidDateOrder(undefined, undefined), true);
+    assert.equal(isValidDateOrder('2024-01-01', undefined), true);
+    assert.equal(isValidDateOrder(undefined, '2024-01-01'), true);
+  });
+
+  await test('Validity date order — expiresAt after issuedAt is valid', () => {
+    assert.equal(isValidDateOrder('2024-01-01', '2025-01-01'), true);
+  });
+
+  await test('Validity date order — expiresAt equal to issuedAt is invalid', () => {
+    assert.equal(isValidDateOrder('2024-01-01', '2024-01-01'), false);
+  });
+
+  await test('Validity date order — expiresAt before issuedAt is invalid', () => {
+    assert.equal(isValidDateOrder('2025-01-01', '2024-01-01'), false);
   });
 }
 

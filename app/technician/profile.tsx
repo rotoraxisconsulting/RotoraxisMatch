@@ -34,6 +34,7 @@ import { AIRCRAFT_TYPE_CATALOG } from '../../src/constants/aircraftTypes';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
 import { AircraftTypeRatingPicker } from '../../src/components/AircraftTypeRatingPicker';
 import { DateField } from '../../src/components/DateField';
+import { isValidDateOrder } from '../../src/utils/validityDates';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { catalogRepository } from '../../src/repositories/v2/catalogRepository';
 import { catalogRequestRepository } from '../../src/repositories/v2/catalogRequestRepository';
@@ -196,6 +197,10 @@ export default function TechnicianProfileScreen() {
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [noTechProfile, setNoTechProfile] = useState(false);
+  // Set only when a save partly succeeds — a deselected license couldn't be
+  // removed because a habilitation still references it. Distinct from
+  // profileError (a hard failure) since the rest of the save did go through.
+  const [licenseRemovalWarning, setLicenseRemovalWarning] = useState<string | null>(null);
 
   // Habilitations are stored as explicit { licenseCode, aircraftTypeRatingId }
   // rows — never as a flat aircraft-type list saved against a "default"
@@ -459,6 +464,29 @@ export default function TechnicianProfileScreen() {
   async function handleSave() {
     if (!form || !isDirty || !techId) return;
 
+    // Client-side validation only — must never reach the database as a
+    // constraint error. Absent dates are neutral (checked inside
+    // isValidDateOrder); only an explicit expiresAt on/before issuedAt is
+    // flagged.
+    const dateErrors: string[] = [];
+    form.licenseCategories.forEach((code) => {
+      const d = licenseDetails[code];
+      if (!isValidDateOrder(d?.issuedAt, d?.expiresAt)) {
+        dateErrors.push(`${code}: expiry date must be after the issue date.`);
+      }
+    });
+    habilitations.forEach((h) => {
+      if (!isValidDateOrder(h.issuedAt, h.expiresAt)) {
+        dateErrors.push(
+          `${h.licenseCode} + ${getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingsById)}: expiry date must be after the issue date.`,
+        );
+      }
+    });
+    if (dateErrors.length > 0) {
+      setProfileError(dateErrors.join(' '));
+      return;
+    }
+
     const selectedLocation = resolveLocationSnapshot(form);
     const locationCityId = selectedLocation?.locationCityId ?? form.locationCityId;
 
@@ -472,14 +500,16 @@ export default function TechnicianProfileScreen() {
         ? (form.availability.availableFrom ?? null)
         : null;
 
-    // Habilitation rows can only reference a license the technician is
-    // keeping — filter out any that referenced a license removed in this
-    // same save (the FK on technician_habilitations requires the pair to
-    // exist in technician_licenses).
-    const validHabilitations = habilitations.filter((h) => form.licenseCategories.includes(h.licenseCode));
+    // Never filter habilitations by which licenses are still selected —
+    // technician_habilitations references technician_licenses via a
+    // composite FK, so a license the technician deselected but that still
+    // has a habilitation here simply won't be removable below (see
+    // removeUnreferencedLicenses); silently dropping the habilitation
+    // instead would destroy real technician data just to force the license
+    // removal through.
     const derivedAircraftTypes = [...new Set([
       ...legacyHabilitations.map((h) => h.aircraftTypeCode),
-      ...validHabilitations
+      ...habilitations
         .map((h) => ratingsById.get(h.aircraftTypeRatingId)?.aircraftFamily)
         .filter((v): v is string => Boolean(v)),
     ])];
@@ -487,6 +517,7 @@ export default function TechnicianProfileScreen() {
 
     setSaving(true);
     setProfileError(null);
+    setLicenseRemovalWarning(null);
     try {
       // Update main profile row
       const { error: updateErr } = await supabase
@@ -508,34 +539,27 @@ export default function TechnicianProfileScreen() {
 
       if (updateErr) throw updateErr;
 
-      // Replace licenses
-      const { error: delLicErr } = await supabase
-        .from('technician_licenses')
-        .delete()
-        .eq('technician_id', techId);
-      if (delLicErr) throw delLicErr;
+      // 1) Upsert held licenses in place FIRST — never delete+reinsert (see
+      // technicianRepositoryV2.upsertLicenses). Ensures any brand-new
+      // license code already has a row before a habilitation below can
+      // reference it.
+      await technicianRepositoryV2.upsertLicenses(
+        techId,
+        form.licenseCategories.map((code) => ({
+          code,
+          issuedAt: licenseDetails[code]?.issuedAt,
+          expiresAt: licenseDetails[code]?.expiresAt,
+        })),
+      );
 
-      if (form.licenseCategories.length > 0) {
-        const { error: insLicErr } = await supabase
-          .from('technician_licenses')
-          .insert(
-            form.licenseCategories.map((code) => ({
-              technician_id: techId,
-              license_code: code,
-              issued_at: licenseDetails[code]?.issuedAt || null,
-              expires_at: licenseDetails[code]?.expiresAt || null,
-            })),
-          );
-        if (insLicErr) throw insLicErr;
-      }
-
-      // Replace normalized habilitations — each row carries its own explicit
-      // licenseCode, never a "default" license applied to every aircraft.
-      // Legacy rows (aircraft_type_rating_id IS NULL) are left untouched.
+      // 2) Replace normalized habilitations — each row carries its own
+      // explicit licenseCode, never a "default" license applied to every
+      // aircraft. Legacy rows (aircraft_type_rating_id IS NULL) are left
+      // untouched. The full local set is sent, unfiltered (see above).
       if (habDirty) {
         await technicianRepositoryV2.replaceHabilitations(
           techId,
-          validHabilitations.map((h) => ({
+          habilitations.map((h) => ({
             licenseCode: h.licenseCode,
             aircraftTypeRatingId: h.aircraftTypeRatingId,
             experienceYears: h.experienceYears,
@@ -544,12 +568,25 @@ export default function TechnicianProfileScreen() {
             isCurrent: h.isCurrent,
           })),
         );
-        setHabilitations(validHabilitations);
         setHabDirty(false);
       }
 
+      // 3) Only now remove deselected licenses — AFTER habilitations are
+      // saved, so the dependency check reflects the technician's actual
+      // final state rather than a stale pre-save snapshot.
+      const { blocked } = await technicianRepositoryV2.removeUnreferencedLicenses(techId, form.licenseCategories);
+
       setForm((prev) => (prev ? { ...prev, profileCompleteness: newCompleteness, aircraftTypes: derivedAircraftTypes } : prev));
       setIsDirty(false);
+
+      if (blocked.length > 0) {
+        setLicenseRemovalWarning(
+          `Saved — but could not remove ${blocked.join(', ')}: the technician still has habilitations declared under ${
+            blocked.length > 1 ? 'them' : 'it'
+          }. Remove those habilitations first if the license should come off the profile.`,
+        );
+        await loadProfile();
+      }
     } catch (err: any) {
       setProfileError(err?.message ?? 'Save failed. Please try again.');
     } finally {
@@ -700,6 +737,12 @@ export default function TechnicianProfileScreen() {
           {profileError && (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>{profileError}</Text>
+            </View>
+          )}
+
+          {licenseRemovalWarning && (
+            <View style={styles.warningBanner}>
+              <Text style={styles.warningText}>{licenseRemovalWarning}</Text>
             </View>
           )}
 
@@ -1199,6 +1242,21 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '600',
     color: '#DC2626',
+  },
+  warningBanner: {
+    marginTop: spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    backgroundColor: techUi.amberSoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  warningText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: techUi.amber,
   },
   sectionTitleBlock: {
     marginTop: spacing.lg,
