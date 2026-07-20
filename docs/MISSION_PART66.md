@@ -252,6 +252,11 @@ verifica antes qué los consume (incl. scripts/testMatching.ts).
    - ts-prune o similar para exports muertos
    - useTechnicianDashboard.updateProfile() — código muerto V1, cero call
      sites, eliminar
+   - src/components/TechnicianCard.tsx — código muerto, cero call sites,
+     opera sobre el tipo @deprecated SafeTechnicianView
+   - src/utils/matching.ts — código muerto, cero call sites reales (solo
+     TechnicianCard.tsx lo importaba); su getMatchLabel diverge del actual
+     ("Low match" en vez de "Weak match" para <40)
 4. VERIFICAR: build limpio, tests pasando, grep de '@deprecated' y 'V1' a
    cero en src/, flujo completo (perfil → oferta → matching) funcionando
    con datos migrados.
@@ -352,6 +357,20 @@ Rama: part66-phase3, partiendo de main actualizado.
     base de datos.
   - Cobertura de tests añadida en scripts/testMatching.ts: "License update
     plan" y "Validity date order" (50/50 pasando).
+- Auditoría de pantallas de score/breakdown (retomada tras el bug de
+  guardado): 3 pantallas más, fuera de Fase 2, tenían pesos hardcodeados
+  25/25/20/15/10/5 (los de ANTES del rebalanceo) en vez de
+  getMatchScoreWeights(offer) — app/technician/offers/[id].tsx,
+  app/technician/direct-offers/[id].tsx, app/company/applications/[id].tsx.
+  Las tres además duplicaban el breakdown (barras propias + bloque de
+  MatchExplanation). Arregladas: pesos reales vía getMatchScoreWeights,
+  MatchExplanation con nueva prop `hideBreakdown` para no repetir números,
+  cap reason/clarifications visibles en las 3. Resto de pantallas con score
+  auditadas y limpias (MatchBadge/InlineScore sin desglose, sin máximos
+  hardcodeados). Dos ficheros muertos encontrados de paso (nunca
+  importados): src/components/TechnicianCard.tsx y src/utils/matching.ts
+  (getMatchLabel V1 con etiqueta "Low match" en vez de "Weak match") — a la
+  lista de Fase 5.
 - Pendiente en Fase 3: badge de caducada/no vigente en tarjetas (lado
   empresa) y en MatchExplanation; degradación leve en matching (nunca
   exclusión) cuando isCurrent=false o expiresAt pasado; renombrado de UI
