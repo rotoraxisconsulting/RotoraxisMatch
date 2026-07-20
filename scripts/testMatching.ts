@@ -390,7 +390,7 @@ async function main() {
       result.breakdown.habilitation > 0 && result.breakdown.habilitation < 35,
       `T2 must award a partial habilitation weight strictly between 0 and 35, got ${result.breakdown.habilitation}`,
     );
-    assert.ok(result.clarifications.some((c) => c.includes('Misma familia, distinto motor')));
+    assert.ok(result.clarifications.some((c) => c.includes('Same family, different engine')));
   });
 
   await test('Fase 2 — T3 (legacy code match, no engine on record) scores below T2', () => {
@@ -407,7 +407,7 @@ async function main() {
       resultT3.breakdown.habilitation < resultT2.breakdown.habilitation,
       `T3 (${resultT3.breakdown.habilitation}) must score below T2 (${resultT2.breakdown.habilitation})`,
     );
-    assert.ok(resultT3.clarifications.some((c) => c.includes('Coincidencia aproximada sin motorización')));
+    assert.ok(resultT3.clarifications.some((c) => c.includes('Approximate match without engine data')));
   });
 
   await test('Fase 2 — T4 (no match at all) awards zero habilitation', () => {

@@ -464,6 +464,12 @@ export default function OfferDetailScreen() {
           {offer.requiredHabilitations.length > 0 ? (
             <TypeRatingRequirementsRow habilitations={offer.requiredHabilitations} ratingIndex={ratingIndex} />
           ) : null}
+          {offer.requiredTechnicianTypes.length === 0 &&
+          offer.requiredLicenses.length === 0 &&
+          offer.requiredAircraftTypes.length === 0 &&
+          offer.requiredHabilitations.length === 0 ? (
+            <Text style={styles.noRequirementsText}>No specific requirements — open to all technicians.</Text>
+          ) : null}
         </CompanyCard>
 
         {canManage ? (
@@ -733,7 +739,12 @@ function MetaTile({ label, value, icon: Icon }: { label: string; value: string; 
   );
 }
 
+// Renders nothing when empty rather than a placeholder "Any" chip — an
+// unset broad field isn't a requirement worth stating, and showing "Any"
+// reads as if it were deliberately unrestricted. Superseded entirely by
+// TypeRatingRequirementsRow once these legacy fields are removed.
 function RequirementRow({ label, items }: { label: string; items: string[] }) {
+  if (items.length === 0) return null;
   return (
     <View style={styles.requirementRow}>
       <View style={styles.requirementLabelRow}>
@@ -741,7 +752,7 @@ function RequirementRow({ label, items }: { label: string; items: string[] }) {
         <Text style={styles.requirementLabel}>{label}</Text>
       </View>
       <View style={styles.chipRow}>
-        {items.length > 0 ? items.map((item) => <CompanyChip key={item} label={item} />) : <CompanyChip label="Any" />}
+        {items.map((item) => <CompanyChip key={item} label={item} />)}
       </View>
     </View>
   );
@@ -945,6 +956,13 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '600',
     color: companyUi.text,
+  },
+  noRequirementsText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    fontStyle: 'italic',
+    color: companyUi.textMuted,
   },
   actionRow: {
     flexDirection: 'row',

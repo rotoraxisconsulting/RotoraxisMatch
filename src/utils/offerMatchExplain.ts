@@ -131,7 +131,7 @@ function evaluateHabilitationRequirement(
     const heldLabel = getAircraftTypeRatingLabel(relatedRow.aircraftTypeRatingId, ratingIndex);
     return {
       tier: 'related_family',
-      clarificationText: `Misma familia, distinto motor: ${reqLabel} vs ${heldLabel}.`,
+      clarificationText: `Same family, different engine: ${reqLabel} vs ${heldLabel}.`,
     };
   }
 
@@ -144,7 +144,7 @@ function evaluateHabilitationRequirement(
   if (legacyRow) {
     return {
       tier: 'related_legacy',
-      clarificationText: `Coincidencia aproximada sin motorización: habilitación general en ${legacyRow.aircraftTypeCode} bajo ${req.licenseCode}.`,
+      clarificationText: `Approximate match without engine data: general habilitation in ${legacyRow.aircraftTypeCode} under ${req.licenseCode}.`,
     };
   }
 
@@ -183,7 +183,7 @@ function evaluateLegacyBroadMatch(
       return offer.requiredAircraftTypes.some((code) => habilitationCoversAircraftCode(h, code));
     });
     return row
-      ? { tier: 'legacy', matchText: `${row.licenseCode} + aeronave requerida en la misma habilitación` }
+      ? { tier: 'legacy', matchText: `${row.licenseCode} + required aircraft in the same habilitation` }
       : { tier: 'not_met' };
   }
 
@@ -191,14 +191,14 @@ function evaluateLegacyBroadMatch(
     const holds =
       technician.licenses.some((l) => offer.requiredLicenses.includes(l.licenseCode)) ||
       technician.habilitations.some((h) => offer.requiredLicenses.includes(h.licenseCode));
-    return holds ? { tier: 'legacy', matchText: 'Categoría requerida presente en el perfil' } : { tier: 'not_met' };
+    return holds ? { tier: 'legacy', matchText: 'Required license category present in profile' } : { tier: 'not_met' };
   }
 
   if (needsAircraft) {
     const covers =
       technician.habilitations.some((h) => offer.requiredAircraftTypes.some((code) => habilitationCoversAircraftCode(h, code))) ||
       technician.aircraftExperience.some((e) => offer.requiredAircraftTypes.includes(e.aircraftTypeCode));
-    return covers ? { tier: 'legacy', matchText: 'Aeronave requerida presente en el perfil o la experiencia' } : { tier: 'not_met' };
+    return covers ? { tier: 'legacy', matchText: 'Required aircraft present in profile or experience' } : { tier: 'not_met' };
   }
 
   return { tier: 'not_met' };
@@ -235,7 +235,7 @@ export function calculateOfferTechnicianMatch(
 
   if (technician.verificationStatus === 'verified') {
     verified = weights.verified;
-    matches.push('Perfil verificado');
+    matches.push('Verified profile');
   }
 
   if (offer.requiredHabilitations.length > 0) {
@@ -267,7 +267,7 @@ export function calculateOfferTechnicianMatch(
           mandatoryMissing.push(licenseLabel);
         }
       } else if (outcome.tier === 'not_met') {
-        clarifications.push(`La oferta prefiere ${licenseLabel}; no consta en el perfil`);
+        clarifications.push(`The offer prefers ${licenseLabel}; not present in the profile`);
       }
 
       const licenseHeld =
@@ -295,11 +295,11 @@ export function calculateOfferTechnicianMatch(
       license = 0;
       if (offer.requiredLicenses.length > 0 && offer.requiredAircraftTypes.length > 0) {
         mandatoryMissing.push(`${offer.requiredLicenses.join('/')} + ${offer.requiredAircraftTypes.join('/')}`);
-        clarifications.push('No se encontró una habilitación del técnico que combine la categoría y la aeronave solicitadas en la misma fila.');
+        clarifications.push('No technician habilitation was found that combines the required license and aircraft in the same row.');
       } else if (offer.requiredLicenses.length > 0) {
-        mandatoryMissing.push(`Categoría requerida: ${offer.requiredLicenses.join(', ')}`);
+        mandatoryMissing.push(`Required license: ${offer.requiredLicenses.join(', ')}`);
       } else if (offer.requiredAircraftTypes.length > 0) {
-        mandatoryMissing.push(`Aeronave requerida: ${offer.requiredAircraftTypes.join(', ')}`);
+        mandatoryMissing.push(`Required aircraft: ${offer.requiredAircraftTypes.join(', ')}`);
       }
     }
   } else {
@@ -308,7 +308,7 @@ export function calculateOfferTechnicianMatch(
     // penalized). weights here is NO_REQUIREMENTS_WEIGHTS, so the other
     // four components already sum to at most 75.
     level = 'legacy';
-    matches.push('La oferta no exige categoría ni aeronave concretas');
+    matches.push('The offer does not require a specific license or aircraft');
   }
 
   const techContractTypes = technician.availability.contractTypes as string[];
