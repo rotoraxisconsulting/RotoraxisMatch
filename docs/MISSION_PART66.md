@@ -250,6 +250,8 @@ verifica antes qué los consume (incl. scripts/testMatching.ts).
    - JSON seeds huérfanos de src/data/seeds/ confirmados sin consumidores
    - Docs obsoletos de docs/ → ARCHIVAR en docs/archive/, no borrar
    - ts-prune o similar para exports muertos
+   - useTechnicianDashboard.updateProfile() — código muerto V1, cero call
+     sites, eliminar
 4. VERIFICAR: build limpio, tests pasando, grep de '@deprecated' y 'V1' a
    cero en src/, flujo completo (perfil → oferta → matching) funcionando
    con datos migrados.
@@ -320,3 +322,37 @@ hint) se toma al construir esa pantalla en 3b.
 ### Sesión 2026-07-20: Fase 3 y Fase 3b
 Alcance: Fase 3 y Fase 3b con sus checkpoints. Fases 4 y 5 NO se empiezan.
 Rama: part66-phase3, partiendo de main actualizado.
+
+### Fase 3 — vigencia: progreso a media sesión
+- Formulario de perfil técnico (app/technician/profile.tsx): campos
+  issuedAt/expiresAt/isCurrent por licencia y por habilitación, con
+  DateField real (picker nativo/`<input type="date">`, nunca texto libre —
+  src/components/DateField.{web,native}.tsx). Verificado en vivo en web.
+- Bug encontrado y corregido tras el picker: guardar fechas de licencia
+  rompía con violación de FK (delete+reinsert de technician_licenses contra
+  fk_technician_habilitations_license) y luego con RLS (faltaba policy
+  UPDATE). Ambos arreglados de raíz, sin debilitar RLS ni sacrificar datos:
+  - technicianRepositoryV2 dividido en upsertLicenses() (upsert in-place,
+    nunca delete) + removeUnreferencedLicenses() (borra un código
+    deseleccionado SOLO si ninguna habilitación lo referencia; si la tiene,
+    lo reporta como `blocked` en vez de fallar). Orden de guardado en
+    profile.tsx: upsert licencias → habilitaciones → borrado de licencias
+    (para que el check de dependencia refleje el estado final real).
+  - Filtro `validHabilitations` (que borraba habilitaciones silenciosamente
+    si su licencia se deseleccionaba) eliminado — causaba pérdida de datos
+    reales una vez el borrado de licencias pasó a ser condicional.
+  - Migración 021 (tl_update_own, USING+WITH CHECK scoped al técnico
+    propietario) APLICADA contra rotoaxismatch-dev y verificada: policy
+    presente con las expresiones correctas; upsert simulado como el propio
+    técnico funciona in-place; el mismo upsert como otro técnico es
+    rechazado por RLS. technician_habilitations NO necesitaba policy
+    equivalente (su guardado sigue siendo delete+insert, nunca upsert).
+  - Validación issuedAt/expiresAt (expiresAt debe ser posterior, nunca
+    igual ni anterior) añadida en cliente — mensaje en UI, nunca error de
+    base de datos.
+  - Cobertura de tests añadida en scripts/testMatching.ts: "License update
+    plan" y "Validity date order" (50/50 pasando).
+- Pendiente en Fase 3: badge de caducada/no vigente en tarjetas (lado
+  empresa) y en MatchExplanation; degradación leve en matching (nunca
+  exclusión) cuando isCurrent=false o expiresAt pasado; renombrado de UI
+  ("Aircraft"→"Type ratings", etc.).
