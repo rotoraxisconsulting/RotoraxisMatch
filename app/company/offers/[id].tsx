@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
+  AlertTriangle,
   BriefcaseBusiness,
   CalendarDays,
   CheckCircle,
@@ -45,13 +46,15 @@ import {
 import { isOfferOpenForTechnicians, offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
-import { getTechnicianMatchesForOffer, TechnicianMatchResult } from '../../../src/utils/matchingV2';
-import { OfferWithRequirements } from '../../../src/types/offer';
+import { getMatchScoreWeights, getTechnicianMatchesForOffer, MatchScoreWeights, TechnicianMatchResult } from '../../../src/utils/matchingV2';
+import { OfferRequiredHabilitation, OfferWithRequirements } from '../../../src/types/offer';
 import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest';
+import { MatchScore } from '../../../src/types/matching';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { canManageOffers, canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
 import { habilitationAircraftCodes } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
+import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
 
@@ -385,6 +388,8 @@ export default function OfferDetailScreen() {
     });
   }, [applicationByTechnician, directOfferByTechnician, matches]);
 
+  const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
+
   if (loading) {
     return (
       <>
@@ -456,6 +461,9 @@ export default function OfferDetailScreen() {
           <RequirementRow label="Technician types" items={offer.requiredTechnicianTypes} />
           <RequirementRow label="Licenses" items={offer.requiredLicenses} />
           <RequirementRow label="Aircraft types" items={offer.requiredAircraftTypes} />
+          {offer.requiredHabilitations.length > 0 ? (
+            <TypeRatingRequirementsRow habilitations={offer.requiredHabilitations} ratingIndex={ratingIndex} />
+          ) : null}
         </CompanyCard>
 
         {canManage ? (
@@ -588,13 +596,15 @@ export default function OfferDetailScreen() {
               ) : null}
 
               <View style={styles.breakdown}>
-                <BreakdownItem label="Verified" value={score.breakdown.verified} max={25} />
-                <BreakdownItem label="Habilitation" value={score.breakdown.habilitation} max={25} />
-                <BreakdownItem label="License" value={score.breakdown.license} max={20} />
-                <BreakdownItem label="Availability" value={score.breakdown.availability} max={15} />
-                <BreakdownItem label="Experience" value={score.breakdown.experience} max={10} />
-                <BreakdownItem label="Location" value={score.breakdown.location} max={5} />
+                <BreakdownItem label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} />
+                <BreakdownItem label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} />
+                <BreakdownItem label="License" value={score.breakdown.license} max={weights?.license ?? 0} />
+                <BreakdownItem label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} />
+                <BreakdownItem label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} />
+                <BreakdownItem label="Location" value={score.breakdown.location} max={weights?.location ?? 0} />
               </View>
+
+              <CapReasonPanel score={score} />
 
               {application ? (
                 <TouchableOpacity
@@ -737,6 +747,63 @@ function RequirementRow({ label, items }: { label: string; items: string[] }) {
   );
 }
 
+function TypeRatingRequirementsRow({
+  habilitations,
+  ratingIndex,
+}: {
+  habilitations: OfferRequiredHabilitation[];
+  ratingIndex: AircraftRatingIndex;
+}) {
+  return (
+    <View style={styles.requirementRow}>
+      <View style={styles.requirementLabelRow}>
+        <ListChecks color={companyUi.textMuted} size={14} strokeWidth={2} />
+        <Text style={styles.requirementLabel}>Type rating requirements</Text>
+      </View>
+      <View style={styles.habilitationReqList}>
+        {habilitations.map((req, i) => (
+          <View key={`${req.licenseCode}-${req.aircraftTypeRatingId}-${i}`} style={styles.habilitationReqItem}>
+            <Text style={styles.habilitationReqText}>
+              {req.licenseCode} + {getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}
+            </Text>
+            <CompanyBadge
+              label={req.requirementLevel === 'mandatory' ? 'Mandatory' : 'Preferred'}
+              tone={req.requirementLevel === 'mandatory' ? 'error' : 'muted'}
+              small
+            />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// Surfaces WHY score.total is lower than the raw breakdown sum — a mandatory
+// exact-habilitation requirement not met, and/or the qualification-zero
+// ceiling (see MANDATORY_UNMET_CAP / ZERO_QUALIFICATION_CAP in
+// offerMatchExplain.ts). Without this, a capped score reads as an unexplained
+// discrepancy between the bars above and the badge total.
+function CapReasonPanel({ score }: { score: MatchScore }) {
+  const rawSum = Object.values(score.breakdown).reduce((sum, v) => sum + v, 0);
+  const wasCapped = rawSum > score.total;
+  if (!wasCapped) return null;
+
+  return (
+    <View style={styles.capPanel}>
+      <View style={styles.capHeaderRow}>
+        <AlertTriangle color={companyUi.amber} size={14} strokeWidth={2} />
+        <Text style={styles.capTitle}>Score capped ({rawSum}% raw before cap)</Text>
+      </View>
+      {score.mandatoryMissing.map((m, i) => (
+        <Text key={`mm-${i}`} style={styles.capMissingLine}>Missing mandatory requirement: {m}</Text>
+      ))}
+      {score.clarifications.map((c, i) => (
+        <Text key={`cl-${i}`} style={styles.capClarificationLine}>{c}</Text>
+      ))}
+    </View>
+  );
+}
+
 function BreakdownItem({ label, value, max }: { label: string; value: number; max: number }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
@@ -862,6 +929,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
+  },
+  habilitationReqList: {
+    gap: spacing.xs,
+  },
+  habilitationReqItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  habilitationReqText: {
+    flexShrink: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: companyUi.text,
   },
   actionRow: {
     flexDirection: 'row',
@@ -1032,6 +1115,38 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700',
+  },
+  capPanel: {
+    backgroundColor: companyUi.amberSoft,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    padding: spacing.sm,
+    gap: 4,
+  },
+  capHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  capTitle: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    color: companyUi.amber,
+  },
+  capMissingLine: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: companyUi.red,
+  },
+  capClarificationLine: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500',
+    color: companyUi.amber,
   },
   stateNotice: {
     minHeight: 42,

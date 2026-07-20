@@ -50,6 +50,27 @@ const QUALIFICATION_WEIGHTS = { verified: 15, habilitation: 35, license: 20, ava
 // gymnastics at every access site.
 const NO_REQUIREMENTS_WEIGHTS = { verified: 25, habilitation: 0, license: 0, availability: 25, experience: 15, location: 10 } as const;
 
+export interface MatchScoreWeights {
+  verified: number;
+  habilitation: number;
+  license: number;
+  availability: number;
+  experience: number;
+  location: number;
+}
+
+// Which weight set applies to a given offer, and therefore what each
+// breakdown component's maximum actually is right now. Exported so UI that
+// renders score.breakdown (e.g. the technician-match cards on the offer
+// detail screen) can show real denominators instead of hardcoding them —
+// hardcoded maximums silently drift out of sync whenever these weights
+// change here.
+export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWeights {
+  const hasQualificationRequirements =
+    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0;
+  return hasQualificationRequirements ? QUALIFICATION_WEIGHTS : NO_REQUIREMENTS_WEIGHTS;
+}
+
 // Within the habilitation budget: T1 (exact) gets the full amount; T2
 // (same family, different engine) and T3 (legacy code match, no engine on
 // record) get progressively smaller fractions — still real, still surfaced
@@ -198,7 +219,7 @@ export function calculateOfferTechnicianMatch(
 ): MatchScore {
   const hasQualificationRequirements =
     offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0;
-  const weights = hasQualificationRequirements ? QUALIFICATION_WEIGHTS : NO_REQUIREMENTS_WEIGHTS;
+  const weights = getMatchScoreWeights(offer);
 
   let verified = 0;
   let habilitation = 0;
