@@ -371,7 +371,47 @@ Rama: part66-phase3, partiendo de main actualizado.
   importados): src/components/TechnicianCard.tsx y src/utils/matching.ts
   (getMatchLabel V1 con etiqueta "Low match" en vez de "Weak match") — a la
   lista de Fase 5.
-- Pendiente en Fase 3: badge de caducada/no vigente en tarjetas (lado
-  empresa) y en MatchExplanation; degradación leve en matching (nunca
-  exclusión) cuando isCurrent=false o expiresAt pasado; renombrado de UI
-  ("Aircraft"→"Type ratings", etc.).
+- Degradación por vigencia implementada en offerMatchExplain.ts
+  (evaluateVigencia): cap leve del 10% (VIGENCIA_DEGRADATION_FRACTION)
+  sobre la fracción del tier ganador, NUNCA cambia el tier (T1 sigue T1,
+  nunca entra en mandatoryMissing). Precedencia fijada: expiresAt pasado
+  manda aunque isCurrent sea true explícito; isCurrent=false solo genera
+  su propio mensaje "Not current" cuando la fecha está ausente o en
+  futuro. Licencia caducada subsume el aviso de la habilitación — una
+  sola clarification combinada, nunca dos. MatchScore gana
+  `vigenciaNotices: VigenciaNotice[]`. calculateOfferTechnicianMatch
+  acepta `now?: Date` inyectable para tests deterministas. 6 tests nuevos
+  "Vigencia" en testMatching.ts (56/56 pasando).
+- Badge "Validity" (label corto + detalle) añadido a MatchExplanation
+  (visible automáticamente en las 3 pantallas que ya la usan) y a
+  app/company/offers/[id].tsx vía componente local VigenciaNotices (esa
+  pantalla no usa MatchExplanation, tiene su propio CapReasonPanel — que
+  NO sirve para esto porque una degradación leve no crea el hueco
+  breakdown-sum-vs-total que CapReasonPanel detecta).
+- Renombrados aplicados (2 de los 3 del plan original; el tercero,
+  "Required aircraft types" en el FORMULARIO de oferta, es trabajo de
+  Fase 3b, no tocado): "Exact habilitations" → "Type rating requirements"
+  en technician/offers/[id].tsx; misma fila AÑADIDA en
+  technician/direct-offers/[id].tsx (no existía — hueco real, ahora
+  arreglado). Label "Aircraft" mal puesto en company/offers/[id].tsx (en
+  realidad listaba los type ratings del técnico, no un requisito de
+  aeronave) → "Type ratings". Las etiquetas "Aircraft types" del campo
+  amplio/legacy quedan así (NO renombradas a "Type ratings" — serían
+  incorrectas semánticamente, ese campo es aproximado, no exacto).
+- Caso real para validar en la app (datos de prueba en rotoaxismatch-dev,
+  mismo patrón que CHECKPOINT 2 — limpiar cuando quede validado):
+  - Oferta: "DEMO Fase3 — vigencia: B1.1 Airbus A320 CFM56 (mandatory)",
+    id 57e9f995-739f-45e1-8ab1-1947086bd430, empresa "Airbus", published,
+    requiere B1.1 + Airbus A320 family — CFM56 (mandatory).
+  - Técnico: anonymous_code T3FD8E0D5F (id 91c69d2c-0b7d-41a6-b658-c8f929d193b1),
+    verified, ya tenía licencia B1.1 vigente (sin expiresAt). Se le añadió
+    una habilitación NUEVA (no tocó la existente) para ese rating exacto:
+    issued_at 2019-03-15, expires_at 2024-03-15 (pasado), is_current=true
+    EXPLÍCITO — para demostrar en vivo que la fecha pasada manda sobre
+    isCurrent=true.
+  - Esperado: Habilitation 32/35 (no 35/35), badge "Expired", clarification
+    "Rating expired 2024-03: B1.1 + Airbus A320 family — CFM56.", total
+    82/100, "Excellent match" (nunca excluido pese a la degradación).
+    Visible desde el lado empresa (Airbus → Offers → esa oferta → técnico
+    T3FD8E0D5F en la lista) o desde el lado técnico si tienes las
+    credenciales de esa cuenta (Offers → esa oferta → sección Match).
