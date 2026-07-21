@@ -32,9 +32,8 @@ export interface AircraftFamilyGroup {
   // (e.g. "A318/A319/A320/A321 family"), deliberately not shortened to a
   // single model — every family member is a real, distinct catalog value
   // and dropping some from the label would misrepresent what the filter
-  // actually covers. FLAGGED FOR YOUR CALL: the Fase 3 reference mockup
-  // shows a shortened "A320 family" chip — if you want that instead, tell
-  // me and I'll adjust (see chat).
+  // actually covers. Confirmed over the Fase 3 reference mockup's
+  // shortened "A320 family" chip — accuracy over brevity.
   displayName: string;
   ratings: AircraftTypeRatingCatalog[]; // every rating (any engine) in this family, sorted
 }
