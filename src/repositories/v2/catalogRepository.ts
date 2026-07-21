@@ -1,5 +1,4 @@
 import { supabase } from '../../lib/supabase';
-import { AIRCRAFT_TYPE_CATALOG, AircraftTypeCode } from '../../constants/aircraftTypes';
 import { LICENSE_CATEGORIES, LicenseCode } from '../../constants/licenses';
 import { CONTRACT_TYPES } from '../../constants/contractTypes';
 import { TECHNICIAN_TYPES } from '../../constants/technicianTypes';
@@ -10,7 +9,7 @@ import {
   mapAircraftTypeRatingRow,
 } from '../../constants/aircraftTypeRatings';
 import { createAircraftTypeRatingsCache } from './aircraftTypeRatingsCache';
-import { ContractTypeCode, TechnicianTypeCode, CompanyTypeCode, AircraftTypeRatingCatalog } from '../../types/catalog';
+import { ContractTypeCode, TechnicianTypeCode, CompanyTypeCode, AircraftTypeRatingCatalog, AircraftTypeCatalog } from '../../types/catalog';
 import { throwIfError } from './supabaseMappers';
 
 // public.aircraft_type_ratings is the ONLY source of truth for this catalog
@@ -79,13 +78,50 @@ const aircraftTypeRatingsCache = createAircraftTypeRatingsCache({
   fetchByIds: fetchAircraftTypeRatingsByIds,
 });
 
+// public.aircraft_types — the legacy, coarser (model-only, no engine)
+// catalog behind offer_required_aircraft_types / technician_habilitations'
+// legacy aircraft_type_code column. Fase 3b migrates this off the
+// src/constants/aircraftTypes.ts hardcoded mirror (same 33 rows, confirmed
+// against the live table) onto a real query — that file stays only for its
+// AircraftTypeCode/inferAircraftCategory helpers until Fase 5 removes it
+// entirely, per the mission doc. Simple fetch-once memoization (no TTL) is
+// enough here: this table rarely changes and the whole legacy system is on
+// its way out, unlike aircraft_type_ratings which needed the full cache.
+let aircraftTypesPromise: Promise<AircraftTypeCatalog[]> | null = null;
+
+async function fetchAircraftTypes(): Promise<AircraftTypeCatalog[]> {
+  const { data, error } = await supabase
+    .from('aircraft_types')
+    .select('code, label, manufacturer, aircraft_family, aircraft_category, is_active')
+    .order('manufacturer', { ascending: true })
+    .order('aircraft_family', { ascending: true });
+  throwIfError(error);
+  return (data ?? []).map((row: any) => ({
+    code: row.code as string,
+    label: row.label as string,
+    manufacturer: row.manufacturer ?? undefined,
+    aircraftFamily: row.aircraft_family ?? undefined,
+    aircraftCategory: row.aircraft_category as AircraftTypeCatalog['aircraftCategory'],
+    isActive: row.is_active as boolean,
+  }));
+}
+
 export const catalogRepository = {
-  async getAircraftTypes() {
-    return [...AIRCRAFT_TYPE_CATALOG];
+  /** Live from Supabase (public.aircraft_types) — never a hardcoded list. */
+  async getAircraftTypes(options: { forceRefresh?: boolean } = {}): Promise<AircraftTypeCatalog[]> {
+    if (options.forceRefresh) aircraftTypesPromise = null;
+    if (!aircraftTypesPromise) aircraftTypesPromise = fetchAircraftTypes();
+    try {
+      return await aircraftTypesPromise;
+    } catch (err) {
+      aircraftTypesPromise = null; // don't cache a failure — next call retries
+      throw err;
+    }
   },
 
-  async getAircraftType(code: AircraftTypeCode) {
-    return AIRCRAFT_TYPE_CATALOG.find((a) => a.code === code) ?? null;
+  async getAircraftType(code: string): Promise<AircraftTypeCatalog | null> {
+    const types = await this.getAircraftTypes();
+    return types.find((a) => a.code === code) ?? null;
   },
 
   async getLicenseCategories() {

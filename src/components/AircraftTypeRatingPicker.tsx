@@ -2,28 +2,46 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import { colors, spacing } from '../theme';
 import { AircraftTypeRatingCatalog } from '../types/catalog';
-import { filterAircraftTypeRatings } from '../constants/aircraftTypeRatings';
+import { searchRatings, getByProductType } from '../constants/aircraftTypeRatingViews';
 import { catalogRepository } from '../repositories/v2/catalogRepository';
 import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
+
+// Fase 3b.4 — pre-filters the picker to a productType facet once the
+// caller knows a compatible one (e.g. from getCompatibleProductType(),
+// keyed off whichever license category the surrounding form has selected).
+// Help, not a cage: always shown with a discrete hint and a "Show all"
+// escape hatch — never a hard block on picking outside the facet.
+export interface AircraftTypeRatingPickerCategoryHint {
+  productType: NonNullable<AircraftTypeRatingCatalog['productType']>;
+  licenseCode: string; // for the hint text, e.g. "compatible with B1.3"
+}
 
 interface Props {
   value?: string | null;
   onSelect: (rating: AircraftTypeRatingCatalog) => void;
   placeholder?: string;
   maxResults?: number;
+  categoryHint?: AircraftTypeRatingPickerCategoryHint;
 }
 
 // Shared aircraft+engine rating search picker — used by the technician
 // habilitations form and the company offer requirement form. The catalog is
 // loaded from Supabase (public.aircraft_type_ratings) through the shared
 // useAircraftTypeRatingsCatalog hook/cache — never a hardcoded list — and
-// searched in memory (see constants/aircraftTypeRatings.filterAircraftTypeRatings),
-// which is plenty for 80-ish rows. No web-only APIs: TextInput/ScrollView/
-// TouchableOpacity/ActivityIndicator all work the same on web, iOS and
-// Android.
-export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResults = 25 }: Props) {
+// searched in memory via the views module (searchRatings/getByProductType,
+// src/constants/aircraftTypeRatingViews.ts — the single source every screen
+// with a rating picker/filter goes through), which is plenty for a few
+// hundred rows. No web-only APIs: TextInput/ScrollView/TouchableOpacity/
+// ActivityIndicator all work the same on web, iOS and Android.
+export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResults = 25, categoryHint }: Props) {
   const { ratings, state, error, retry } = useAircraftTypeRatingsCatalog();
   const [query, setQuery] = useState('');
+  // Escape hatch for categoryHint — "Show all" — resets whenever the hint
+  // itself changes (a new license category deserves a fresh pre-filter).
+  const [hintDismissed, setHintDismissed] = useState(false);
+  useEffect(() => {
+    setHintDismissed(false);
+  }, [categoryHint?.productType, categoryHint?.licenseCode]);
 
   // The active list from the hook may not include `value` if that rating
   // was deactivated after being selected on an existing profile/offer. Fall
@@ -49,9 +67,14 @@ export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResu
 
   const selected = selectedFromActiveList ?? inactiveSelected;
 
+  const activeHint = categoryHint && !hintDismissed ? categoryHint : null;
+
   // Search results only ever come from the ACTIVE list — an inactive rating
   // can be displayed (above) but never re-selected as a new relationship.
-  const results = useMemo(() => filterAircraftTypeRatings(ratings, query).slice(0, maxResults), [ratings, query, maxResults]);
+  const results = useMemo(() => {
+    const pool = activeHint ? getByProductType(ratings, activeHint.productType) : ratings;
+    return searchRatings(pool, query).slice(0, maxResults);
+  }, [ratings, query, maxResults, activeHint]);
 
   return (
     <View style={styles.wrap}>
@@ -92,6 +115,16 @@ export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResu
 
       {(state === 'success' || state === 'empty') && (
         <>
+          {activeHint ? (
+            <View style={styles.hintRow}>
+              <Text style={styles.hintText}>
+                Showing only {activeHint.productType === 'Helicopter' ? 'helicopters' : activeHint.productType === 'Aeroplane' ? 'airplanes' : activeHint.productType.toLowerCase()} — compatible with {activeHint.licenseCode}
+              </Text>
+              <TouchableOpacity onPress={() => setHintDismissed(true)} accessibilityRole="button">
+                <Text style={styles.hintAction}>Show all</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
           <TextInput
             style={styles.input}
             value={query}
@@ -167,6 +200,25 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#92400E',
+  },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+  },
+  hintText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '500',
+    fontStyle: 'italic',
+    color: colors.textMuted,
+  },
+  hintAction: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.cyan,
   },
   statusRow: {
     flexDirection: 'row',

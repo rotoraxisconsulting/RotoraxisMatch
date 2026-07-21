@@ -35,6 +35,7 @@ import {
 } from '../src/utils/aircraftRatingBackfillPlan';
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
 import { getFamilies, getByProductType, searchRatings } from '../src/constants/aircraftTypeRatingViews';
+import { getCompatibleProductType } from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
 
 let passed = 0;
@@ -740,6 +741,26 @@ async function main() {
   await test('Views — searchRatings is the centralized search entry point (delegates to filterAircraftTypeRatings)', () => {
     assert.deepEqual(searchRatings(FIXTURES, 'CFM56'), filterAircraftTypeRatings(FIXTURES, 'CFM56'));
     assert.equal(searchRatings(FIXTURES, 'CFM56')[0].id, 'fx-a320-cfm56');
+  });
+
+  // ── License category -> productType pre-filter (Fase 3b.4) ───────────
+
+  await test('Category product type — A1/A2/B1.1/B1.2/B3 map to Aeroplane', () => {
+    for (const code of ['A1', 'A2', 'B1.1', 'B1.2', 'B3'] as const) {
+      assert.equal(getCompatibleProductType(code), 'Aeroplane', `expected ${code} -> Aeroplane`);
+    }
+  });
+
+  await test('Category product type — A3/A4/B1.3/B1.4 map to Helicopter', () => {
+    for (const code of ['A3', 'A4', 'B1.3', 'B1.4'] as const) {
+      assert.equal(getCompatibleProductType(code), 'Helicopter', `expected ${code} -> Helicopter`);
+    }
+  });
+
+  await test('Category product type — B2/B2L/C/L cover both, never pre-filtered', () => {
+    for (const code of ['B2', 'B2L', 'C', 'L'] as const) {
+      assert.equal(getCompatibleProductType(code), undefined, `expected ${code} -> no pre-filter`);
+    }
   });
 
   // ── Cache ────────────────────────────────────────────────────────────
