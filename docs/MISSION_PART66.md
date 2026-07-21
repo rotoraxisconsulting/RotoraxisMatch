@@ -304,6 +304,16 @@ afectaría (tiers T1/T2 y el pre-filtro de Fase 3b.4).
    secundaria etiquetada "approximate filter".
 4. Cada nueva fase de trabajo arranca en rama nueva partiendo de main
    actualizado (p. ej. part66-phase3 para Fases 3 y 3b).
+5. DATOS DE DEMO/PRUEBA EN SUPABASE: toda oferta (u otro dato) de prueba se
+   crea SIEMPRE bajo mi empresa, company_id
+   191cf5a7-f952-46f7-acdd-3813e26052cf ("Airbus" en el seed) — nunca bajo
+   otra empresa del seed (p. ej. 4e40304d-e716-4ec6-b7d3-03c6e0e3c2e8,
+   "Rotoraxis Consulting"), para que pueda validar sin cuentas adicionales.
+   Motivo: la oferta demo de vigencia de esta sesión se creó por error bajo
+   la otra empresa y hubo que reasignarla (UPDATE offers.company_id) tras
+   confirmar que ninguna fila dependiente —offer_applications,
+   offer_requests, chat_rooms; offer_required_habilitations no aplica,
+   cuelga de offer_id, no de company_id— la referenciaba todavía.
 
 ### Verificación de interacción amplio/exacto (pre-Fase 3, código auditado)
 Pregunta: si una oferta tiene a la vez requiredLicenses/requiredAircraftTypes
@@ -401,8 +411,10 @@ Rama: part66-phase3, partiendo de main actualizado.
 - Caso real para validar en la app (datos de prueba en rotoaxismatch-dev,
   mismo patrón que CHECKPOINT 2 — limpiar cuando quede validado):
   - Oferta: "DEMO Fase3 — vigencia: B1.1 Airbus A320 CFM56 (mandatory)",
-    id 57e9f995-739f-45e1-8ab1-1947086bd430, empresa "Airbus", published,
-    requiere B1.1 + Airbus A320 family — CFM56 (mandatory).
+    id 57e9f995-739f-45e1-8ab1-1947086bd430, empresa "Airbus"
+    (company_id 191cf5a7-f952-46f7-acdd-3813e26052cf — reasignada aquí
+    tras crearla por error bajo otra empresa del seed, ver regla de abajo),
+    published, requiere B1.1 + Airbus A320 family — CFM56 (mandatory).
   - Técnico: anonymous_code T3FD8E0D5F (id 91c69d2c-0b7d-41a6-b658-c8f929d193b1),
     verified, ya tenía licencia B1.1 vigente (sin expiresAt). Se le añadió
     una habilitación NUEVA (no tocó la existente) para ese rating exacto:
