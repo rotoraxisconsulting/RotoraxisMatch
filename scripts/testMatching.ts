@@ -34,6 +34,7 @@ import {
   ExistingNormalizedHabilitation,
 } from '../src/utils/aircraftRatingBackfillPlan';
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
+import { getFamilies, getByProductType, searchRatings } from '../src/constants/aircraftTypeRatingViews';
 import { isValidDateOrder } from '../src/utils/validityDates';
 
 let passed = 0;
@@ -160,6 +161,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Airbus A320 family — CFM56',
     commercialAliases: ['A318', 'A319', 'A320', 'A321', 'CFM56'],
     aircraftCategory: 'commercial_airplane',
+    productType: 'Aeroplane',
     priority: 100,
   }),
   makeRating({
@@ -172,6 +174,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Airbus A320 family — V2500',
     commercialAliases: ['A320', 'V2500'],
     aircraftCategory: 'commercial_airplane',
+    productType: 'Aeroplane',
     priority: 90,
   }),
   makeRating({
@@ -184,6 +187,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Airbus A320neo family — LEAP-1A',
     commercialAliases: ['A319neo', 'A320neo', 'A321neo', 'LEAP-1A', 'LEAP'],
     aircraftCategory: 'commercial_airplane',
+    productType: 'Aeroplane',
     priority: 95,
   }),
   makeRating({
@@ -196,6 +200,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Boeing 777 — GE90',
     commercialAliases: ['777', 'B777', 'GE90'],
     aircraftCategory: 'commercial_airplane',
+    productType: 'Aeroplane',
     priority: 80,
   }),
   makeRating({
@@ -208,6 +213,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Boeing 787 — GEnx',
     commercialAliases: ['787', 'B787', 'GEnx', 'Dreamliner'],
     aircraftCategory: 'commercial_airplane',
+    productType: 'Aeroplane',
     priority: 85,
   }),
   makeRating({
@@ -220,6 +226,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Leonardo AW139 — PT6',
     commercialAliases: ['AW139', 'PT6'],
     aircraftCategory: 'helicopter',
+    productType: 'Helicopter',
     priority: 70,
   }),
   makeRating({
@@ -232,6 +239,7 @@ const FIXTURES: AircraftTypeRatingCatalog[] = [
     displayName: 'Bell 412 — PT6 (test, inactive)',
     commercialAliases: ['Bell412', '412'],
     aircraftCategory: 'helicopter',
+    productType: 'Helicopter',
     priority: 10,
     isActive: false,
   }),
@@ -681,6 +689,57 @@ async function main() {
     const results = filterAircraftTypeRatings(FIXTURES, 'Dreamliner');
     assert.equal(results.length, 1);
     assert.equal(results[0].aircraftFamily, '787');
+  });
+
+  // ── Views (Fase 3b — getFamilies/getByProductType/searchRatings) ─────
+
+  await test('Views — getFamilies groups same manufacturer+family ratings together, sorted by priority', () => {
+    const groups = getFamilies(FIXTURES);
+    const a320 = groups.find((g) => g.key === 'Airbus::A318/A319/A320/A321');
+    assert.ok(a320, 'expected an A320 family group');
+    assert.equal(a320!.ratings.length, 2);
+    assert.deepEqual(a320!.ratings.map((r) => r.id), ['fx-a320-cfm56', 'fx-a320-v2500'], 'higher-priority CFM56 (100) before V2500 (90)');
+  });
+
+  await test('Views — getFamilies never merges the same family string across different manufacturers', () => {
+    const crossManufacturer: AircraftTypeRatingCatalog[] = [
+      { ...FIXTURES[0], id: 'fx-fake-a', manufacturer: 'MakerA', aircraftFamily: 'Shared100' },
+      { ...FIXTURES[0], id: 'fx-fake-b', manufacturer: 'MakerB', aircraftFamily: 'Shared100' },
+    ];
+    const groups = getFamilies(crossManufacturer);
+    assert.equal(groups.length, 2, 'same family string, different manufacturer -> two distinct groups');
+  });
+
+  await test('Views — getFamilies orders groups by each group\'s best (highest-priority) member', () => {
+    const groups = getFamilies(FIXTURES);
+    const keys = groups.map((g) => g.key);
+    assert.ok(keys.indexOf('Airbus::A318/A319/A320/A321') < keys.indexOf('Leonardo::AW139'), 'priority 100 group before priority 70 group');
+  });
+
+  await test('Views — getByProductType(Aeroplane) returns only airplane ratings, excludes helicopters', () => {
+    const results = getByProductType(FIXTURES, 'Aeroplane');
+    assert.equal(results.length, 5);
+    assert.ok(results.every((r) => r.aircraftCategory !== 'helicopter'));
+  });
+
+  await test('Views — getByProductType(Helicopter) includes inactive ratings (facet, not an active filter)', () => {
+    const results = getByProductType(FIXTURES, 'Helicopter');
+    assert.equal(results.length, 2);
+    assert.ok(results.some((r) => r.id === 'fx-bell412-pt6-inactive'), 'inactive helicopter still matches the facet — isActive filtering is a separate concern');
+  });
+
+  await test('Views — a rating with productType unset matches no facet, never guessed into one', () => {
+    const withUnset: AircraftTypeRatingCatalog[] = [
+      ...FIXTURES,
+      makeRating({ id: 'fx-unset-product-type', manufacturer: 'Unknown', aircraftFamily: 'Unknown', aircraftCategory: 'general_aviation' }),
+    ];
+    assert.ok(!getByProductType(withUnset, 'Aeroplane').some((r) => r.id === 'fx-unset-product-type'));
+    assert.ok(!getByProductType(withUnset, 'Helicopter').some((r) => r.id === 'fx-unset-product-type'));
+  });
+
+  await test('Views — searchRatings is the centralized search entry point (delegates to filterAircraftTypeRatings)', () => {
+    assert.deepEqual(searchRatings(FIXTURES, 'CFM56'), filterAircraftTypeRatings(FIXTURES, 'CFM56'));
+    assert.equal(searchRatings(FIXTURES, 'CFM56')[0].id, 'fx-a320-cfm56');
   });
 
   // ── Cache ────────────────────────────────────────────────────────────
