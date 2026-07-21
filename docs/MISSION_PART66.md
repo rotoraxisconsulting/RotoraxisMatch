@@ -431,3 +431,65 @@ Rama: part66-phase3, partiendo de main actualizado.
     (id 9eb4c8d3-...), offer_required_habilitations, y la oferta
     (57e9f995-...). Verificado: la única fila de technician_habilitations
     que queda para T3FD8E0D5F es la original (8ccdddca-..., sin tocar).
+
+## Fase 3b — progreso
+
+### Paso 1 — módulo de vistas derivadas (COMPLETADO, validado)
+- src/constants/aircraftTypeRatingViews.ts: getFamilies() (agrupa por
+  manufacturer+aircraftFamily, nunca aircraftFamily sola — mismo criterio
+  que areRatingsRelated()), getByProductType() (faceta, no filtro de
+  activos — un rating con productType sin poblar no entra en ninguna
+  faceta), searchRatings() (pass-through a filterAircraftTypeRatings, único
+  punto de entrada de búsqueda para las 4 pantallas). displayName de grupo
+  = string de familia completo, sin acortar (confirmado conmigo, sobre el
+  mockup que mostraba "A320 family" acortado). 7 tests, 63/63 en ese commit.
+
+### Pantalla 1 — formulario de oferta (COMPLETADA, pendiente tu validación)
+- Rama part66-phase3, commit 03c239e.
+- TypeRatingRequirementsEditor (nuevo componente compartido, antes cero
+  código compartido entre new.tsx/edit.tsx — ya habían divergido): bloque
+  PRINCIPAL, arriba. Filas con badge Mandatory/Preferred editable in-place
+  (tap para cambiar, ya no hace falta borrar+re-añadir). Resuelve sus
+  propias labels de rating (incluidas inactivas).
+- ApproximateFilterSection (nuevo componente compartido): "Required
+  licenses" + "Required aircraft types" combinados y degradados juntos
+  (confirmado conmigo — ambos dejan de puntuar igual, no solo aircraft
+  types). Colapsa a resumen de una línea cuando hay requisitos exactos
+  (consistente con el patrón de filtros secundarios colapsados que esta
+  misma fase ya fija para mapa/búsqueda — elegido en vez de un hint
+  persistente). Nunca oculto de verdad: tap para expandir, y el hint
+  explícito "Not used for scoring while exact requirements are set" se ve
+  igual si lo expandes a mano. Si NO hay requisitos exactos, siempre
+  expandido (es el mecanismo de scoring activo en ese caso).
+- catalogRepository.getAircraftTypes() migrado a Supabase real
+  (confirmado conmigo — tabla aircraft_types, 33 filas, RLS pública,
+  mismo shape que el mirror hardcodeado). AircraftTypeRatingPicker migrado
+  a searchRatings()/getByProductType() + nuevo prop categoryHint
+  (pre-filtro con hint "Showing only X — compatible with Y" + "Show all").
+  src/utils/licenseCategoryProductType.ts: getCompatibleProductType(),
+  con el hueco B3 (no estaba en ninguna de las dos listas del plan
+  original) resuelto como Aeroplane — declarado explícitamente, no
+  silencioso.
+- Verificado en vivo (ruta devtest temporal, sin necesitar cuentas — ver
+  patrón ya usado para DateField en Fase 3): B1.3 pre-filtra el picker a
+  SOLO helicópteros contra el catálogo real; fila añadida con badges
+  editables; toggle Mandatory/Preferred en vivo; ApproximateFilterSection
+  colapsa automáticamente en cuanto se añade el primer requisito exacto.
+  Cero errores de consola.
+- grep confirma cero imports de constants/aircraftTypes.ts en
+  new.tsx/edit.tsx. 66/66 tests, tsc limpio.
+- Caso real para tu validación (mismo patrón throwaway, bajo mi empresa
+  191cf5a7 per la regla nueva):
+  - Oferta: "DEMO Fase3b screen1 — offer form redesign", id
+    21ab10b6-8cb8-4595-8e16-6017c554d4c2, draft, empresa Airbus.
+  - Ya tiene: 1 requisito exacto (B1.1 + Airbus A320 family — CFM56,
+    mandatory) + 2 licencias amplias (B1.2, B2).
+  - Al abrir su Edit: deberías ver la fila exacta precargada con sus
+    badges, y "Approximate filter" YA colapsado mostrando "2 selected —
+    not used for scoring while exact requirements are set".
+  - Para probar el flujo desde cero: Offers → New Offer, con cualquier
+    categoría (prueba con una de A3/A4/B1.3/B1.4 para ver el pre-filtro a
+    helicópteros).
+  - Pendiente de limpiar cuando la valides.
+- Pantallas 2-4 (perfil, búsqueda, mapa) NO empezadas — esperando tu OK
+  de esta pantalla primero, según protocolo.
