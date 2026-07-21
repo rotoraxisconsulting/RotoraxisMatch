@@ -427,3 +427,7 @@ Rama: part66-phase3, partiendo de main actualizado.
     Visible desde el lado empresa (Airbus → Offers → esa oferta → técnico
     T3FD8E0D5F en la lista) o desde el lado técnico si tienes las
     credenciales de esa cuenta (Offers → esa oferta → sección Match).
+  - LIMPIADO tras validación (2026-07-21): borrada la habilitación añadida
+    (id 9eb4c8d3-...), offer_required_habilitations, y la oferta
+    (57e9f995-...). Verificado: la única fila de technician_habilitations
+    que queda para T3FD8E0D5F es la original (8ccdddca-..., sin tocar).
