@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TextInput,
-  TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
   useWindowDimensions,
@@ -30,35 +29,14 @@ import { supabase } from '../../src/lib/supabase';
 import { Technician, AvailabilityStatus } from '../../src/types';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
-import { AIRCRAFT_TYPE_CATALOG } from '../../src/constants/aircraftTypes';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
-import { AircraftTypeRatingPicker } from '../../src/components/AircraftTypeRatingPicker';
+import { HabilitationsEditor, HabilitationRow as HabRow, LegacyHabilitationRow as LegacyHabRow } from '../../src/components/technician/HabilitationsEditor';
 import { DateField } from '../../src/components/DateField';
 import { isValidDateOrder } from '../../src/utils/validityDates';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { catalogRepository } from '../../src/repositories/v2/catalogRepository';
 import { catalogRequestRepository } from '../../src/repositories/v2/catalogRequestRepository';
 import { colors, spacing } from '../../src/theme';
-
-interface HabRow {
-  id?: string;
-  licenseCode: string;
-  aircraftTypeRatingId: string;
-  experienceYears?: number;
-  // Optional vigencia (Fase 3). Absent issuedAt/expiresAt and isCurrent
-  // undefined/true are all neutral for matching — only an explicit
-  // isCurrent === false or a past expiresAt degrade a match, never exclude
-  // it. See offerMatchExplain.ts once that's wired up.
-  issuedAt?: string;
-  expiresAt?: string;
-  isCurrent?: boolean;
-}
-
-interface LegacyHabRow {
-  id: string;
-  licenseCode: string;
-  aircraftTypeCode: string;
-}
 
 // Per-license vigencia (technician_licenses has no is_current column — only
 // habilitations do; a license's validity is date-driven only).
@@ -74,10 +52,6 @@ const DATE_FIELD_PALETTE = {
   surface: techUi.surfaceSoft,
   accent: techUi.accent,
 };
-
-function aircraftTypeLabel(code: string): string {
-  return AIRCRAFT_TYPE_CATALOG.find((a) => a.code === code)?.label ?? code;
-}
 
 type AvailabilityContract = Technician['availability']['contractTypes'][number];
 
@@ -208,9 +182,6 @@ export default function TechnicianProfileScreen() {
   const [habilitations, setHabilitations] = useState<HabRow[]>([]);
   const [legacyHabilitations, setLegacyHabilitations] = useState<LegacyHabRow[]>([]);
   const [habDirty, setHabDirty] = useState(false);
-  const [newHabLicense, setNewHabLicense] = useState<string | null>(null);
-  const [newHabRating, setNewHabRating] = useState<string | null>(null);
-  const [newHabExperienceYears, setNewHabExperienceYears] = useState('');
   // Keyed by license code, only for codes currently in form.licenseCategories
   // — kept in sync by toggleLicense() so a removed license never leaves a
   // stale entry behind.
@@ -401,30 +372,12 @@ export default function TechnicianProfileScreen() {
     setIsDirty(true);
   }
 
-  function updateHabilitationField(index: number, patch: Partial<Pick<HabRow, 'issuedAt' | 'expiresAt' | 'isCurrent'>>) {
-    setHabilitations((prev) => prev.map((h, i) => (i === index ? { ...h, ...patch } : h)));
-    setHabDirty(true);
-    setIsDirty(true);
-  }
-
-  function addHabilitation() {
-    if (!newHabLicense || !newHabRating) return;
-    if (habilitations.some((h) => h.licenseCode === newHabLicense && h.aircraftTypeRatingId === newHabRating)) return;
-    const trimmedYears = newHabExperienceYears.trim();
-    const experienceYears = trimmedYears ? Number(trimmedYears) : undefined;
-    setHabilitations((prev) => [
-      ...prev,
-      { licenseCode: newHabLicense, aircraftTypeRatingId: newHabRating, experienceYears },
-    ]);
-    setNewHabLicense(null);
-    setNewHabRating(null);
-    setNewHabExperienceYears('');
-    setHabDirty(true);
-    setIsDirty(true);
-  }
-
-  function removeHabilitation(index: number) {
-    setHabilitations((prev) => prev.filter((_, i) => i !== index));
+  // HabilitationsEditor owns add/remove/vigencia-field mutation internally
+  // (mirrors TypeRatingRequirementsEditor) — this is the single point where
+  // the resulting array flows back up, marking both dirty flags exactly
+  // like the three separate handlers it replaces used to.
+  function onChangeHabilitations(next: HabRow[]) {
+    setHabilitations(next);
     setHabDirty(true);
     setIsDirty(true);
   }
@@ -909,130 +862,16 @@ export default function TechnicianProfileScreen() {
             ) : null}
           </TechnicianCard>
 
-          <SectionTitle
-            title="Habilitations"
-            subtitle="Each rating is linked to the Part-66 category it was issued under — never guessed."
+          <HabilitationsEditor
+            value={habilitations}
+            onChange={onChangeHabilitations}
+            legacyValue={legacyHabilitations}
+            licenseCategories={form.licenseCategories}
+            ratingsById={ratingsById}
+            onRatingResolved={(r) => setRatingsById((prev) => new Map(prev).set(r.id, r))}
+            onRequestCatalog={() => setRequestPanelOpen((v) => !v)}
+            dateFieldPalette={DATE_FIELD_PALETTE}
           />
-          <TechnicianCard style={styles.sectionCard}>
-            {habilitations.length === 0 && legacyHabilitations.length === 0 ? <EmptyValue /> : null}
-
-            {habilitations.map((h, index) => (
-              <View key={h.id ?? `new-${h.licenseCode}-${h.aircraftTypeRatingId}`} style={styles.habItem}>
-                <View style={styles.habTopRow}>
-                  <View style={styles.habInfo}>
-                    <Text style={styles.habLicense}>{h.licenseCode}</Text>
-                    <Text style={styles.habRating}>
-                      {getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingsById)}
-                      {h.experienceYears ? ` · ${h.experienceYears} years` : ''}
-                    </Text>
-                    <View style={styles.chipRow}>
-                      <TechnicianBadge label="Declared" tone="cyan" small />
-                      {ratingsById.get(h.aircraftTypeRatingId)?.isActive === false ? (
-                        <TechnicianBadge label="Inactive catalog entry" tone="warning" small />
-                      ) : null}
-                    </View>
-                  </View>
-                  <TouchableOpacity onPress={() => removeHabilitation(index)} accessibilityRole="button">
-                    <Text style={styles.habRemove}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.habVigenciaRow}>
-                  <View style={styles.habVigenciaField}>
-                    <Text style={styles.fieldLabelXs}>Issued</Text>
-                    <DateField
-                      value={h.issuedAt}
-                      onChange={(v) => updateHabilitationField(index, { issuedAt: v })}
-                      placeholder="Not set"
-                      palette={DATE_FIELD_PALETTE}
-                    />
-                  </View>
-                  <View style={styles.habVigenciaField}>
-                    <Text style={styles.fieldLabelXs}>Expires</Text>
-                    <DateField
-                      value={h.expiresAt}
-                      onChange={(v) => updateHabilitationField(index, { expiresAt: v })}
-                      placeholder="Not set"
-                      palette={DATE_FIELD_PALETTE}
-                    />
-                  </View>
-                </View>
-                <View style={styles.chipRow}>
-                  <TechnicianChip
-                    label="Current"
-                    selected={h.isCurrent !== false}
-                    onPress={() => updateHabilitationField(index, { isCurrent: true })}
-                  />
-                  <TechnicianChip
-                    label="Not current"
-                    selected={h.isCurrent === false}
-                    onPress={() => updateHabilitationField(index, { isCurrent: false })}
-                  />
-                </View>
-              </View>
-            ))}
-
-            {legacyHabilitations.map((h) => (
-              <View key={h.id} style={styles.habRow}>
-                <View style={styles.habInfo}>
-                  <Text style={styles.habLicense}>{h.licenseCode}</Text>
-                  <Text style={styles.habRating}>{aircraftTypeLabel(h.aircraftTypeCode)} — general, engine not specified</Text>
-                  <TechnicianBadge label="Legacy" tone="muted" small />
-                </View>
-              </View>
-            ))}
-
-            <View style={styles.fieldGap} />
-            <FieldLabel>Add habilitation — category</FieldLabel>
-            {form.licenseCategories.length === 0 ? (
-              <Text style={styles.emptyValue}>Add a license above first.</Text>
-            ) : (
-              <View style={styles.chipRow}>
-                {form.licenseCategories.map((code) => (
-                  <TechnicianChip
-                    key={code}
-                    label={code}
-                    selected={newHabLicense === code}
-                    onPress={() => setNewHabLicense(code)}
-                  />
-                ))}
-              </View>
-            )}
-
-            <View style={styles.fieldGap} />
-            <FieldLabel>Add habilitation — aircraft + engine rating</FieldLabel>
-            <AircraftTypeRatingPicker
-              value={newHabRating}
-              onSelect={(r) => {
-                setNewHabRating(r.id);
-                setRatingsById((prev) => new Map(prev).set(r.id, r));
-              }}
-            />
-
-            <View style={styles.fieldGap} />
-            <FieldLabel>Years of experience on this rating (optional)</FieldLabel>
-            <TextInput
-              style={styles.input}
-              value={newHabExperienceYears}
-              onChangeText={setNewHabExperienceYears}
-              placeholder="e.g. 4"
-              placeholderTextColor={techUi.textMuted}
-              keyboardType="numeric"
-            />
-
-            <View style={styles.fieldGap} />
-            <Button
-              label="Add habilitation"
-              variant="secondary"
-              size="sm"
-              disabled={!newHabLicense || !newHabRating}
-              onPress={addHabilitation}
-            />
-
-            <TouchableOpacity onPress={() => setRequestPanelOpen((v) => !v)} style={styles.linkRow}>
-              <Text style={styles.linkText}>Can&apos;t find your habilitation? Request it.</Text>
-            </TouchableOpacity>
-          </TechnicianCard>
 
           {requestPanelOpen && (
             <TechnicianCard style={styles.sectionCard}>
@@ -1352,67 +1191,6 @@ const styles = StyleSheet.create({
   textarea: {
     minHeight: 88,
     paddingTop: spacing.sm,
-  },
-  habRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: techUi.borderSoft,
-  },
-  habItem: {
-    gap: spacing.xs,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: techUi.borderSoft,
-  },
-  habTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  habVigenciaRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  habVigenciaField: {
-    flex: 1,
-    minWidth: 0,
-  },
-  habInfo: {
-    flex: 1,
-    minWidth: 0,
-    gap: 4,
-  },
-  habLicense: {
-    fontSize: 13,
-    lineHeight: 17,
-    fontWeight: '700',
-    color: techUi.text,
-  },
-  habRating: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
-    color: techUi.textSoft,
-  },
-  habRemove: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: techUi.red,
-  },
-  linkRow: {
-    marginTop: spacing.sm,
-  },
-  linkText: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: techUi.accent,
   },
   tagRow: {
     flexDirection: 'row',

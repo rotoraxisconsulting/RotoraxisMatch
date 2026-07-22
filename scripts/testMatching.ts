@@ -36,7 +36,7 @@ import {
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
 import { getFamilies, getByProductType, searchRatings } from '../src/constants/aircraftTypeRatingViews';
 import { getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../src/constants/aircraftTypeRatings';
-import { getCompatibleProductType } from '../src/utils/licenseCategoryProductType';
+import { getCompatibleProductType, isUnusualCombination } from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
 
 let passed = 0;
@@ -855,6 +855,32 @@ async function main() {
     for (const code of ['B2', 'B2L', 'C', 'L'] as const) {
       assert.equal(getCompatibleProductType(code), undefined, `expected ${code} -> no pre-filter`);
     }
+  });
+
+  // ── isUnusualCombination (Fase 3b screen 2) ───────────────────────────
+
+  await test('isUnusualCombination — flags a helicopter rating declared under an aeroplane-only license (B1.1 + H145)', () => {
+    assert.equal(isUnusualCombination('B1.1', 'Helicopter'), true);
+  });
+
+  await test('isUnusualCombination — flags an aeroplane rating declared under a helicopter-only license (B1.3 + A320)', () => {
+    assert.equal(isUnusualCombination('B1.3', 'Aeroplane'), true);
+  });
+
+  await test('isUnusualCombination — never flags a matching combination', () => {
+    assert.equal(isUnusualCombination('B1.1', 'Aeroplane'), false);
+    assert.equal(isUnusualCombination('B1.3', 'Helicopter'), false);
+  });
+
+  await test('isUnusualCombination — never flags B2/B2L/C/L, which cover both product types', () => {
+    for (const code of ['B2', 'B2L', 'C', 'L'] as const) {
+      assert.equal(isUnusualCombination(code, 'Aeroplane'), false);
+      assert.equal(isUnusualCombination(code, 'Helicopter'), false);
+    }
+  });
+
+  await test('isUnusualCombination — never guesses when the rating\'s productType is unpopulated', () => {
+    assert.equal(isUnusualCombination('B1.1', undefined), false);
   });
 
   // ── Cache ────────────────────────────────────────────────────────────

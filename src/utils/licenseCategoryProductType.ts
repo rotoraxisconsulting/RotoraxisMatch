@@ -40,3 +40,26 @@ export function getCompatibleProductType(
       return undefined;
   }
 }
+
+// Fase 3b screen 2 — flags an ALREADY-DECLARED habilitation row whose rating
+// doesn't match its license category's compatible productType, e.g. a
+// helicopter rating declared under B1.1 (aeroplane-only). Same mapping as
+// the picker pre-filter above, on purpose — one rule, two uses (block new
+// mistakes at the picker, surface old ones on existing rows) — never a
+// second, independently-maintained definition of "compatible" that could
+// drift from the first.
+//
+// Never guesses: B2/B2L/C/L (getCompatibleProductType returns undefined)
+// cover both product types by definition, and a rating whose productType
+// hasn't been backfilled (undefined) is never flagged either — same
+// "unpopulated means no facet, not a guessed one" rule getByProductType()
+// already follows. This is advisory only — existing rows are never hidden,
+// blocked from editing, or auto-removed because of it.
+export function isUnusualCombination(
+  licenseCode: LicenseCode,
+  ratingProductType: AircraftTypeRatingCatalog['productType'] | undefined,
+): boolean {
+  const expected = getCompatibleProductType(licenseCode);
+  if (!expected || !ratingProductType) return false;
+  return ratingProductType !== expected;
+}

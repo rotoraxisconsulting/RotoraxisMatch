@@ -719,3 +719,44 @@ Rama: part66-phase3, partiendo de main actualizado.
     helicópteros).
   - Pendiente de limpiar cuando la valides.
 - **Pantalla 1: validada por ti (2026-07-22).**
+
+### Pantalla 2 — perfil de técnico (VALIDADA por ti, 2026-07-22)
+- Rama part66-phase3. `src/components/technician/HabilitationsEditor.tsx`
+  (nuevo componente compartido, contraparte técnico de
+  TypeRatingRequirementsEditor): mismo patrón que pantalla 1 — buscador +
+  filas, chips solo para las categorías de licencia (conjunto cerrado de
+  13), etiquetas siempre `displayName` del catálogo, categoryHint con
+  pre-filtro + "Show all" (reusa `getCompatibleProductType()` de
+  `licenseCategoryProductType.ts`, cero lógica nueva de mapeo — misma
+  función que ya usaba TypeRatingRequirementsEditor, solo conectada aquí
+  por primera vez).
+- Combinación inusual, dos casos deliberadamente distintos: fila NUEVA →
+  categoryHint oculta por defecto las ratings de productType incompatible
+  (nunca bloqueo duro — mismo "ayuda, no jaula" de pantalla 1, "Show all"
+  siempre disponible); fila EXISTENTE → nunca se oculta/edita/borra
+  automáticamente, solo badge discreto `"Unusual combination for
+  <license>"` vía `isUnusualCombination()` (nueva función pura,
+  `licenseCategoryProductType.ts`, misma regla que `getCompatibleProductType()`
+  — una sola definición, nunca dos que puedan divergir). Nunca adivina:
+  B2/B2L/C/L y una rating sin productType poblado nunca se marcan.
+- Vigencia (Fase 3) reubicada sin rediseño: mismos DateFields
+  Issued/Expires + toggle Current/Not current, mismo shape de datos
+  (`HabilitationRow` es byte-a-byte el `HabRow` de antes). `handleSave()`
+  no se tocó — sigue llamando a
+  `technicianRepositoryV2.replaceHabilitations()` sin cambios.
+- 5 tests nuevos para `isUnusualCombination`. 79/79 pasando, tsc limpio.
+  "License update plan" (4/4, `removeUnreferencedLicenses`) re-corridas
+  sin tocar `technicianRepositoryV2.ts`.
+- **Validada por ti en tu cuenta real (técnico T3FD8E0D5F,
+  91c69d2c-0b7d-41a6-b658-c8f929d193b1), 2026-07-22 — 5 comprobaciones
+  confirmadas**: hint en la fila incoherente, B1.3+H145 real limpia sin
+  hint, pre-filtro B1.1/B1.3 con "Show all" funcionando, vigencia
+  persistiendo tras guardar-recargar (probado con el botón Save real, no
+  solo el devtest), estructura alineada con pantalla 1. La fila
+  desechable B1.1+H145 (id regenerado a `d15aa176-...` tras tu propio
+  guardado, ya que `replaceHabilitations()` reemplaza el set completo)
+  fue eliminada tras tu validación; confirmado que tu fila real B1.3+H145
+  (id regenerado a `9577a8e7-...` por el mismo motivo, `issued_at`
+  2026-07-15 — la fecha que pusiste tú probando persistencia) quedó
+  intacta y es la única habilitación de esa cuenta.
+- Pantalla 3 (búsqueda) en curso — ver sección propia más abajo.
