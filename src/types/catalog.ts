@@ -35,17 +35,6 @@ export interface LicenseCategoryCatalog {
   sortOrder: number;
 }
 
-export type AircraftCategory = 'airplane' | 'helicopter';
-
-export interface AircraftTypeCatalog {
-  code: string;
-  label: string;
-  manufacturer?: string;
-  aircraftFamily?: string;
-  aircraftCategory: AircraftCategory;
-  isActive: boolean;
-}
-
 export interface CompanyTypeCatalog {
   code: CompanyTypeCode;
   label: string;

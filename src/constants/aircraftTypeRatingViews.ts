@@ -1,5 +1,5 @@
 import { AircraftTypeRatingCatalog } from '../types/catalog';
-import { filterAircraftTypeRatings, sortAircraftTypeRatings } from './aircraftTypeRatings';
+import { filterAircraftTypeRatings, sortAircraftTypeRatings, getAircraftFamilyKey } from './aircraftTypeRatings';
 
 // Fase 3b — the single source of UI-facing "views" over an already-loaded
 // aircraft_type_ratings snapshot (from aircraftTypeRatingsCache /
@@ -42,7 +42,7 @@ export function getFamilies(ratings: AircraftTypeRatingCatalog[]): AircraftFamil
   const groups = new Map<string, AircraftFamilyGroup>();
 
   for (const rating of ratings) {
-    const key = `${rating.manufacturer}::${rating.aircraftFamily}`;
+    const key = getAircraftFamilyKey(rating);
     const existing = groups.get(key);
     if (existing) {
       existing.ratings.push(rating);

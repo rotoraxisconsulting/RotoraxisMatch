@@ -9,7 +9,7 @@ import {
   mapAircraftTypeRatingRow,
 } from '../../constants/aircraftTypeRatings';
 import { createAircraftTypeRatingsCache } from './aircraftTypeRatingsCache';
-import { ContractTypeCode, TechnicianTypeCode, CompanyTypeCode, AircraftTypeRatingCatalog, AircraftTypeCatalog } from '../../types/catalog';
+import { ContractTypeCode, TechnicianTypeCode, CompanyTypeCode, AircraftTypeRatingCatalog } from '../../types/catalog';
 import { throwIfError } from './supabaseMappers';
 
 // public.aircraft_type_ratings is the ONLY source of truth for this catalog
@@ -78,52 +78,19 @@ const aircraftTypeRatingsCache = createAircraftTypeRatingsCache({
   fetchByIds: fetchAircraftTypeRatingsByIds,
 });
 
-// public.aircraft_types — the legacy, coarser (model-only, no engine)
-// catalog behind offer_required_aircraft_types / technician_habilitations'
-// legacy aircraft_type_code column. Fase 3b migrates this off the
-// src/constants/aircraftTypes.ts hardcoded mirror (same 33 rows, confirmed
-// against the live table) onto a real query — that file stays only for its
-// AircraftTypeCode/inferAircraftCategory helpers until Fase 5 removes it
-// entirely, per the mission doc. Simple fetch-once memoization (no TTL) is
-// enough here: this table rarely changes and the whole legacy system is on
-// its way out, unlike aircraft_type_ratings which needed the full cache.
-let aircraftTypesPromise: Promise<AircraftTypeCatalog[]> | null = null;
-
-async function fetchAircraftTypes(): Promise<AircraftTypeCatalog[]> {
-  const { data, error } = await supabase
-    .from('aircraft_types')
-    .select('code, label, manufacturer, aircraft_family, aircraft_category, is_active')
-    .order('manufacturer', { ascending: true })
-    .order('aircraft_family', { ascending: true });
-  throwIfError(error);
-  return (data ?? []).map((row: any) => ({
-    code: row.code as string,
-    label: row.label as string,
-    manufacturer: row.manufacturer ?? undefined,
-    aircraftFamily: row.aircraft_family ?? undefined,
-    aircraftCategory: row.aircraft_category as AircraftTypeCatalog['aircraftCategory'],
-    isActive: row.is_active as boolean,
-  }));
-}
+// public.aircraft_types (the legacy, coarser 33-row catalog) had a
+// getAircraftTypes()/getAircraftType() pair here that queried it directly.
+// Removed 2026-07-22 (migration 022): reading that table was never the
+// fix — it's still a copy disconnected from the real 606-row
+// aircraft_type_ratings catalog, just a database-backed one instead of a
+// hardcoded one. The "Required aircraft types" broad filter now derives
+// its options from getFamilies() over aircraft_type_ratings (see
+// ApproximateFilterSection.tsx), and aircraft_types itself is on the
+// Fase 5 deletion list alongside its TS mirror, src/constants/aircraftTypes.ts
+// (see docs/MISSION_PART66.md). Nothing in src/ queries aircraft_types
+// anymore.
 
 export const catalogRepository = {
-  /** Live from Supabase (public.aircraft_types) — never a hardcoded list. */
-  async getAircraftTypes(options: { forceRefresh?: boolean } = {}): Promise<AircraftTypeCatalog[]> {
-    if (options.forceRefresh) aircraftTypesPromise = null;
-    if (!aircraftTypesPromise) aircraftTypesPromise = fetchAircraftTypes();
-    try {
-      return await aircraftTypesPromise;
-    } catch (err) {
-      aircraftTypesPromise = null; // don't cache a failure — next call retries
-      throw err;
-    }
-  },
-
-  async getAircraftType(code: string): Promise<AircraftTypeCatalog | null> {
-    const types = await this.getAircraftTypes();
-    return types.find((a) => a.code === code) ?? null;
-  },
-
   async getLicenseCategories() {
     return [...LICENSE_CATEGORIES];
   },

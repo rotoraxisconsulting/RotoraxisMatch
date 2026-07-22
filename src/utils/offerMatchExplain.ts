@@ -32,7 +32,7 @@ import { OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer
 import { TechnicianHabilitation, TechnicianLicense, TechnicianWithRelations } from '../types/technician';
 import { MatchScore, MatchLabel, MatchLevel, VigenciaNotice } from '../types/matching';
 import { resolveLocationSnapshot } from '../constants/locationCities';
-import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, ratingMatchesLegacyCode } from '../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
 
 // Qualification (habilitation + license) dominates the score whenever the
@@ -215,12 +215,19 @@ function evaluateHabilitationRequirement(
     };
   }
 
-  // T3 — related_legacy: same license, legacy aircraft_type_code that is
-  // one of the required rating's known aliases, but no specific engine on
-  // record — a weaker, approximate signal than T2.
-  const legacyRow = sameLicenseRows.find(
-    (h) => h.aircraftTypeCode && rating && ratingMatchesLegacyCode(rating, h.aircraftTypeCode),
-  );
+  // T3 — related_legacy: same license, legacy aircraft_type_code that
+  // resolves (inclusively — see resolveLegacyCodeToFamilyKeys) to the SAME
+  // FAMILY as the required rating, but no specific engine on record — a
+  // weaker, approximate signal than T2. Family-based since migration 022
+  // (2026-07-22): a code no longer has to be a literal alias of THIS EXACT
+  // rating row (same engine too) — that was stricter than the "weaker than
+  // T2, family-level" signal this tier was always meant to be.
+  const requiredFamilyKey = rating ? getAircraftFamilyKey(rating) : undefined;
+  const legacyRow = requiredFamilyKey
+    ? sameLicenseRows.find(
+        (h) => h.aircraftTypeCode && resolveLegacyCodeToFamilyKeys(h.aircraftTypeCode, ratingIndex).has(requiredFamilyKey),
+      )
+    : undefined;
   if (legacyRow) {
     const vigencia = evaluateVigencia(legacyRow, license, req.licenseCode, `general habilitation in ${legacyRow.aircraftTypeCode}`, today);
     return {
@@ -245,6 +252,13 @@ interface BroadOutcome {
 // independently against the TECHNICIAN's data. When an offer requires both a
 // license and an aircraft type, only a single technician_habilitations row
 // that satisfies both at once counts as a match.
+//
+// offer.requiredAircraftTypes holds FAMILY KEYS since migration 022
+// (2026-07-22) — "<manufacturer>::<aircraftFamily>" from the 606-row
+// aircraft_type_ratings catalog (see getAircraftFamilyKey), never a legacy
+// aircraft_types(code) value anymore. The ApproximateFilterSection picker
+// sources its options from getFamilies() over that same catalog, so the
+// values it writes always match this shape.
 function evaluateLegacyBroadMatch(
   offer: OfferWithRequirements,
   technician: TechnicianWithRelations,
@@ -253,17 +267,24 @@ function evaluateLegacyBroadMatch(
   const needsLicense = offer.requiredLicenses.length > 0;
   const needsAircraft = offer.requiredAircraftTypes.length > 0;
 
-  function habilitationCoversAircraftCode(h: TechnicianHabilitation, code: string): boolean {
-    if (h.aircraftTypeCode === code) return true;
-    if (!h.aircraftTypeRatingId) return false;
-    const rating = ratingIndex.get(h.aircraftTypeRatingId);
-    return Boolean(rating) && ratingMatchesLegacyCode(rating!, code);
+  // A habilitation covers a required family key either via its resolved
+  // rating (exact family match) or, for rows that only ever recorded a
+  // bare legacy code, via inclusive code->family resolution (see
+  // resolveLegacyCodeToFamilyKeys — a code that aliases several families
+  // counts for all of them, never a guessed single one).
+  function habilitationCoversFamilyKey(h: TechnicianHabilitation, familyKey: string): boolean {
+    if (h.aircraftTypeRatingId) {
+      const rating = ratingIndex.get(h.aircraftTypeRatingId);
+      if (rating && getAircraftFamilyKey(rating) === familyKey) return true;
+    }
+    if (h.aircraftTypeCode && resolveLegacyCodeToFamilyKeys(h.aircraftTypeCode, ratingIndex).has(familyKey)) return true;
+    return false;
   }
 
   if (needsLicense && needsAircraft) {
     const row = technician.habilitations.find((h) => {
       if (!offer.requiredLicenses.includes(h.licenseCode)) return false;
-      return offer.requiredAircraftTypes.some((code) => habilitationCoversAircraftCode(h, code));
+      return offer.requiredAircraftTypes.some((key) => habilitationCoversFamilyKey(h, key));
     });
     return row
       ? { tier: 'legacy', matchText: `${row.licenseCode} + required aircraft in the same habilitation` }
@@ -278,10 +299,18 @@ function evaluateLegacyBroadMatch(
   }
 
   if (needsAircraft) {
-    const covers =
-      technician.habilitations.some((h) => offer.requiredAircraftTypes.some((code) => habilitationCoversAircraftCode(h, code))) ||
-      technician.aircraftExperience.some((e) => offer.requiredAircraftTypes.includes(e.aircraftTypeCode));
-    return covers ? { tier: 'legacy', matchText: 'Required aircraft present in profile or experience' } : { tier: 'not_met' };
+    // technician.aircraftExperience (TechnicianAircraftExperience) only
+    // ever carries a bare legacy aircraft_type_code with no rating link at
+    // all — unlike a habilitation row, there is nothing here to resolve a
+    // family from without guessing, so it can no longer contribute
+    // evidence for a family-keyed requirement (migration 022, 2026-07-22;
+    // documented in docs/MISSION_PART66.md). Only technician_habilitations
+    // rows (which carry either a rating id or a legacy code this file can
+    // inclusively resolve) satisfy this branch now.
+    const covers = technician.habilitations.some((h) =>
+      offer.requiredAircraftTypes.some((key) => habilitationCoversFamilyKey(h, key)),
+    );
+    return covers ? { tier: 'legacy', matchText: 'Required aircraft present in profile' } : { tier: 'not_met' };
   }
 
   return { tier: 'not_met' };

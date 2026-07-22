@@ -35,6 +35,7 @@ import {
 } from '../src/utils/aircraftRatingBackfillPlan';
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
 import { getFamilies, getByProductType, searchRatings } from '../src/constants/aircraftTypeRatingViews';
+import { getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../src/constants/aircraftTypeRatings';
 import { getCompatibleProductType } from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
 
@@ -307,8 +308,14 @@ async function main() {
     }
   });
 
+  // requiredAircraftTypes holds family keys since migration 022 (2026-07-22)
+  // — "<manufacturer>::<aircraftFamily>" from aircraft_type_ratings, never a
+  // bare legacy code. 'A320' resolves (inclusively) to this one family in
+  // the fixture catalog.
+  const A320_FAMILY_KEY = 'Airbus::A318/A319/A320/A321';
+
   await test('Matching — Case 5: legacy broad requirement does not combine independent license/aircraft rows', () => {
-    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: ['A320'] });
+    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       // A320 habilitation exists, but only under B2 — never under B1.1.
@@ -318,6 +325,48 @@ async function main() {
     assert.notEqual(result.level, 'legacy', 'must not report a full legacy match from two unrelated rows');
     assert.equal(result.breakdown.habilitation, 0);
     assert.equal(result.breakdown.license, 0);
+  });
+
+  await test('Matching — Case 5b: broad aircraft requirement matches a technician holding a different engine variant in the same family', () => {
+    // Migration 022's whole point: ONE family-key selection covers every
+    // engine variant in that family, not just the specific alias string a
+    // company happened to type.
+    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'legacy', 'a V2500-variant A320-family rating must satisfy an A320-family broad requirement');
+  });
+
+  await test('Matching — Case 5c: broad aircraft requirement resolves a technician\'s bare legacy code inclusively', () => {
+    // 'A318' is only ever an alias of fx-a320-cfm56 in the fixture catalog,
+    // never of fx-a320-v2500 — resolveLegacyCodeToFamilyKeys must still land
+    // on the shared family, not require a literal alias match against one
+    // specific rating.
+    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.level, 'legacy');
+  });
+
+  await test('Matching — Case 5d: aircraftExperience alone can no longer satisfy a broad aircraft requirement', () => {
+    // TechnicianAircraftExperience has no rating link at all — since
+    // requiredAircraftTypes moved to family keys (migration 022) there is
+    // nothing to resolve it against without guessing, so it stops
+    // contributing to this tier (documented limitation, see
+    // docs/MISSION_PART66.md).
+    const offer = makeOffer({ requiredAircraftTypes: [A320_FAMILY_KEY] });
+    const technician = makeTechnician({
+      habilitations: [],
+      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.notEqual(result.level, 'legacy', 'aircraftExperience has no rating link — it cannot resolve to a family');
   });
 
   await test('Matching — Case 6: preferred requirement mismatch stays related, never excluded', () => {
@@ -419,6 +468,19 @@ async function main() {
       `T3 (${resultT3.breakdown.habilitation}) must score below T2 (${resultT2.breakdown.habilitation})`,
     );
     assert.ok(resultT3.clarifications.some((c) => c.includes('Approximate match without engine data')));
+  });
+
+  await test('T3 is family-based since migration 022: a legacy code alias of a DIFFERENT rating in the same family still counts', () => {
+    // 'A318' is only ever an alias of fx-a320-cfm56 in the fixture catalog.
+    // The offer requires fx-a320-v2500 (same family, different engine) —
+    // under the old "literal alias of THIS exact rating" rule this would
+    // have fallen through to T4/not_met; family-based resolution correctly
+    // places it at T3 (weaker than T2, no engine on record).
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-v2500', 'preferred')] });
+    const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318' })] });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.ok(result.breakdown.habilitation > 0, 'expected T3 credit, not T4/no-match');
+    assert.ok(result.clarifications.some((c) => c.includes('Approximate match without engine data')));
   });
 
   await test('Fase 2 — T4 (no match at all) awards zero habilitation', () => {
@@ -741,6 +803,38 @@ async function main() {
   await test('Views — searchRatings is the centralized search entry point (delegates to filterAircraftTypeRatings)', () => {
     assert.deepEqual(searchRatings(FIXTURES, 'CFM56'), filterAircraftTypeRatings(FIXTURES, 'CFM56'));
     assert.equal(searchRatings(FIXTURES, 'CFM56')[0].id, 'fx-a320-cfm56');
+  });
+
+  // ── getAircraftFamilyKey / resolveLegacyCodeToFamilyKeys (migration 022) ──
+
+  await test('getAircraftFamilyKey matches the key getFamilies() groups by — never allowed to drift apart', () => {
+    const groups = getFamilies(FIXTURES);
+    const a320Group = groups.find((g) => g.aircraftFamily === 'A318/A319/A320/A321')!;
+    assert.equal(getAircraftFamilyKey(FIXTURES.find((r) => r.id === 'fx-a320-cfm56')!), a320Group.key);
+  });
+
+  await test('resolveLegacyCodeToFamilyKeys is inclusive: a code aliasing two distinct families returns both, never a guessed single winner', () => {
+    const ambiguous: AircraftTypeRatingCatalog[] = [
+      makeRating({ id: 'fx-ambig-1', manufacturer: 'MakerA', aircraftFamily: 'FamilyOne', commercialAliases: ['SHARED'] }),
+      makeRating({ id: 'fx-ambig-2', manufacturer: 'MakerB', aircraftFamily: 'FamilyTwo', commercialAliases: ['SHARED'] }),
+    ];
+    const keys = resolveLegacyCodeToFamilyKeys('SHARED', buildAircraftRatingIndex(ambiguous));
+    assert.equal(keys.size, 2, 'expected both families, not a single guessed one');
+    assert.ok(keys.has('MakerA::FamilyOne'));
+    assert.ok(keys.has('MakerB::FamilyTwo'));
+  });
+
+  await test('resolveLegacyCodeToFamilyKeys collapses two ratings in the same family (different engine) into one key', () => {
+    // Mirrors the real H135 case (PW206 + Arrius 2B engines, same family) —
+    // see migration 022's backfill report.
+    const keys = resolveLegacyCodeToFamilyKeys('A320', RATING_INDEX);
+    assert.equal(keys.size, 1, 'fx-a320-cfm56 and fx-a320-v2500 are the same family — one key, not two');
+    assert.ok(keys.has('Airbus::A318/A319/A320/A321'));
+  });
+
+  await test('resolveLegacyCodeToFamilyKeys returns an empty set for a code with no catalog match', () => {
+    const keys = resolveLegacyCodeToFamilyKeys('NOT-A-REAL-CODE', RATING_INDEX);
+    assert.equal(keys.size, 0);
   });
 
   // ── License category -> productType pre-filter (Fase 3b.4) ───────────

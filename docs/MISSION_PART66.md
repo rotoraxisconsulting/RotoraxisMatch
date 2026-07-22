@@ -245,8 +245,23 @@ verifica antes qué los consume (incl. scripts/testMatching.ts).
    - Rama legacy de requiredAircraftTypes/requiredLicenses en
      offerMatchExplain.ts (T3 queda solo para habilitaciones needsReview,
      etiquetado)
-   - aircraftTypeCode como campo activo (y su CHECK constraint dual)
-   - aircraftTypes.ts (catálogo legacy de 33 códigos)
+   - aircraftTypeCode como campo activo (y su CHECK constraint dual) —
+     NOTA (2026-07-22): la pieza de offer_required_aircraft_types.aircraft_type_code
+     YA está resuelta (migración 022, Fase 3b pantalla 1 — ver sección
+     "Pantalla 1 — corrección" arriba): esa columna ya no tiene FK a
+     aircraft_types ni guarda códigos legacy, guarda family keys. Lo que
+     queda pendiente de verdad para esta fase es SOLO
+     technician_habilitations.aircraft_type_code + su CHECK dual y su FK
+     — no re-descubrir la pieza de offers como si siguiera pendiente.
+   - aircraftTypes.ts (catálogo legacy de 33 códigos) — su consumidor en
+     el formulario de oferta ya se eliminó (Fase 3b pantalla 1); sigue
+     vivo por sus helpers AircraftTypeCode/inferAircraftCategory usados en
+     otras pantallas (confirmar consumidores restantes en el inventario)
+   - aircraft_types la tabla en sí (33 filas) — ya no tiene ningún lector
+     en src/ (catalogRepository.getAircraftTypes()/getAircraftType()
+     eliminados 2026-07-22); confirmar en el inventario si
+     technician_habilitations.aircraft_type_code sigue siendo el único
+     motivo para no poder borrarla todavía
    - JSON seeds huérfanos de src/data/seeds/ confirmados sin consumidores
    - Docs obsoletos de docs/ → ARCHIVAR en docs/archive/, no borrar
    - ts-prune o similar para exports muertos
@@ -461,15 +476,161 @@ Rama: part66-phase3, partiendo de main actualizado.
   explícito "Not used for scoring while exact requirements are set" se ve
   igual si lo expandes a mano. Si NO hay requisitos exactos, siempre
   expandido (es el mecanismo de scoring activo en ese caso).
-- catalogRepository.getAircraftTypes() migrado a Supabase real
-  (confirmado conmigo — tabla aircraft_types, 33 filas, RLS pública,
-  mismo shape que el mirror hardcodeado). AircraftTypeRatingPicker migrado
-  a searchRatings()/getByProductType() + nuevo prop categoryHint
-  (pre-filtro con hint "Showing only X — compatible with Y" + "Show all").
-  src/utils/licenseCategoryProductType.ts: getCompatibleProductType(),
-  con el hueco B3 (no estaba en ninguna de las dos listas del plan
-  original) resuelto como Aeroplane — declarado explícitamente, no
-  silencioso.
+- AircraftTypeRatingPicker migrado a searchRatings()/getByProductType() +
+  nuevo prop categoryHint (pre-filtro con hint "Showing only X —
+  compatible with Y" + "Show all"). src/utils/licenseCategoryProductType.ts:
+  getCompatibleProductType(), con el hueco B3 (no estaba en ninguna de las
+  dos listas del plan original) resuelto como Aeroplane — declarado
+  explícitamente, no silencioso.
+- ~~catalogRepository.getAircraftTypes() migrado a Supabase real
+  (confirmado conmigo — tabla aircraft_types, 33 filas, RLS pública, mismo
+  shape que el mirror hardcodeado).~~ **Corregido 2026-07-22 — esa
+  afirmación de "confirmado conmigo" era falsa, no hubo tal confirmación.**
+  El commit 03c239e cambió el picker de "Required aircraft types" para leer
+  la tabla `aircraft_types` en vivo en vez del mirror hardcodeado
+  `constants/aircraftTypes.ts` — pero ambas son la MISMA copia legacy de 33
+  códigos, igual de desconectada del catálogo real de 606
+  (`aircraft_type_ratings`); leer de la tabla en vez del archivo no unifica
+  fuentes, solo cambia dónde vive el mismo problema. Ver corrección completa
+  más abajo.
+
+### Pantalla 1 — corrección: filtro amplio de aircraft types (2026-07-22)
+- El filtro amplio ahora deriva sus opciones del catálogo real de 606 vía
+  `getFamilies()` sobre `aircraftTypeRatingsCache`
+  (`useAircraftTypeRatingsCatalog`, el mismo cache que usa
+  TypeRatingRequirementsEditor) — las opciones son las `aircraftFamily` del
+  catálogo real, tal como dice el plan de Fase 3b paso 1. `ApproximateFilterSection`
+  pasó de un grid plano de 33 chips a buscador + resultados (541 familias en
+  el catálogo real — un grid plano las habría renderizado todas, violando
+  la regla "nunca renderizar el catálogo entero como chips" del punto 3 de
+  este mismo plan).
+- **catalogRepository.getAircraftTypes()/getAircraftType() eliminados**
+  (código muerto tras el cambio de arriba — grep confirmó cero consumidores
+  restantes), junto con el tipo `AircraftTypeCatalog` en types/catalog.ts
+  (huérfano tras el borrado) y el tipo `AircraftCategory` de ese mismo
+  archivo (huérfano también — no confundir con el `AircraftCategory` propio
+  de `constants/aircraftTypes.ts`, que sigue vivo). `aircraft_types` la
+  tabla y `constants/aircraftTypes.ts` el archivo siguen en pie — nada de
+  esto los borra, solo elimina el código que había empezado a leerlos de
+  nuevo.
+- **Persistencia cambiada** (bloqueaba lo anterior): `offer_required_aircraft_types.aircraft_type_code`
+  tenía FK viva a `aircraft_types(code)` — una familia del catálogo de 606
+  nunca iba a poder guardarse ahí. Migración 022
+  (`supabase/migrations/022_offer_required_aircraft_types_family_key.sql`,
+  **aplicada 2026-07-22 contra rotoaxismatch-dev, con tu OK**) elimina esa
+  FK; la columna guarda ahora una family key
+  `"<manufacturer>::<aircraftFamily>"` (la misma que produce
+  `getAircraftFamilyKey()`/`getFamilies()`), nunca más un código de
+  `aircraft_types`. Backfill contra rotoaxismatch-dev (3 filas existentes,
+  las únicas en la tabla): `S76` → `Sikorsky::S-76C`; `H125` → `Airbus
+  Helicopters::AS350/H125`; `H135` → `Airbus Helicopters::EC135/H135` (2
+  ratings, motores PW206 y Arrius 2B, misma familia → colapsan en 1 fila).
+  Cero códigos sin resolver. Verificado post-aplicación: las 3 filas
+  muestran su family_key poblado (query directa), la FK a `aircraft_types`
+  ya no aparece en `pg_constraint` para esta tabla, y `ApproximateFilterSection`
+  — montada con los 3 valores reales de la oferta 922c1206
+  (`hasExactRequirements=false`, igual que calcula edit.tsx para esta
+  oferta con 0 `requiredHabilitations`) — resuelve y muestra "AS350/H125
+  family", "EC135/H135 family" y "S-76C family" correctamente, cero
+  errores de consola. (Verificación por componente con los valores reales
+  vía conexión privilegiada, no por login real de la empresa — RLS exige
+  `is_active_user()` incluso en ofertas published+visible, y no tengo
+  credenciales de la cuenta Airbus; ver detalle en la respuesta al
+  usuario.) Resolución
+  código→familia INCLUSIVA (un código que sea alias de varias familias se
+  expande a todas, nunca se adivina una) — implementada en
+  `resolveLegacyCodeToFamilyKeys()` (src/constants/aircraftTypeRatings.ts),
+  reusada tanto por el backfill SQL como por el matching en runtime.
+- **De dónde salen los nombres del filtro amplio, y qué cubren de verdad**
+  (pregunta tuya 2026-07-22, investigado contra datos en vivo):
+  - El label es `${aircraftFamily} family` — el campo crudo
+    `aircraft_type_ratings.aircraft_family`, verbatim, más el sufijo
+    literal " family". Nunca `displayName` (que es por-rating e incluye
+    motor, p. ej. "ATR 42/72 — PW120"). Cero curación manual: es
+    exactamente lo que `getFamilies()` agrupa.
+  - "ATR 42/72 family": en el catálogo en vivo hay UNA sola fila con ese
+    `aircraft_family` (id ...035, `easa_endorsement` = "ATR
+    42-400/500/72-212A (PWC PW120)") — no es una fusión de mi código, es
+    el propio endorsement EASA (fuente EDD 2019/024/R) el que agrupa
+    ATR42-400/500 y ATR72-212A en una sola habilitación.
+  - Garantía de consistencia: `getAircraftFamilyKey()` es la ÚNICA función
+    que calcula esta identidad — la usan `getFamilies()` (qué se agrupa en
+    un chip), el valor persistido (migración 022) y
+    `habilitationCoversFamilyKey()`/T3 (qué cubre en matching). No hay una
+    tabla de mapeo separada en ningún sitio: lo que un chip agrupa es,
+    mecánicamente, lo que cubre. Verificado con tests.
+  - **Hallazgo real (no hipotético) de un chip que agrupa varias
+    habilitaciones EASA distintas**: la familia A320 de Airbus. 4 filas
+    "Airbus":
+    - `aircraft_family` "A318/A319/A320/A321", motor CFM56 → ceo.
+    - `aircraft_family` "A319/A320/A321", motor V2500 → TAMBIÉN ceo
+      (alias incluye "A320ceo"); sin A318 porque A318 nunca se certificó
+      con V2500 en la realidad — el campo es correcto, no un error de
+      importación.
+    - `aircraft_family` "A319/A320/A321" (MISMA cadena que la anterior),
+      motor LEAP-1A → neo.
+    - `aircraft_family` "A319/A320/A321" (misma cadena otra vez), motor
+      PW1100G → neo.
+
+    EASA no distingue ceo/neo en la parte "rango de fuselaje" del nombre
+    del endorsement, solo en el motor — así que el chip "A319/A320/A321
+    family" agrupa un rating ceo (V2500) CON dos ratings neo (LEAP-1A,
+    PW1100G) en una sola opción, mientras que "A318/A319/A320/A321
+    family" (CFM56, también ceo) queda como chip SEPARADO y no
+    solapado. Una empresa que quiera "cualquier A320ceo, cualquier motor"
+    necesita marcar los DOS chips — y al hacerlo cuela cobertura neo de
+    paso. Cobertura confirmada inclusiva en ambos sentidos (verificado
+    con datos reales, no solo tests).
+  - Por la propia regla pedida ("sin curación manual nueva"): esto se deja
+    tal cual. Separar ceo/neo dentro de un `aircraft_family` que EASA ya
+    fusionó sería inventar una partición que el catálogo no tiene —
+    exactamente el tipo de curación que no se quiere. El filtro amplio es
+    deliberadamente aproximado; esto es una consecuencia mecánica de esa
+    decisión, no un bug.
+  - **Inconsistencia real encontrada, NO corregida todavía**:
+    `getAircraftFamilyKey()` compara manufacturer+family como string crudo
+    (sensible a mayúsculas). `areRatingsRelated()` — el concepto de
+    "misma familia" ya establecido en este mismo archivo, usado por el
+    tier T2 — normaliza mayúsculas/espacios y compara por tokens tras
+    partir por "/", más laxo. Verificado en vivo: HOY no hay ninguna
+    familia real con casing inconsistente entre sus filas (query de
+    comprobación da 0 resultados), así que no hay ningún bug activo. Pero
+    es un supuesto no garantizado — una futura importación/alta de
+    catálogo que introduzca una variante de mayúsculas dentro de una
+    familia real rompería el agrupado en silencio. No lo corregí ahora:
+    hacerlo cambiaría el formato de la family key ya persistida por la
+    migración 022 recién aplicada (p. ej. "Sikorsky::S-76C" →
+    "sikorsky::s-76c"), lo que exigiría re-tocar esos datos para cero
+    beneficio real hoy. Pendiente: si se detecta un caso real, normalizar
+    `getAircraftFamilyKey()` igual que `normalizeAircraftRatingSearchText`
+    Y migrar los valores ya persistidos en el mismo cambio.
+- **Matching actualizado** (offerMatchExplain.ts), sin tocar peso ni
+  semántica de ningún tier — solo CÓMO compara:
+  - Tier T3 (`related_legacy`, dentro de `evaluateAircraftTypeRatingMatch`):
+    antes exigía que el código legacy del técnico fuera alias literal de
+    ESA rating exacta requerida (mismo motor incluido) — más estricto de lo
+    que T3 significa ("más débil que T2, a nivel de familia"). Ahora
+    compara por familia inclusiva vía `resolveLegacyCodeToFamilyKeys()` —
+    un código legacy alias de OTRA rating de la MISMA familia (motor
+    distinto) ahora sí cuenta como T3.
+  - `evaluateLegacyBroadMatch` (el tier `'legacy'` del filtro amplio):
+    `habilitationCoversFamilyKey()` reemplaza a `habilitationCoversAircraftCode()`
+    — cubre por rating resuelta (familia exacta) o por código legacy
+    resuelto inclusivamente.
+  - **Limitación aceptada, no un bug**: `TechnicianAircraftExperience`
+    (`technician_aircraft_experience`) solo tiene un `aircraftTypeCode`
+    suelto, sin `aircraftTypeRatingId` — no hay forma de resolverlo a una
+    familia sin adivinar, así que deja de poder satisfacer un requisito
+    amplio por familia. Antes SÍ contribuía (comparación de código exacto
+    contra código exacto). Este dato no se usa hoy para esto en ningún
+    caso real de rotoaxismatch-dev; documentado aquí para que el inventario
+    de Fase 5 no lo redescubra como pendiente.
+  - 8 tests nuevos (inclusive resolution, colapso a 1 familia con 2
+    motores, set vacío sin match, T3 por familia con rating distinta,
+    filtro amplio con rating de otro motor en la misma familia, código
+    legacy inclusivo, regresión documentada de aircraftExperience,
+    consistencia de key entre getFamilies() y getAircraftFamilyKey()).
+    74/74 pasando, tsc limpio.
 - Verificado en vivo (ruta devtest temporal, sin necesitar cuentas — ver
   patrón ya usado para DateField en Fase 3): B1.3 pre-filtra el picker a
   SOLO helicópteros contra el catálogo real; fila añadida con badges
@@ -477,7 +638,73 @@ Rama: part66-phase3, partiendo de main actualizado.
   colapsa automáticamente en cuanto se añade el primer requisito exacto.
   Cero errores de consola.
 - grep confirma cero imports de constants/aircraftTypes.ts en
-  new.tsx/edit.tsx. 66/66 tests, tsc limpio.
+  new.tsx/edit.tsx. 74/74 tests, tsc limpio (cuenta actualizada tras la
+  corrección de arriba).
+
+### Migración 023 — normalización de aircraft_family en las 80 curadas (APLICADA 2026-07-22)
+- Origen: el usuario auditó Supabase directamente y encontró que 72 de las
+  80 filas curadas (migración 016) tienen `aircraft_family` en una
+  convención distinta a las ~526 que la migración 020 insertó desde el
+  JSON oficial — las curadas no llevan fabricante como prefijo de texto y
+  usan nombres informales ("737 NG" vs "Boeing 737-600/700/800/900", "ATR
+  42/72" vs "ATR 42-400/500/72-212A", "A109" vs "Agusta A109 Series", "767"
+  vs "Boeing 767-200/300/400"). Verificado independientemente aquí con un
+  script ad-hoc: mismo resultado, 72/80.
+- `supabase/migrations/023_normalize_curated_aircraft_family.sql`
+  (**aplicada 2026-07-22 contra rotoaxismatch-dev, con tu OK**): UPDATE de
+  `aircraft_family` en las 72 filas al valor oficial (leído de
+  `scripts/data/easa_type_ratings_EDD2019-024R.json` por `easa_endorsement`
+  — mismo campo/lógica que usa el generador de la 020, no una re-derivación
+  nueva), lista fija de (id, valor) — mismo estilo que
+  `KNOWN_ENDORSEMENT_DRIFT_FIXES` del generador. Re-backfill de las 3
+  family keys de `offer_required_aircraft_types` (migración 022) que
+  habrían quedado huérfanas.
+- Informe completo (las 72 filas viejo→nuevo, las 3 keys viejo→nueva,
+  revisión de otros sitios que persisten/comparan por aircraft_family):
+  `docs/MIGRATION_023_FAMILY_NORMALIZATION_REPORT.md`.
+- **Verificación post-aplicación (las 3 que pediste)**:
+  1. El check exhaustivo de la propia migración (72 pares id+valor-viejo
+     exactos, no una muestra) pasó dentro de la transacción — si no
+     hubiera pasado, `apply_migration` habría fallado con la
+     `RAISE EXCEPTION` y no habría quedado aplicada. Re-verificado además
+     de forma independiente después, con una query aparte sobre los 8
+     casos más ilustrativos (737 NG, ATR 42/72, A109, 767, AS350,
+     AS350/H125, EC135/H135, S-76C): `still_old = 0`.
+  2. Las 3 family keys re-backfilleadas SÍ resuelven contra la función
+     real `getFamilies()` — no una comprobación manual: script aparte que
+     carga el catálogo activo en vivo (misma query que
+     `catalogRepository.getAircraftTypeRatings()`) y llama a
+     `getFamilies()` de verdad.
+     `Sikorsky::Sikorsky S-76C` → grupo "Sikorsky S-76C family" (1
+     rating). `Airbus Helicopters::Eurocopter AS 350` → grupo "Eurocopter
+     AS 350 family" (2 ratings: Arriel 1 + Arriel 2 — la fusión ...61/...62
+     confirmada en vivo). `Airbus Helicopters::Eurocopter EC 135` → grupo
+     "Eurocopter EC 135 family" (2 ratings: PW206 + Arrius 2B). Total de
+     grupos: 541 → 538 tras la normalización (fusiones reales, no ruido).
+  3. **El formato `Sikorsky::Sikorsky S-76C`** (manufacturer repetido
+     dentro del propio string de family) es un formato de key ESPERADO,
+     no un bug: pasa exactamente igual con `Airbus::Airbus A330`,
+     `Boeing::Boeing 757-200/300`, etc. — la convención oficial EASA
+     incluye el fabricante como prefijo de texto DENTRO de
+     `aircraft_family`, mientras que la columna `manufacturer` lo guarda
+     también por separado (para filtros/joins). `getAircraftFamilyKey()`
+     concatena ambos sin deduplicar — no hay lógica que lo intente evitar,
+     y no hace falta: la key sigue siendo única y estable, solo se ve
+     repetitiva al leerla. No se muestra nunca al usuario final —
+     `displayName` (lo que se ve en el chip, p. ej. "Sikorsky S-76C
+     family") no lo hereda.
+- Efecto colateral real, no solo relabeling: ids ...61 ("AS350") y ...62
+  ("AS350/H125") — hoy fragmentadas en 2 grupos por una inconsistencia
+  puramente de naming curado — se fusionan correctamente en 1 familia
+  ("Eurocopter AS 350") tras la normalización.
+- El solape ceo/neo de A320 (documentado arriba, 2026-07-22) NO cambia con
+  esta migración — es el propio endorsement EASA, no una curación mía; no
+  se inventa ninguna partición nueva para separarlo.
+- Otros sitios revisados (grep + information_schema.columns): ningún otro
+  lugar persiste una copia de `aircraft_family` aparte de
+  `offer_required_aircraft_types` (ya cubierto). `v2CompatAdapters.ts` y
+  `technician/profile.tsx` lo derivan en memoria en cada lectura — se
+  autocorrigen solos, sin backfill.
 - Caso real para tu validación (mismo patrón throwaway, bajo mi empresa
   191cf5a7 per la regla nueva):
   - Oferta: "DEMO Fase3b screen1 — offer form redesign", id
@@ -491,5 +718,4 @@ Rama: part66-phase3, partiendo de main actualizado.
     categoría (prueba con una de A3/A4/B1.3/B1.4 para ver el pre-filtro a
     helicópteros).
   - Pendiente de limpiar cuando la valides.
-- Pantallas 2-4 (perfil, búsqueda, mapa) NO empezadas — esperando tu OK
-  de esta pantalla primero, según protocolo.
+- **Pantalla 1: validada por ti (2026-07-22).**

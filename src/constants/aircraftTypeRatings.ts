@@ -66,6 +66,38 @@ export function getAircraftTypeRatingLabel(id: string, ratingIndex: AircraftRati
   return ratingIndex.get(id)?.displayName ?? id;
 }
 
+// Stable "<manufacturer>::<aircraftFamily>" identity for a family group —
+// the same compound key areRatingsRelated() already treats as "the same
+// family" above, and the exact string aircraftTypeRatingViews.ts's
+// getFamilies() groups by and the broad/approximate aircraft-type filter
+// persists (migration 022) instead of a legacy aircraft_types(code) value.
+// Centralized here so the UI grouping and the persisted/matching value can
+// never drift apart.
+export function getAircraftFamilyKey(rating: Pick<AircraftTypeRatingCatalog, 'manufacturer' | 'aircraftFamily'>): string {
+  return `${rating.manufacturer}::${rating.aircraftFamily}`;
+}
+
+// Inclusive resolution of a legacy aircraft_type_code to EVERY family it
+// could mean, never just the first/best guess — e.g. a bare "A320" can be
+// an alias under both an A320ceo-family rating and an A320neo-family
+// rating, and both count. The broad/approximate filter this feeds
+// (evaluateLegacyBroadMatch in offerMatchExplain.ts, and the T3
+// related_legacy tier above) is deliberately coarse, so widening on
+// ambiguity is correct — never narrowing to a guessed single winner (see
+// migration 022 / docs/MISSION_PART66.md, confirmed with the user
+// 2026-07-22). Returns an empty set for a code with no alias anywhere in
+// the given index.
+export function resolveLegacyCodeToFamilyKeys(code: string, ratingIndex: AircraftRatingIndex): Set<string> {
+  const target = normalizeAircraftRatingSearchText(code);
+  const keys = new Set<string>();
+  for (const rating of ratingIndex.values()) {
+    if (rating.commercialAliases.some((alias) => normalizeAircraftRatingSearchText(alias) === target)) {
+      keys.add(getAircraftFamilyKey(rating));
+    }
+  }
+  return keys;
+}
+
 function sortComparator(a: AircraftTypeRatingCatalog, b: AircraftTypeRatingCatalog): number {
   if (a.priority !== b.priority) return b.priority - a.priority;
   if (a.manufacturer !== b.manufacturer) return a.manufacturer.localeCompare(b.manufacturer);
