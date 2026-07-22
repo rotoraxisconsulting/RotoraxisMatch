@@ -860,19 +860,43 @@ nunca el del técnico mostrado (`tp`). Un técnico borrado seguía apareciendo
   prueba: `0`). Un técnico activo real (T3FD8E0D5F) siguió visible en
   ambos casos — el fix no rompe nada.
 
+### Corrección de alcance (2026-07-22, antes de aplicar)
+La primera versión de esta migración usaba allow-list `status = 'active'`
+únicamente — elegido vía pregunta explícita (AskUserQuestion, opción
+"Allow-list: solo active" seleccionada por ti). El propio proceso de
+pedirte el OK final sacó a la luz que esa restricción, aunque
+literalmente elegida por ti, tenía una consecuencia de producto que
+ninguno de los dos había verificado todavía: **comprobado en el código**
+— `handle_new_user()` (migración 001) crea todo `profiles` nuevo sin
+`status` explícito, así que toma el DEFAULT de columna,
+`pending_verification`, para CUALQUIER alta (técnico o empresa).
+`admin_update_technician_verification` (migración 010) es lo único que
+mueve a un técnico de ahí: `verified→active`, `pending→pending_verification`
+(no-op), `rejected→suspended`. Es decir, `pending_verification` no es un
+paso transitorio del signup que se resuelve solo — es el estado normal e
+indefinido de un técnico aún no verificado por un admin, y la vista de
+HOY (con el bug) ya los muestra. Un allow-list de solo `active` los habría
+hecho invisibles en búsqueda/mapa/matching hasta verificación — un cambio
+de producto real, no solo un cierre de fallo de seguridad. Corregido antes
+de aplicar nada: el allow-list final es `active` + `pending_verification`,
+excluyendo solo `deleted`/`blocked`/`suspended`. Reverificado en vivo (misma
+técnica de transacción+ROLLBACK, esta vez simulando también un técnico
+puesto temporalmente en `pending_verification`): `deleted_tech_visible: 0`,
+`pending_verification_tech_visible: 1` — el borrado sigue fuera, el no
+verificado sigue dentro, exactamente como debía quedar.
+
 ### Fix — filtrado server-side (un solo punto)
 `supabase/migrations/024_technician_public_view_excludes_inactive_profiles.sql`
-(**escrita, NO aplicada — pendiente tu OK**): la vista `technician_public_view`
-gana un JOIN a `profiles` y exige `p.status = 'active'` en el dueño del
-perfil (`tp.user_id`), además de `is_active_user()` (el solicitante) que
-ya tenía. **Allow-list, no deny-list** (confirmado contigo): excluye
-`deleted`, `blocked`, `suspended` y `pending_verification` de golpe —
-mismo bug, mismo fix, cero coste extra hoy (0 filas en esos 3 estados
-además de deleted). Un solo sitio arreglado cubre TODOS los lectores de
-la vista: `search()`, `getPublicProfiles()` (matching/candidatos de
-oferta), `getSafeView`/`getViewForCompany`/`getPublicWithRelations`
-(detalle de un técnico), y por tanto también el mapa (que llama a
-`search({})` internamente). No toca:
+(**aplicada 2026-07-22, con tu OK tras la corrección de arriba**): la vista
+`technician_public_view` gana un JOIN a `profiles` y exige
+`p.status IN ('active', 'pending_verification')` en el dueño del perfil
+(`tp.user_id`), además de `is_active_user()` (el solicitante) que ya tenía.
+Excluye `deleted`, `blocked` y `suspended` — cero coste extra hoy (0 filas
+en esos 3 estados además del 1 deleted). Un solo sitio arreglado cubre
+TODOS los lectores de la vista: `search()`, `getPublicProfiles()`
+(matching/candidatos de oferta), `getSafeView`/`getViewForCompany`/
+`getPublicWithRelations` (detalle de un técnico), y por tanto también el
+mapa (que llama a `search({})` internamente). No toca:
 - El propio acceso del técnico a su perfil (RLS `tp_select_own`, tabla
   directa, no esta vista) — irrelevante para uno ya borrado, su
   `auth.users` ya no existe.
