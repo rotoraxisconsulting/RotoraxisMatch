@@ -97,9 +97,16 @@ export default function CompanyChatsScreen() {
         chatRepository.getMessages(room.id),
       ]);
 
+      // techView is null when the technician account was deleted after
+      // this chat was created (technician_public_view excludes non-active
+      // profiles, migration 024) — the room and its message history stay
+      // visible, just labeled instead of falling back to a generic
+      // "Technician".
       const techDisplay = techView && isUnlocked(techView)
         ? `${techView.firstName} ${techView.lastName}`
-        : (techView?.anonymousCode ?? 'Technician');
+        : techView
+          ? techView.anonymousCode
+          : '[Deleted user]';
 
       const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
 

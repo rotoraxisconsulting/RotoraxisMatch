@@ -229,6 +229,47 @@ export default function ApplicationDetailScreen() {
     );
   }
 
+  // The technician account behind this application was deleted after the
+  // fact (technician_public_view excludes non-active profiles, migration
+  // 024 — getViewForCompany resolves to null instead of the usual
+  // locked/unlocked preview). The application record itself is real
+  // historical data and stays visible — never hidden — but there is
+  // nothing left to act on: no identity to reveal, no documents, no one
+  // to message. Deliberately a distinct state from "not yet unlocked"
+  // (techView === null here means gone, not merely locked).
+  if (!techView) {
+    return (
+      <CompanyScreen>
+        <Stack.Screen options={{ headerShown: false }} />
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
+          showsVerticalScrollIndicator={false}
+        >
+          <CompanyPageHeader
+            eyebrow="Application review"
+            title={offer.title}
+            subtitle={`Applied ${formatDate(app.createdAt)}`}
+            onBack={() => router.back()}
+            right={<CompanyBadge label={statusInfo(app.status).label} tone={statusInfo(app.status).tone} />}
+          />
+          <CompanyCard style={styles.sectionCard}>
+            <View style={styles.deletedRow}>
+              <IconBox icon={UserRound} color={companyUi.textMuted} backgroundColor={companyUi.surfaceSoft} />
+              <View style={styles.deletedCopy}>
+                <Text style={styles.deletedTitle}>[Deleted user]</Text>
+                <Text style={styles.deletedSub}>
+                  This technician&apos;s account has been deleted. The application record is kept for your history, but
+                  identity, documents, and messaging are no longer available.
+                </Text>
+              </View>
+            </View>
+          </CompanyCard>
+        </ScrollView>
+      </CompanyScreen>
+    );
+  }
+
   const unlockedView = techView && isUnlocked(techView) ? techView : null;
   const unlocked = !!unlockedView;
   const accent = score ? scoreColor(score.total) : companyUi.textMuted;
@@ -526,6 +567,24 @@ const styles = StyleSheet.create({
   sectionCard: {
     gap: spacing.md,
     marginBottom: spacing.md,
+  },
+  deletedRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  deletedCopy: { flex: 1, minWidth: 0, gap: 4 },
+  deletedTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: companyUi.textMuted,
+  },
+  deletedSub: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+    color: companyUi.textSoft,
   },
   sectionHeader: {
     flexDirection: 'row',

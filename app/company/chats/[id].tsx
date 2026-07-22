@@ -54,6 +54,7 @@ export default function CompanyChatDetailScreen() {
   const [subTitle, setSubTitle] = useState('');
   const [loading, setLoading] = useState(true);
   const [locked, setLocked] = useState(false);
+  const [technicianDeleted, setTechnicianDeleted] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -86,9 +87,16 @@ export default function CompanyChatDetailScreen() {
       chatRepository.getMessages(id),
     ]);
 
+    // techView is null when the technician account was deleted after this
+    // room was created (technician_public_view excludes non-active
+    // profiles, migration 024) — message history stays visible, but
+    // there's no one left to send a new message to.
+    setTechnicianDeleted(!techView);
     const techDisplay = techView && isUnlocked(techView)
       ? `${techView.firstName} ${techView.lastName}`
-      : (techView?.anonymousCode ?? 'Technician');
+      : techView
+        ? techView.anonymousCode
+        : '[Deleted user]';
 
     setHeaderTitle(techDisplay);
     setSubTitle(offer?.title ?? '');
@@ -180,12 +188,14 @@ export default function CompanyChatDetailScreen() {
               <Text style={styles.contextName} numberOfLines={1}>{headerTitle}</Text>
               <Text style={styles.contextSub} numberOfLines={1}>{subTitle || 'Accepted contact'}</Text>
             </View>
-            <CompanyBadge label="Active" tone="success" small />
+            <CompanyBadge label={technicianDeleted ? 'Deleted' : 'Active'} tone={technicianDeleted ? 'muted' : 'success'} small />
           </CompanyCard>
 
           <CompanyCard style={styles.privacyBanner}>
             <Text style={styles.privacyBannerText}>
-              🔓 Identity revealed — this technician's identity and admin-verified documents are visible to your company. Messages are private between both parties.
+              {technicianDeleted
+                ? '🚫 This technician\'s account has been deleted. Message history is kept, but you can no longer send new messages here.'
+                : "🔓 Identity revealed — this technician's identity and admin-verified documents are visible to your company. Messages are private between both parties."}
             </Text>
           </CompanyCard>
         </View>
@@ -222,7 +232,11 @@ export default function CompanyChatDetailScreen() {
         </ScrollView>
 
         <View style={styles.inputShell}>
-          {canSend ? (
+          {technicianDeleted ? (
+            <View style={[styles.viewerBar, isWide && styles.inputWide]}>
+              <Text style={styles.viewerNote}>This technician&apos;s account has been deleted — no new messages can be sent.</Text>
+            </View>
+          ) : canSend ? (
             <View style={[styles.inputBar, isWide && styles.inputWide]}>
               <TextInput
                 style={styles.input}

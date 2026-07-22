@@ -209,10 +209,16 @@ export default function ApplicationsListScreen() {
           />
         ) : null}
 
-        {filtered.map(({ app, offer, safePreview, score }) => {
+        {filtered.map(({ app, offer, tech, safePreview, score }) => {
           const status = statusInfo(app.status);
           const accent = score ? scoreColor(score.total) : companyUi.textMuted;
           const isUnread = unreadIds.has(app.id);
+          // A technician account deleted after applying resolves to null
+          // here (technician_public_view excludes non-active profiles,
+          // migration 024) — the application itself is real history and
+          // stays in the list, just visibly deactivated with no live
+          // technician data to show.
+          const isDeletedTechnician = !tech;
 
           return (
             <TouchableOpacity
@@ -220,7 +226,7 @@ export default function ApplicationsListScreen() {
               onPress={() => router.push(`/company/applications/${app.id}` as any)}
               activeOpacity={0.75}
             >
-              <CompanyCard style={[styles.card, { borderLeftColor: accent }, isUnread && styles.cardUnread]}>
+              <CompanyCard style={[styles.card, { borderLeftColor: accent }, isUnread && styles.cardUnread, isDeletedTechnician && styles.cardDeactivated]}>
                 {isUnread ? <ActivityDot /> : null}
                 <View style={styles.cardTop}>
                   <IconBox icon={ClipboardCheck} color={accent} backgroundColor={score && score.total >= 60 ? companyUi.blueSoft : companyUi.surfaceSoft} />
@@ -230,6 +236,8 @@ export default function ApplicationsListScreen() {
                       <Text style={styles.applicantLine} numberOfLines={1}>
                         {safePreview.anonymousCode} - {TECH_TYPE_LABELS[safePreview.technicianType] ?? safePreview.technicianType}
                       </Text>
+                    ) : isDeletedTechnician ? (
+                      <Text style={styles.deletedLine} numberOfLines={1}>[Deleted user]</Text>
                     ) : null}
                   </View>
                   {score ? <MatchBadge score={score.total} context="match for this offer" /> : null}
@@ -255,10 +263,16 @@ export default function ApplicationsListScreen() {
                     <Clock color={companyUi.textMuted} size={13} strokeWidth={2} />
                     <Text style={styles.dateText}>{formatDate(app.createdAt)}</Text>
                   </View>
-                  <View style={styles.reviewButton}>
-                    <UserRound color={colors.white} size={14} strokeWidth={2} />
-                    <Text style={styles.reviewButtonText}>Review</Text>
-                  </View>
+                  {isDeletedTechnician ? (
+                    <View style={[styles.reviewButton, styles.reviewButtonDeactivated]}>
+                      <Text style={styles.reviewButtonTextDeactivated}>View</Text>
+                    </View>
+                  ) : (
+                    <View style={styles.reviewButton}>
+                      <UserRound color={colors.white} size={14} strokeWidth={2} />
+                      <Text style={styles.reviewButtonText}>Review</Text>
+                    </View>
+                  )}
                 </View>
               </CompanyCard>
             </TouchableOpacity>
@@ -287,6 +301,9 @@ const styles = StyleSheet.create({
   cardUnread: {
     borderColor: '#FECACA',
   },
+  cardDeactivated: {
+    opacity: 0.6,
+  },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -308,6 +325,14 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '600',
     color: companyUi.textSoft,
+  },
+  deletedLine: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    fontStyle: 'italic',
+    color: companyUi.textMuted,
   },
   previewRow: {
     flexDirection: 'row',
@@ -354,6 +379,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
+  },
+  reviewButtonDeactivated: {
+    backgroundColor: companyUi.surfaceSoft,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+  },
+  reviewButtonTextDeactivated: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: companyUi.textMuted,
   },
   reviewButtonText: {
     fontSize: 12,

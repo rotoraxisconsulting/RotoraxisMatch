@@ -3,6 +3,7 @@ import { OfferRequest } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
 import { isActiveOfferRelationStatus } from '../../utils/offerRelationStateMachine';
 import { isOfferOpenForTechnicians, offerRepository } from './offerRepository';
+import { technicianRepositoryV2 } from './technicianRepositoryV2';
 import { mapOfferApplicationRow, mapOfferRequestRow, throwIfError } from './supabaseMappers';
 
 const SELECT_FIELDS = 'id, company_id, technician_id, offer_id, status, identity_revealed, documents_unlocked, message, created_at, updated_at';
@@ -53,6 +54,18 @@ export const offerRequestRepository = {
     offerId?: string;
     message?: string;
   }): Promise<OfferRequest> {
+    // Guard against contacting a technician whose account no longer
+    // exists (deleted) or isn't active (blocked/suspended/pending
+    // verification) — getById() falls back to technician_public_view,
+    // which migration 024 excludes non-active profiles from, so this is
+    // the same check search/matching already apply, reused here rather
+    // than a second, independent one. Existing historical offer_requests
+    // rows are never touched by this — only new ones are blocked.
+    const technician = await technicianRepositoryV2.getById(data.technicianId);
+    if (!technician) {
+      throw new Error('This technician profile is no longer available.');
+    }
+
     if (data.offerId) {
       const offer = await offerRepository.getById(data.offerId);
       if (!isOfferOpenForTechnicians(offer) || offer?.companyId !== data.companyId) {

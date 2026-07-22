@@ -830,3 +830,113 @@ Rama: part66-phase3, partiendo de main actualizado.
   pendiente de tu validación con tu cuenta de empresa real.
 - Pantalla 4 (mapa) NO empezada — esperando tu OK de esta pantalla
   primero, según protocolo.
+
+## Bug prioritario (independiente de la 3b): cuentas eliminadas seguían visibles/contactables
+
+Diagnóstico tuyo, 2026-07-22 (verificado directamente en Supabase):
+`delete-account` (Edge Function) anonimiza PII de `technician_profiles` y
+pone `profiles.status='deleted'`, pero NINGÚN camino de lectura consultaba
+`profiles.status` — `technician_public_view` (la fuente de búsqueda, mapa,
+matching/candidatos de oferta y detalle de técnico) solo filtraba por
+`is_active_user()`, que comprueba el status del SOLICITANTE (la empresa),
+nunca el del técnico mostrado (`tp`). Un técnico borrado seguía apareciendo
+íntegro, con `verification_status='verified'`, en todas partes.
+
+### Inventario (rotoaxismatch-dev)
+- `profiles.status`: 9 `active`, 1 `deleted`, 0 `blocked`/`suspended`/
+  `pending_verification`.
+- El único borrado: técnico `6146de18-5e8f-4d4a-8780-d42f1bf299c5`
+  (anonymous_code `TF0E8866C8`) — sigue teniendo 3 `offer_requests`
+  (todas `accepted`), 1 `offer_application` (`accepted`), 2
+  `technician_habilitations`, 3 `technician_licenses`, 4 `chat_rooms`.
+  Las 3 direct offers + la application están bajo tu propia empresa de
+  pruebas (company_id `191cf5a7-...`, Airbus) — sirven de caso de
+  validación real, sin necesitar dato throwaway nuevo.
+- **Confirmado en vivo**: con una sesión de empresa activa simulada
+  (`SET LOCAL request.jwt.claim.sub` dentro de una transacción con
+  ROLLBACK, sin tocar datos), el técnico borrado SÍ aparecía en
+  `technician_public_view` antes del fix (`deleted_tech_visible: 1`
+  → tras aplicar la vista corregida dentro de la misma transacción de
+  prueba: `0`). Un técnico activo real (T3FD8E0D5F) siguió visible en
+  ambos casos — el fix no rompe nada.
+
+### Fix — filtrado server-side (un solo punto)
+`supabase/migrations/024_technician_public_view_excludes_inactive_profiles.sql`
+(**escrita, NO aplicada — pendiente tu OK**): la vista `technician_public_view`
+gana un JOIN a `profiles` y exige `p.status = 'active'` en el dueño del
+perfil (`tp.user_id`), además de `is_active_user()` (el solicitante) que
+ya tenía. **Allow-list, no deny-list** (confirmado contigo): excluye
+`deleted`, `blocked`, `suspended` y `pending_verification` de golpe —
+mismo bug, mismo fix, cero coste extra hoy (0 filas en esos 3 estados
+además de deleted). Un solo sitio arreglado cubre TODOS los lectores de
+la vista: `search()`, `getPublicProfiles()` (matching/candidatos de
+oferta), `getSafeView`/`getViewForCompany`/`getPublicWithRelations`
+(detalle de un técnico), y por tanto también el mapa (que llama a
+`search({})` internamente). No toca:
+- El propio acceso del técnico a su perfil (RLS `tp_select_own`, tabla
+  directa, no esta vista) — irrelevante para uno ya borrado, su
+  `auth.users` ya no existe.
+- El panel de admin (`technicianRepositoryV2.getAll()`, `useAdminDashboard.ts`)
+  — lee `technician_profiles` directamente bajo `is_admin()`, nunca por
+  esta vista. Admins conservan visibilidad completa de cuentas borradas/
+  bloqueadas para soporte/auditoría, sin cambio de código.
+- El caso simétrico de empresa borrada (¿sigue un técnico viendo datos de
+  una empresa eliminada?) — NO auditado, mismo patrón de bug es plausible,
+  fuera de alcance de este arreglo, señalado aquí para no perderlo.
+
+### Guard en acciones nuevas
+`offerRequestRepository.create()` (crear direct offer): comprueba
+`technicianRepositoryV2.getById()` antes de insertar — tras la migración
+024, resuelve a `null` para un técnico borrado (mismo camino que ya usan
+search/matching, no una segunda comprobación independiente que pudiera
+divergir) → `Error('This technician profile is no longer available.')`.
+`offer_applications` no necesita guard simétrico: las crea el propio
+técnico (requiere su sesión autenticada, imposible tras borrarse).
+
+### Registros históricos — "[Deleted user]", tarjeta desactivada, sin acciones
+Aplicado en 4 pantallas (las que muestran relaciones YA aceptadas/con
+historial, donde `techView`/`tech` ahora resuelve a `null` tras la 024):
+- `app/company/applications/[id].tsx` y `app/company/applications/index.tsx`:
+  panel/tarjeta "[Deleted user]" — sin Accept/Reject, sin documentos, sin
+  desglose de match; la tarjeta de la lista queda atenuada (opacity) y el
+  botón pasa de "Review" (acción) a "View" (neutro).
+- `app/company/direct-offers/[id].tsx`: mismo patrón — panel dedicado sin
+  identidad/documentos.
+- `app/company/chats/index.tsx` y `app/company/chats/[id].tsx`: el nombre
+  cae a "[Deleted user]" en vez de "Technician" genérico; el chat detail
+  oculta la caja de enviar mensaje (no tiene sentido escribirle a alguien
+  que no puede volver a autenticarse) y cambia el banner "Identity
+  revealed" por un aviso de cuenta eliminada. El historial de mensajes
+  se conserva íntegro en ambos casos — nunca se oculta ni se borra.
+- **NO tocado, señalado explícitamente**: `app/company/offers/[id].tsx`
+  (ranking de candidatos por oferta) no necesitaba cambio de UI — un
+  técnico borrado ya no aparece ahí en absoluto tras el fix de la vista
+  (es un listado de candidatos NUEVOS, no un registro histórico). Las
+  pantallas del lado técnico (`app/technician/...`) no aplican — un
+  técnico borrado nunca vuelve a autenticarse para verlas.
+- Verificación: revisión de código + tsc limpio: no pude ejercitar estas
+  4 pantallas con sesión real (mismo bloqueo de RLS que en pantalla 3) —
+  pendiente de tu validación abriendo los registros reales listados en
+  el inventario de arriba (empresa Airbus → Applications /
+  Direct offers / Chats, técnico TF0E8866C8).
+
+### Tests
+No hay tests automatizados nuevos: la lógica central (la vista SQL) no es
+testeable en el arnés ligero de `testMatching.ts` (sin conexión a BD por
+diseño — ver cabecera de ese fichero) y `offerRequestRepository.create()`
+no tenía cobertura de tests antes de este cambio tampoco (mismo patrón
+que `matchesSearchFilters`, hueco preexistente, no introducido aquí).
+Verificación real: la prueba en vivo con sesión simulada descrita arriba
+(demuestra las dos direcciones: técnico borrado excluido, técnico activo
+intacto) + revisión de código de los guards/pantallas + tsc limpio +
+79/79 tests existentes sin romperse.
+
+### Propuesta de anonimización más profunda (NO implementada)
+`docs/DELETED_ACCOUNT_ANONYMIZATION_PROPOSAL.md` — documento de discusión
+sobre qué más debería anonimizar `delete-account` en
+`technician_profiles`/`technician_licenses`/`technician_habilitations`
+(verification_status, ubicación, fechas de vigencia de cualificaciones)
+para cumplir lo que la pantalla de borrado promete ("all personal
+information"), con la tensión RGPD real (derecho al olvido vs.
+obligaciones de trazabilidad regulatoria aeronáutica) expuesta sin
+resolver. A retomar aparte, con calma.
