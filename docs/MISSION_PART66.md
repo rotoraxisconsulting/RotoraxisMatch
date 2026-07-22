@@ -760,3 +760,73 @@ Rama: part66-phase3, partiendo de main actualizado.
   2026-07-15 — la fecha que pusiste tú probando persistencia) quedó
   intacta y es la única habilitación de esa cuenta.
 - Pantalla 3 (búsqueda) en curso — ver sección propia más abajo.
+
+### Pantalla 3 — búsqueda de técnicos (COMPLETADA, pendiente tu validación)
+- `app/company/search.tsx` + `src/repositories/v2/technicianRepositoryV2.ts` +
+  `src/state/useTechnicianSearch.ts` + `src/types/filters.ts`.
+- **Nuevo componente compartido**: `src/components/AircraftFamilyPicker.tsx`
+  — extraído del interior de `ApproximateFilterSection` (pantalla 1), que
+  ahora lo consume en vez de tener su propia copia de la lógica
+  tabs+buscador+resultados+chips. Mismas opciones, mismas etiquetas
+  (`displayName` de familia vía `getFamilies()`), mismo comportamiento en
+  las dos pantallas por construcción, no por convención — un solo sitio
+  que puede tener un bug, no dos que puedan divergir. Verificado en vivo
+  que la extracción no rompió pantalla 1 (regresión comprobada por
+  captura) y que el componente funciona standalone.
+- **Filtro de aeronave, antes inexistente de verdad**: la pantalla tenía un
+  filtro "Aircraft category" (Any/Airplanes/Helicopters) que solo
+  post-filtraba resultados EN EL CLIENTE contra `AIRPLANES`/`HELICOPTERS`
+  (listas hardcodeadas de 33 códigos, `constants/aircraftTypes.ts`) — el
+  campo `filters.aircraftType` de verdad (el que sí viaja hasta
+  `technicianRepositoryV2.search()`) no estaba conectado a ningún control
+  en esta pantalla. Sustituido por una sección colapsada
+  (`CollapsibleAircraftFilter`, local a este archivo) que muestra solo la
+  selección activa ("Any aircraft" / "N familias seleccionadas") y al
+  expandir monta `AircraftFamilyPicker` — mismo patrón colapsado que
+  pantalla 1 establece para mapa/búsqueda.
+- **Filtrado real, no solo visual**: `TechnicianFilters.aircraftFamilyKeys?:
+  string[]` (nuevo campo; `aircraftType` queda `@deprecated` sin uso) viaja
+  hasta `technicianRepositoryV2.search()`, que ahora compara por family key
+  con OR entre las seleccionadas —
+  `habilitationCoversFamilyKey()` (nueva, en este repositorio) es la MISMA
+  regla que `evaluateLegacyBroadMatch` de `offerMatchExplain.ts`: familia
+  exacta vía rating resuelta, o código legacy resuelto de forma inclusiva
+  (`resolveLegacyCodeToFamilyKeys`) — una sola definición reutilizada, no
+  una tercera copia.
+- **Grep de cero listas hardcodeadas en esta pantalla**: confirmado —
+  `grep -n "aircraftTypes.ts|AIRCRAFT_TYPE_CATALOG|AIRPLANES|HELICOPTERS" app/company/search.tsx`
+  sin resultados. El import completo de `constants/aircraftTypes.ts`
+  (`AIRPLANES`, `HELICOPTERS`, `inferAircraftCategory`, `AircraftCategory`)
+  se eliminó de la pantalla.
+- **Tarjetas de resultado**:
+  - Renombrado "Aircraft" → "Type ratings" (alineado con el renombrado ya
+    hecho en `company/offers/[id].tsx` — mismo criterio, nunca dos
+    etiquetas distintas para el mismo concepto).
+  - Las etiquetas ahora son `displayName` de cada rating exacta
+    (`resolveTypeRatingLabels()`, nueva función local), no family/código
+    legacy vía `habilitationAircraftCodes()` (que se dejó intacta —
+    la usan otras 2 pantallas no auditadas hoy, `AdminTechnicianCard` y
+    `company/offers/[id].tsx`, fuera de alcance).
+  - Badge Airplane/Helicopter/Mixed re-derivado del `productType` real del
+    catálogo (`resolveTechnicianProductTypes()`, nueva función local) en
+    vez de `inferAircraftCategory()` (heurística sobre los 33 códigos
+    legacy) — nunca adivina: una habilitación sin rating resuelta o con
+    `productType` sin poblar no cuenta.
+  - Chips de licencia: quitado un `.slice(0, 8)` que truncaba a 8 de las
+    13 categorías sin motivo aparente — ahora se muestran las 13, igual
+    que pantallas 1-2.
+- Verificado en vivo (ruta devtest): `AircraftFamilyPicker` standalone
+  funciona (tab Helicopters, buscar "H145", seleccionar "Eurocopter
+  MBB-BK 117 D2 family" → key `Airbus Helicopters::Eurocopter MBB-BK 117 D2`);
+  la sección colapsada expande/colapsa correctamente; `ApproximateFilterSection`
+  (pantalla 1) sigue funcionando igual tras la extracción. Cero errores de
+  consola. 79/79 tests, tsc limpio.
+- **No hizo falta dato throwaway nuevo**: tu técnico real T3FD8E0D5F
+  (B1.3 + H145/BK117 D2, verificado en la pantalla 2) ya sirve como caso
+  de prueba real para el filtro de búsqueda — buscar "H145" o "BK117"
+  con licencia B1.3 debería devolverlo. No pude probar el flujo de
+  búsqueda REAL de extremo a extremo (RLS bloquea `technician_habilitations`/
+  `technician_profiles` sin sesión autenticada, ni siquiera de lectura) —
+  pendiente de tu validación con tu cuenta de empresa real.
+- Pantalla 4 (mapa) NO empezada — esperando tu OK de esta pantalla
+  primero, según protocolo.

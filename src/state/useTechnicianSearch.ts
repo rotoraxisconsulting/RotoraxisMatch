@@ -74,7 +74,7 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
       // Map V1 TechnicianFilters → V2 search params
       const v2Filters = {
         licenseCode: filters.licenseCategory ?? undefined,
-        aircraftTypeCode: filters.aircraftType ?? undefined,
+        aircraftFamilyKeys: filters.aircraftFamilyKeys?.length ? filters.aircraftFamilyKeys : undefined,
         country: filters.country ?? undefined,
         city: filters.city ?? undefined,
         verificationStatus: filters.verificationStatus ?? undefined,

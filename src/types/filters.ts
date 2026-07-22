@@ -29,7 +29,14 @@ export interface OfferSearchFilters {
 /** @deprecated use TechnicianSearchFilters instead */
 export interface TechnicianFilters {
   licenseCategory?: string;
+  /** @deprecated unused since Fase 3b screen 3 — use aircraftFamilyKeys instead */
   aircraftType?: string;
+  // Family keys ("<manufacturer>::<aircraftFamily>", see getAircraftFamilyKey)
+  // from the 606-row aircraft_type_ratings catalog — OR-matched against a
+  // technician's resolved ratings (Fase 3b screen 3, 2026-07-22). Same shape
+  // ApproximateFilterSection/offerMatchExplain.ts already use for the broad
+  // aircraft filter, reused here for consistency.
+  aircraftFamilyKeys?: string[];
   specialty?: string;
   availabilityStatus?: string;
   verificationStatus?: string;

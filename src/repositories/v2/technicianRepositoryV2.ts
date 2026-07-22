@@ -6,7 +6,7 @@ import {
 } from '../../types/technician';
 import { SafeTechnicianPreview, TechnicianView, isUnlocked } from '../../types/privacy';
 import { LicenseCode } from '../../types/catalog';
-import { AircraftRatingIndex, buildAircraftRatingIndex, ratingMatchesLegacyCode } from '../../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../../constants/aircraftTypeRatings';
 import { catalogRepository } from './catalogRepository';
 import {
   DbRow,
@@ -54,12 +54,33 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
   };
 }
 
+// A habilitation covers a required family key either via its resolved
+// rating (exact family match) or, for rows that only ever recorded a bare
+// legacy code, via inclusive code->family resolution (see
+// resolveLegacyCodeToFamilyKeys — a code that aliases several families
+// counts for all of them, never a guessed single one). Same rule
+// offerMatchExplain.ts's evaluateLegacyBroadMatch uses for the offer-side
+// broad aircraft filter — one definition, reused, never a second one that
+// could drift.
+function habilitationCoversFamilyKey(
+  h: { aircraftTypeCode?: string; aircraftTypeRatingId?: string },
+  familyKey: string,
+  ratingIndex: AircraftRatingIndex,
+): boolean {
+  if (h.aircraftTypeRatingId) {
+    const rating = ratingIndex.get(h.aircraftTypeRatingId);
+    if (rating && getAircraftFamilyKey(rating) === familyKey) return true;
+  }
+  if (h.aircraftTypeCode && resolveLegacyCodeToFamilyKeys(h.aircraftTypeCode, ratingIndex).has(familyKey)) return true;
+  return false;
+}
+
 function matchesSearchFilters(
   preview: SafeTechnicianPreview,
   filters: {
     technicianType?: string;
     licenseCode?: string;
-    aircraftTypeCode?: string;
+    aircraftFamilyKeys?: string[];
     country?: string;
     city?: string;
     verificationStatus?: string;
@@ -76,13 +97,10 @@ function matchesSearchFilters(
   if (filters.availableImmediately === true && !preview.availability.immediately) return false;
   if (filters.licenseCode && !preview.licenses.includes(filters.licenseCode as LicenseCode)) return false;
   if (
-    filters.aircraftTypeCode &&
-    !preview.habilitations.some((h) => {
-      if (h.aircraftTypeCode === filters.aircraftTypeCode) return true;
-      if (!h.aircraftTypeRatingId) return false;
-      const rating = ratingIndex.get(h.aircraftTypeRatingId);
-      return Boolean(rating) && ratingMatchesLegacyCode(rating!, filters.aircraftTypeCode as string);
-    })
+    filters.aircraftFamilyKeys && filters.aircraftFamilyKeys.length > 0 &&
+    !preview.habilitations.some((h) =>
+      filters.aircraftFamilyKeys!.some((key) => habilitationCoversFamilyKey(h, key, ratingIndex)),
+    )
   ) {
     return false;
   }
@@ -374,7 +392,7 @@ export const technicianRepositoryV2 = {
   async search(filters: {
     technicianType?: string;
     licenseCode?: string;
-    aircraftTypeCode?: string;
+    aircraftFamilyKeys?: string[];
     country?: string;
     city?: string;
     verificationStatus?: string;

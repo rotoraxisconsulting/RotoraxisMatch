@@ -1,13 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { spacing } from '../../theme';
 import { CompanyCard, CompanyChip, companyUi } from './CompanyUI';
-import { useAircraftTypeRatingsCatalog } from '../../state/useAircraftTypeRatingsCatalog';
-import { getFamilies, getByProductType, searchRatings, AircraftFamilyGroup } from '../../constants/aircraftTypeRatingViews';
+import { AircraftFamilyPicker } from '../AircraftFamilyPicker';
 import { LicenseCode } from '../../types/catalog';
 import { LICENSE_CATEGORIES } from '../../constants/licenses';
-
-const MAX_RESULTS = 20;
 
 interface Props {
   requiredLicenses: LicenseCode[];
@@ -65,31 +62,6 @@ export function ApproximateFilterSection({
   }, [hasExactRequirements]);
   const expanded = !hasExactRequirements || manuallyExpanded;
 
-  const { ratings, state, error, retry } = useAircraftTypeRatingsCatalog();
-  const [tab, setTab] = useState<'airplane' | 'helicopter'>('airplane');
-  const [query, setQuery] = useState('');
-
-  // Every family, regardless of tab/search — used to resolve labels for
-  // already-selected keys (which may fall outside the current tab/query)
-  // and to compute otherTabCount.
-  const allFamilies = useMemo(() => getFamilies(ratings), [ratings]);
-  const familyByKey = useMemo(() => new Map(allFamilies.map((f) => [f.key, f])), [allFamilies]);
-
-  const productType = tab === 'airplane' ? 'Aeroplane' : 'Helicopter';
-  const tabResults = useMemo(() => {
-    const pool = getByProductType(ratings, productType);
-    return getFamilies(searchRatings(pool, query)).slice(0, MAX_RESULTS);
-  }, [ratings, productType, query]);
-
-  const selectedFamilies = useMemo(
-    () => requiredAircraftTypes.map((key) => familyByKey.get(key)).filter((f): f is AircraftFamilyGroup => Boolean(f)),
-    [requiredAircraftTypes, familyByKey],
-  );
-  const otherTabCount = useMemo(
-    () => selectedFamilies.filter((f) => f.ratings[0]?.productType !== productType).length,
-    [selectedFamilies, productType],
-  );
-
   const selectedCount = requiredLicenses.length + requiredAircraftTypes.length;
 
   return (
@@ -130,64 +102,7 @@ export function ApproximateFilterSection({
           </View>
 
           <Text style={styles.fieldLabel}>Required aircraft types</Text>
-          {state === 'loading' ? (
-            <View style={styles.statusRow}>
-              <ActivityIndicator size="small" color={companyUi.textMuted} />
-              <Text style={styles.statusText}>Loading aircraft families…</Text>
-            </View>
-          ) : state === 'error' ? (
-            <View style={styles.statusRow}>
-              <Text style={styles.errorText}>{error?.message ?? 'Could not load the aircraft ratings catalog.'}</Text>
-              <TouchableOpacity onPress={retry} accessibilityRole="button">
-                <Text style={styles.retryText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              {selectedFamilies.length > 0 ? (
-                <View style={styles.chipRow}>
-                  {selectedFamilies.map((f) => (
-                    <CompanyChip
-                      key={f.key}
-                      label={f.displayName}
-                      selected
-                      onPress={() => onChangeAircraftTypes(toggle(requiredAircraftTypes, f.key))}
-                    />
-                  ))}
-                </View>
-              ) : null}
-
-              <View style={styles.tabRow}>
-                <CompanyChip label="Airplanes" selected={tab === 'airplane'} onPress={() => setTab('airplane')} />
-                <CompanyChip label="Helicopters" selected={tab === 'helicopter'} onPress={() => setTab('helicopter')} />
-              </View>
-              <TextInput
-                style={styles.input}
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Search: A320, 737, H145, Dash 8…"
-                placeholderTextColor={companyUi.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <ScrollView style={styles.results} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                {tabResults.map((f) => (
-                  <TouchableOpacity
-                    key={f.key}
-                    style={[styles.resultRow, requiredAircraftTypes.includes(f.key) && styles.resultRowSelected]}
-                    onPress={() => onChangeAircraftTypes(toggle(requiredAircraftTypes, f.key))}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.resultTitle} numberOfLines={1}>{f.displayName}</Text>
-                  </TouchableOpacity>
-                ))}
-                {tabResults.length === 0 ? (
-                  <Text style={styles.emptyText}>No matches — try a different manufacturer or model.</Text>
-                ) : null}
-              </ScrollView>
-              {otherTabCount > 0 ? <Text style={styles.otherTabNote}>+{otherTabCount} selected in other category</Text> : null}
-            </>
-          )}
+          <AircraftFamilyPicker selectedKeys={requiredAircraftTypes} onChange={onChangeAircraftTypes} />
         </>
       )}
     </CompanyCard>
@@ -210,47 +125,4 @@ const styles = StyleSheet.create({
   },
   fieldLabel: { fontSize: 12, lineHeight: 16, fontWeight: '700', color: companyUi.textSoft, marginTop: spacing.xs },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  tabRow: { flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.xs, paddingBottom: spacing.xs, borderBottomWidth: 1, borderBottomColor: companyUi.borderSoft },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  statusText: { fontSize: 12, lineHeight: 17, color: companyUi.textMuted },
-  errorText: { fontSize: 12, lineHeight: 17, color: companyUi.red, flexShrink: 1 },
-  retryText: { fontSize: 12, fontWeight: '700', color: companyUi.accent },
-  otherTabNote: { fontSize: 11, lineHeight: 15, fontWeight: '500', color: companyUi.textMuted, marginTop: 4 },
-  input: {
-    minHeight: 42,
-    borderWidth: 1,
-    borderColor: companyUi.border,
-    borderRadius: 12,
-    paddingHorizontal: spacing.sm,
-    fontSize: 13,
-    color: companyUi.text,
-    backgroundColor: companyUi.surfaceSoft,
-  },
-  results: {
-    maxHeight: 200,
-    borderWidth: 1,
-    borderColor: companyUi.borderSoft,
-    borderRadius: 12,
-  },
-  resultRow: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: companyUi.borderSoft,
-  },
-  resultRowSelected: {
-    backgroundColor: companyUi.accentSoft,
-  },
-  resultTitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-    color: companyUi.text,
-  },
-  emptyText: {
-    padding: spacing.sm,
-    fontSize: 12,
-    lineHeight: 17,
-    color: companyUi.textMuted,
-  },
 });

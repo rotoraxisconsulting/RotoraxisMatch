@@ -40,10 +40,9 @@ import { isOfferOpenForTechnicians, offerRepository } from '../../src/repositori
 import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { calculateOfferTechnicianMatch } from '../../src/utils/matchingV2';
-import { habilitationAircraftCodes } from '../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex } from '../../src/constants/aircraftTypeRatings';
-import { AIRPLANES, HELICOPTERS, inferAircraftCategory, AircraftCategory } from '../../src/constants/aircraftTypes';
+import { AircraftFamilyPicker } from '../../src/components/AircraftFamilyPicker';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
 import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
 import { OfferWithRequirements } from '../../src/types/offer';
@@ -51,6 +50,8 @@ import { SafeTechnicianView } from '../../src/types';
 import { MatchScore } from '../../src/types/matching';
 import { SafeTechnicianPreview } from '../../src/types/privacy';
 import { OfferRequest } from '../../src/types/offerRequest';
+import { TechnicianHabilitation } from '../../src/types/technician';
+import { AircraftTypeRatingCatalog } from '../../src/types/catalog';
 
 type PreviewMap = Record<string, SafeTechnicianPreview>;
 type ScoreMap = Record<string, MatchScore>;
@@ -88,6 +89,39 @@ function offerRequestBadgeLabel(status: string): string {
   return 'Already sent';
 }
 
+// Fase 3b screen 3 — "Type ratings" chips (renamed from "Aircraft", matching
+// the rename already applied elsewhere — see docs/MISSION_PART66.md) show
+// each EXACT rating's displayName from the catalog, never a family/legacy
+// code string. Legacy habilitations (aircraftTypeCode only, no rating id)
+// have no exact rating to show and are skipped here — same as
+// TypeRatingRequirementsEditor/HabilitationsEditor.
+function resolveTypeRatingLabels(habilitations: TechnicianHabilitation[], ratingIndex: AircraftRatingIndex): string[] {
+  const labels = new Set<string>();
+  habilitations.forEach((h) => {
+    if (!h.aircraftTypeRatingId) return;
+    const rating = ratingIndex.get(h.aircraftTypeRatingId);
+    if (rating) labels.add(rating.displayName);
+  });
+  return [...labels];
+}
+
+// Airplane/Helicopter/Mixed badge, derived from the 606-row catalog's own
+// productType field — never the legacy hardcoded aircraft category lookup.
+// A habilitation with no resolvable rating, or a rating whose productType
+// hasn't been backfilled, contributes nothing (never guessed).
+function resolveTechnicianProductTypes(
+  habilitations: TechnicianHabilitation[],
+  ratingIndex: AircraftRatingIndex,
+): Set<NonNullable<AircraftTypeRatingCatalog['productType']>> {
+  const types = new Set<NonNullable<AircraftTypeRatingCatalog['productType']>>();
+  habilitations.forEach((h) => {
+    if (!h.aircraftTypeRatingId) return;
+    const productType = ratingIndex.get(h.aircraftTypeRatingId)?.productType;
+    if (productType) types.add(productType);
+  });
+  return types;
+}
+
 export default function TechnicianSearchScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -99,7 +133,6 @@ export default function TechnicianSearchScreen() {
   const canSendRole = canSendDirectOffers(companyMemberRole);
   const { offerId: preselectedOfferId } = useLocalSearchParams<{ offerId?: string }>();
 
-  const [aircraftCatFilter, setAircraftCatFilter] = useState<AircraftCategory | 'all'>('all');
   const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(preselectedOfferId ?? null);
   const [previews, setPreviews] = useState<PreviewMap>({});
@@ -199,17 +232,8 @@ export default function TechnicianSearchScreen() {
     await search();
   }
 
-  const filteredResults = useMemo(() => {
-    if (aircraftCatFilter === 'all') return results;
-    const validCodes = new Set<string>(
-      (aircraftCatFilter === 'airplane' ? AIRPLANES : HELICOPTERS).map((a) => a.code),
-    );
-    return results.filter((tech) => tech.aircraftTypes.some((code) => validCodes.has(code)));
-  }, [results, aircraftCatFilter]);
-
   function handleClearFilters() {
     clearFilters();
-    setAircraftCatFilter('all');
     setScores({});
     setPreviews({});
   }
@@ -241,7 +265,7 @@ export default function TechnicianSearchScreen() {
   return (
     <CompanyScreen>
       <FlatList
-        data={filteredResults}
+        data={results}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         showsVerticalScrollIndicator={false}
@@ -318,7 +342,7 @@ export default function TechnicianSearchScreen() {
                   selected={!filters.licenseCategory}
                   onPress={() => updateFilter('licenseCategory', undefined)}
                 />
-                {LICENSE_CATEGORIES.slice(0, 8).map((license) => (
+                {LICENSE_CATEGORIES.map((license) => (
                   <CompanyChip
                     key={license.code}
                     label={license.code}
@@ -328,16 +352,10 @@ export default function TechnicianSearchScreen() {
                 ))}
               </FilterGroup>
 
-              <FilterGroup label="Aircraft category">
-                {(['all', 'airplane', 'helicopter'] as (AircraftCategory | 'all')[]).map((cat) => (
-                  <CompanyChip
-                    key={cat}
-                    label={cat === 'all' ? 'Any' : cat === 'airplane' ? 'Airplanes' : 'Helicopters'}
-                    selected={aircraftCatFilter === cat}
-                    onPress={() => setAircraftCatFilter(cat)}
-                  />
-                ))}
-              </FilterGroup>
+              <CollapsibleAircraftFilter
+                selectedKeys={filters.aircraftFamilyKeys ?? []}
+                onChange={(next) => updateFilter('aircraftFamilyKeys', next.length ? next : undefined)}
+              />
 
               <View style={styles.searchActions}>
                 <TouchableOpacity
@@ -400,8 +418,7 @@ export default function TechnicianSearchScreen() {
             {hasSearched && !loading ? (
               <View style={styles.resultHeader}>
                 <Text style={styles.resultTitle}>
-                  {filteredResults.length} {filteredResults.length === 1 ? 'result' : 'results'}
-                  {filteredResults.length !== results.length ? ` of ${results.length}` : ''}
+                  {results.length} {results.length === 1 ? 'result' : 'results'}
                 </Text>
                 <Text style={styles.resultSub}>
                   {selectedOffer
@@ -454,6 +471,40 @@ function FilterGroup({ label, children }: { label: string; children: React.React
   );
 }
 
+// Fase 3b screen 3 — collapsed by default, showing only a one-line summary
+// of the active selection (same pattern the mission plan sets for map/
+// search filters); tap to expand into the shared AircraftFamilyPicker
+// (search + tabs + results, getFamilies() over the 606-row catalog — same
+// options/labels as screens 1-2, never a hardcoded aircraft list).
+function CollapsibleAircraftFilter({
+  selectedKeys,
+  onChange,
+}: {
+  selectedKeys: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const summary = selectedKeys.length === 0 ? 'Any aircraft' : `${selectedKeys.length} famil${selectedKeys.length === 1 ? 'y' : 'ies'} selected`;
+
+  return (
+    <View style={styles.filterGroup}>
+      <TouchableOpacity
+        style={styles.collapsibleHeader}
+        onPress={() => setExpanded((v) => !v)}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+      >
+        <Text style={styles.filterLabel}>Aircraft type</Text>
+        <View style={styles.collapsibleSummaryRow}>
+          <Text style={styles.collapsibleSummary}>{summary}</Text>
+          <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text>
+        </View>
+      </TouchableOpacity>
+      {expanded ? <AircraftFamilyPicker selectedKeys={selectedKeys} onChange={onChange} /> : null}
+    </View>
+  );
+}
+
 /**
  * TechnicianResultCard renders a company-safe technician preview card.
  *
@@ -495,10 +546,9 @@ function TechnicianResultCard({
     ? TECHNICIAN_TYPES.find((type) => type.code === preview.technicianType)?.label ?? labelize(preview.technicianType)
     : 'Technician';
   const licenseChips = preview?.licenses?.length ? preview.licenses : technician.licenseCategories;
-  const aircraftChips = preview?.habilitations?.length
-    ? habilitationAircraftCodes(preview.habilitations, ratingIndex)
-    : technician.aircraftTypes;
-  const aircraftCat = aircraftChips.length > 0 ? inferAircraftCategory(aircraftChips) : null;
+  const typeRatingChips = preview?.habilitations?.length ? resolveTypeRatingLabels(preview.habilitations, ratingIndex) : [];
+  const productTypes = preview?.habilitations?.length ? resolveTechnicianProductTypes(preview.habilitations, ratingIndex) : new Set<NonNullable<AircraftTypeRatingCatalog['productType']>>();
+  const aircraftCat = productTypes.size > 1 ? 'mixed' : productTypes.size === 1 ? [...productTypes][0] : null;
 
   // Footer button state — role gates the send action entirely
   const canSend = canSendRole && selectedOffer !== null && !activeOfferRequest && !sendingThis;
@@ -545,8 +595,8 @@ function TechnicianResultCard({
           small
         />
         <CompanyBadge label={`${technician.yearsExperience} years experience`} tone="muted" small />
-        {aircraftCat === 'airplane' && <CompanyBadge label="Airplane" tone="info" small />}
-        {aircraftCat === 'helicopter' && <CompanyBadge label="Helicopter" tone="info" small />}
+        {aircraftCat === 'Aeroplane' && <CompanyBadge label="Airplane" tone="info" small />}
+        {aircraftCat === 'Helicopter' && <CompanyBadge label="Helicopter" tone="info" small />}
         {aircraftCat === 'mixed' && <CompanyBadge label="Mixed" tone="warning" small />}
         {!technician.fullName ? (
           <View style={styles.lockBadge}>
@@ -570,12 +620,12 @@ function TechnicianResultCard({
       </View>
 
       <View style={styles.chipBlock}>
-        <Text style={styles.smallLabel}>Aircraft</Text>
+        <Text style={styles.smallLabel}>Type ratings</Text>
         <View style={styles.chipWrap}>
-          {aircraftChips.length ? (
-            aircraftChips.slice(0, 5).map((aircraft) => <CompanyChip key={aircraft} label={aircraft} />)
+          {typeRatingChips.length ? (
+            typeRatingChips.slice(0, 5).map((rating) => <CompanyChip key={rating} label={rating} />)
           ) : (
-            <Text style={styles.mutedText}>No aircraft listed</Text>
+            <Text style={styles.mutedText}>No type ratings listed</Text>
           )}
         </View>
       </View>
@@ -670,6 +720,28 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     fontWeight: '700',
     color: companyUi.textSoft,
+  },
+  collapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  collapsibleSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  collapsibleSummary: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: companyUi.textMuted,
+  },
+  chevron: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: companyUi.textMuted,
   },
   chipWrap: {
     flexDirection: 'row',
