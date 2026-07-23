@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { OfferApplication } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
-import { isActiveOfferRelationStatus } from '../../utils/offerRelationStateMachine';
+import { evaluateApplicationConflict, isActiveOfferRelationStatus } from '../../utils/offerRelationStateMachine';
 import { isOfferOpenForTechnicians, offerRepository } from './offerRepository';
 import { mapOfferApplicationRow, mapOfferRequestRow, throwIfError } from './supabaseMappers';
 
@@ -68,19 +68,32 @@ export const offerApplicationRepository = {
       throw new Error('This offer is no longer available.');
     }
 
-    const { data: existingRequests, error: reqError } = await supabase
-      .from('offer_requests')
-      .select('id, company_id, technician_id, offer_id, status, identity_revealed, documents_unlocked, message, created_at, updated_at')
-      .eq('company_id', data.companyId)
-      .eq('technician_id', data.technicianId)
-      .eq('offer_id', data.offerId);
+    const [{ data: existingRequests, error: reqError }, { data: existingApps, error: appError }] = await Promise.all([
+      supabase
+        .from('offer_requests')
+        .select('id, company_id, technician_id, offer_id, status, identity_revealed, documents_unlocked, message, created_at, updated_at')
+        .eq('company_id', data.companyId)
+        .eq('technician_id', data.technicianId)
+        .eq('offer_id', data.offerId),
+      // At most one row can ever exist here — UNIQUE(technician_id, offer_id),
+      // migration 001 — but not checking it here meant a second attempt (or a
+      // reapply after withdrawal/rejection, which the state machine never
+      // allows — see evaluateApplicationConflict) fell straight through to a
+      // raw Postgres unique-violation error instead of a friendly message.
+      supabase
+        .from('offer_applications')
+        .select(SELECT_FIELDS)
+        .eq('technician_id', data.technicianId)
+        .eq('offer_id', data.offerId),
+    ]);
     throwIfError(reqError);
+    throwIfError(appError);
     const activeRequest = ((existingRequests ?? []) as any[])
       .map(mapOfferRequestRow)
       .find((request) => isActiveOfferRelationStatus(request.status));
-    if (activeRequest) {
-      throw new Error('You already have a direct offer for this role. Review it from Direct Offers.');
-    }
+    const existingApplication = ((existingApps ?? []) as any[]).map(mapOfferApplicationRow)[0] ?? null;
+    const conflict = evaluateApplicationConflict(activeRequest, existingApplication);
+    if (conflict) throw new Error(conflict);
 
     const { data: inserted, error } = await supabase
       .from('offer_applications')

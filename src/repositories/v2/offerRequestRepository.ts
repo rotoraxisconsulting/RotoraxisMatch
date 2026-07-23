@@ -1,7 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { OfferRequest } from '../../types/offerRequest';
 import { OfferRequestStatus } from '../../types/enums';
-import { isActiveOfferRelationStatus } from '../../utils/offerRelationStateMachine';
+import { evaluateDirectOfferConflict } from '../../utils/offerRelationStateMachine';
 import { isOfferOpenForTechnicians, offerRepository } from './offerRepository';
 import { technicianRepositoryV2 } from './technicianRepositoryV2';
 import { mapOfferApplicationRow, mapOfferRequestRow, throwIfError } from './supabaseMappers';
@@ -79,29 +79,25 @@ export const offerRequestRepository = {
       .eq('company_id', data.companyId)
       .eq('technician_id', data.technicianId);
     throwIfError(reqError);
-    const activeRequest = ((existingRequests ?? []) as any[])
-      .map(mapOfferRequestRow)
-      .find((request) =>
-        isActiveOfferRelationStatus(request.status) &&
-        (data.offerId ? request.offerId === data.offerId : !request.offerId),
-      );
-    if (activeRequest) throw new Error('An active direct offer already exists for this technician.');
 
+    let existingApplications: any[] = [];
     if (data.offerId) {
-      const { data: existingApplications, error: appError } = await supabase
+      const { data: apps, error: appError } = await supabase
         .from('offer_applications')
         .select('id, technician_id, offer_id, company_id, status, identity_revealed, documents_unlocked, cover_note, created_at, updated_at')
         .eq('company_id', data.companyId)
         .eq('technician_id', data.technicianId)
         .eq('offer_id', data.offerId);
       throwIfError(appError);
-      const activeApplication = ((existingApplications ?? []) as any[])
-        .map(mapOfferApplicationRow)
-        .find((application) => isActiveOfferRelationStatus(application.status));
-      if (activeApplication) {
-        throw new Error('This technician already has an active application for this offer.');
-      }
+      existingApplications = apps ?? [];
     }
+
+    const conflict = evaluateDirectOfferConflict(
+      ((existingRequests ?? []) as any[]).map(mapOfferRequestRow),
+      existingApplications.map(mapOfferApplicationRow),
+      data.offerId,
+    );
+    if (conflict) throw new Error(conflict);
 
     const { data: inserted, error } = await supabase
       .from('offer_requests')

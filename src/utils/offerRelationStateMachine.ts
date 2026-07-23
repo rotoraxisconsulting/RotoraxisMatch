@@ -38,6 +38,73 @@ export function shouldUnlockAcceptedRelation(status: OfferRequestStatus): boolea
   return status === 'accepted';
 }
 
+// Pure conflict checks backing offerRequestRepository.create() and
+// offerApplicationRepository.create() — extracted so the branching that
+// decides whether a new direct-offer/application is allowed can be unit
+// tested without a live Supabase connection. Each repository stays
+// responsible for fetching the rows; these functions only decide.
+
+/**
+ * Guard for offerRequestRepository.create() (a company sending a direct
+ * offer to a technician). `existingRequests` must already be scoped to
+ * this (companyId, technicianId) pair; `existingApplicationsForOffer`
+ * must already be scoped to this (companyId, technicianId, offerId) —
+ * pass `[]` when `offerId` is undefined (an open-ended direct offer has
+ * no matching application table to check).
+ */
+export function evaluateDirectOfferConflict(
+  existingRequests: { status: OfferRequestStatus; offerId?: string }[],
+  existingApplicationsForOffer: { status: OfferRequestStatus }[],
+  offerId: string | undefined,
+): string | null {
+  const activeRequest = existingRequests.find((request) =>
+    isActiveOfferRelationStatus(request.status) &&
+    (offerId ? request.offerId === offerId : !request.offerId),
+  );
+  if (activeRequest) return 'An active direct offer already exists for this technician.';
+
+  if (offerId) {
+    const activeApplication = existingApplicationsForOffer.find((application) =>
+      isActiveOfferRelationStatus(application.status),
+    );
+    if (activeApplication) return 'This technician already has an active application for this offer.';
+  }
+
+  return null;
+}
+
+/**
+ * Guard for offerApplicationRepository.create() (a technician applying to
+ * an offer). `existingActiveDirectOffer` is the technician's active direct
+ * offer for this same offer, if any. `existingApplication` is the
+ * technician's own offer_applications row for this offer, if any — at
+ * most one can ever exist (UNIQUE(technician_id, offer_id), migration
+ * 001) and its status can never be re-opened once terminal (rejected/
+ * expired/withdrawn — see assertOfferRelationTransition/
+ * assert_offer_relation_transition, both of which map every terminal
+ * status to zero allowed outgoing transitions). So a terminal existing row
+ * always blocks a new attempt too — same one-shot-per-offer rule, just a
+ * friendlier message than the raw unique-constraint violation Postgres
+ * would otherwise surface.
+ */
+export function evaluateApplicationConflict(
+  existingActiveDirectOffer: { status: OfferRequestStatus } | undefined | null,
+  existingApplication: { status: OfferRequestStatus } | undefined | null,
+): string | null {
+  if (existingActiveDirectOffer && isActiveOfferRelationStatus(existingActiveDirectOffer.status)) {
+    return 'You already have a direct offer for this role. Review it from Direct Offers.';
+  }
+
+  if (existingApplication) {
+    if (isActiveOfferRelationStatus(existingApplication.status)) {
+      return 'You already have an active application for this offer.';
+    }
+    return 'You already applied to this offer previously — re-applying is not available once an application has been withdrawn or decided.';
+  }
+
+  return null;
+}
+
 export function getStatusActivityType(
   kind: OfferRelationKind,
   status: OfferRequestStatus,

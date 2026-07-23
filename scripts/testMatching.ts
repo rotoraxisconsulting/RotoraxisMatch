@@ -38,6 +38,14 @@ import { getFamilies, getByProductType, searchRatings } from '../src/constants/a
 import { getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../src/constants/aircraftTypeRatings';
 import { getCompatibleProductType, isUnusualCombination } from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
+import {
+  isActiveOfferRelationStatus,
+  assertOfferRelationTransition,
+  shouldUnlockAcceptedRelation,
+  getStatusActivityType,
+  evaluateDirectOfferConflict,
+  evaluateApplicationConflict,
+} from '../src/utils/offerRelationStateMachine';
 
 let passed = 0;
 let failed = 0;
@@ -1141,6 +1149,149 @@ async function main() {
 
   await test('Validity date order — expiresAt before issuedAt is invalid', () => {
     assert.equal(isValidDateOrder('2025-01-01', '2024-01-01'), false);
+  });
+
+  // ── Offer relation state machine ──────────────────────────────────────
+  // Governs offer_requests (direct offers) AND offer_applications (both
+  // tables share the same offer_request_status enum and the same DB
+  // trigger, handle_offer_relation_status_transition/
+  // assert_offer_relation_transition). Zero coverage before this pass,
+  // despite backing every accept/reject/withdraw/reapply decision in both
+  // flows — added here rather than only exercised manually in the app.
+
+  await test('isActiveOfferRelationStatus — pending and accepted are active, everything terminal is not', () => {
+    assert.equal(isActiveOfferRelationStatus('pending'), true);
+    assert.equal(isActiveOfferRelationStatus('accepted'), true);
+    assert.equal(isActiveOfferRelationStatus('rejected'), false);
+    assert.equal(isActiveOfferRelationStatus('expired'), false);
+    assert.equal(isActiveOfferRelationStatus('withdrawn'), false);
+  });
+
+  await test('assertOfferRelationTransition — same-status no-op never throws', () => {
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'pending'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('accepted', 'accepted'));
+  });
+
+  await test('assertOfferRelationTransition — pending can move to any terminal or accepted state', () => {
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'accepted'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'rejected'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'expired'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'withdrawn'));
+  });
+
+  await test('assertOfferRelationTransition — terminal statuses never transition anywhere else (one-shot by design)', () => {
+    assert.throws(() => assertOfferRelationTransition('accepted', 'rejected'));
+    assert.throws(() => assertOfferRelationTransition('rejected', 'pending'));
+    assert.throws(() => assertOfferRelationTransition('withdrawn', 'pending'));
+    assert.throws(() => assertOfferRelationTransition('expired', 'accepted'));
+  });
+
+  await test('shouldUnlockAcceptedRelation — true only for accepted', () => {
+    assert.equal(shouldUnlockAcceptedRelation('accepted'), true);
+    assert.equal(shouldUnlockAcceptedRelation('pending'), false);
+    assert.equal(shouldUnlockAcceptedRelation('rejected'), false);
+    assert.equal(shouldUnlockAcceptedRelation('withdrawn'), false);
+    assert.equal(shouldUnlockAcceptedRelation('expired'), false);
+  });
+
+  await test('getStatusActivityType — direct offer and application accept/reject map to distinct activity types; other statuses are silent', () => {
+    assert.equal(getStatusActivityType('direct_offer', 'accepted'), 'direct_offer_accepted');
+    assert.equal(getStatusActivityType('direct_offer', 'rejected'), 'direct_offer_rejected');
+    assert.equal(getStatusActivityType('direct_offer', 'pending'), null);
+    assert.equal(getStatusActivityType('application', 'accepted'), 'application_accepted');
+    assert.equal(getStatusActivityType('application', 'rejected'), 'application_rejected');
+    assert.equal(getStatusActivityType('application', 'withdrawn'), null);
+  });
+
+  // ── Direct offer creation guard (offerRequestRepository.create) ───────
+
+  await test('evaluateDirectOfferConflict — nothing existing, nothing blocks', () => {
+    assert.equal(evaluateDirectOfferConflict([], [], 'offer-1'), null);
+  });
+
+  await test('evaluateDirectOfferConflict — an active request for the same offer blocks', () => {
+    const result = evaluateDirectOfferConflict(
+      [{ status: 'pending', offerId: 'offer-1' }],
+      [],
+      'offer-1',
+    );
+    assert.equal(result, 'An active direct offer already exists for this technician.');
+  });
+
+  await test('evaluateDirectOfferConflict — an active request for a DIFFERENT offer never cross-blocks', () => {
+    const result = evaluateDirectOfferConflict(
+      [{ status: 'pending', offerId: 'offer-other' }],
+      [],
+      'offer-1',
+    );
+    assert.equal(result, null);
+  });
+
+  await test('evaluateDirectOfferConflict — a terminal (withdrawn) request for the same offer never blocks a resend', () => {
+    const result = evaluateDirectOfferConflict(
+      [{ status: 'withdrawn', offerId: 'offer-1' }],
+      [],
+      'offer-1',
+    );
+    assert.equal(result, null);
+  });
+
+  await test('evaluateDirectOfferConflict — an active application for the same offer blocks (only checked when offerId is set)', () => {
+    const result = evaluateDirectOfferConflict([], [{ status: 'pending' }], 'offer-1');
+    assert.equal(result, 'This technician already has an active application for this offer.');
+  });
+
+  await test('evaluateDirectOfferConflict — open-ended direct offer (no offerId) only conflicts with another open-ended active request', () => {
+    assert.equal(
+      evaluateDirectOfferConflict([{ status: 'pending', offerId: undefined }], [], undefined),
+      'An active direct offer already exists for this technician.',
+    );
+    assert.equal(
+      evaluateDirectOfferConflict([{ status: 'pending', offerId: 'offer-1' }], [], undefined),
+      null,
+    );
+  });
+
+  // ── Application creation guard (offerApplicationRepository.create) ────
+  // Regression coverage for a real gap found while auditing this flow: the
+  // repository checked for a conflicting direct offer before inserting,
+  // but never checked its OWN table — offer_applications has
+  // UNIQUE(technician_id, offer_id), so a second attempt (including a
+  // reapply after withdrawal/rejection, which the state machine above
+  // never allows) fell through to a raw Postgres unique-violation error
+  // instead of a friendly message. evaluateApplicationConflict backs the
+  // fix.
+
+  await test('evaluateApplicationConflict — nothing existing, nothing blocks', () => {
+    assert.equal(evaluateApplicationConflict(undefined, null), null);
+  });
+
+  await test('evaluateApplicationConflict — an active direct offer for this role blocks, before even checking applications', () => {
+    const result = evaluateApplicationConflict({ status: 'pending' }, null);
+    assert.equal(result, 'You already have a direct offer for this role. Review it from Direct Offers.');
+  });
+
+  await test('evaluateApplicationConflict — a terminal direct offer never blocks applying', () => {
+    const result = evaluateApplicationConflict({ status: 'rejected' }, null);
+    assert.equal(result, null);
+  });
+
+  await test('evaluateApplicationConflict — a pending or accepted application of your own blocks as "active"', () => {
+    assert.equal(
+      evaluateApplicationConflict(undefined, { status: 'pending' }),
+      'You already have an active application for this offer.',
+    );
+    assert.equal(
+      evaluateApplicationConflict(undefined, { status: 'accepted' }),
+      'You already have an active application for this offer.',
+    );
+  });
+
+  await test('evaluateApplicationConflict — a withdrawn or rejected application blocks reapplying with a dedicated message (one-shot per offer)', () => {
+    const withdrawn = evaluateApplicationConflict(undefined, { status: 'withdrawn' });
+    const rejected = evaluateApplicationConflict(undefined, { status: 'rejected' });
+    assert.equal(withdrawn, 'You already applied to this offer previously — re-applying is not available once an application has been withdrawn or decided.');
+    assert.equal(rejected, withdrawn);
   });
 }
 
