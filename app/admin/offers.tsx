@@ -46,6 +46,7 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'draft', label: 'Draft' },
   { key: 'closed', label: 'Closed' },
   { key: 'expired', label: 'Expired' },
+  { key: 'archived', label: 'Archived' },
 ];
 
 const STATUS_LABELS: Record<OfferStatus, string> = {
@@ -53,6 +54,7 @@ const STATUS_LABELS: Record<OfferStatus, string> = {
   published: 'Published',
   closed: 'Closed',
   expired: 'Expired',
+  archived: 'Archived',
 };
 
 const CONTRACT_LABELS: Record<string, string> = {
@@ -82,18 +84,24 @@ const NEXT_ACTIONS: Record<OfferStatus, OfferAction[]> = {
     { status: 'expired', label: 'Expire', color: adminUi.red, icon: XCircle },
   ],
   expired: [],
+  // Terminal, same as expired — see docs/OFFER_DELETE_SOFT_DELETE_PROPOSAL.md.
+  // A company archives an offer (instead of a blocked hard delete) when it
+  // has real applications/direct offers attached; there's no "reopen" path
+  // back out of that for MVP.
+  archived: [],
 };
 
 function statusTone(status: OfferStatus): AdminTone {
   if (status === 'published') return 'success';
   if (status === 'draft') return 'warning';
   if (status === 'closed') return 'navy';
+  if (status === 'archived') return 'muted';
   return 'error';
 }
 
 function filterOffers(offers: OfferWithRequirements[], status: StatusFilter): OfferWithRequirements[] {
   const result = status === 'all' ? offers : offers.filter((offer) => offer.status === status);
-  const order: Record<OfferStatus, number> = { published: 0, draft: 1, closed: 2, expired: 3 };
+  const order: Record<OfferStatus, number> = { published: 0, draft: 1, closed: 2, expired: 3, archived: 4 };
   return [...result].sort((a, b) => {
     const statusOrder = order[a.status] - order[b.status];
     if (statusOrder !== 0) return statusOrder;

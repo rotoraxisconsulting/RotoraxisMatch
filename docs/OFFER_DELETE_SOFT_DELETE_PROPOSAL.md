@@ -1,6 +1,10 @@
 # Offer delete — soft-delete/archive model proposal
 
-**Status: PROPOSAL, not implemented.** Written for discussion per the RLS
+**Status: DECIDED and implemented in code (2026-07-23); migration 026 NOT
+yet applied against Supabase, awaiting explicit go-ahead alongside
+migration 025.** The one open fork below (`'archived'` vs. reusing
+`'closed'`) was resolved in favor of the new `'archived'` value. Written
+originally for discussion per the RLS
 audit finding that `offers` has no DELETE policy for the owning company
 while a live "Delete offer" button exists
 (`docs/RLS_OPERATION_AUDIT_2026-07-23_REPORT.md`, §1.1). Explicitly called
@@ -141,3 +145,41 @@ tell them apart in their own offer list. Recommending the new `'archived'`
 value (clean separation, tiny additive migration, no behavior change to
 existing `'closed'` offers) — but this is the one piece of this proposal
 that's a genuine either-way call, not a technical constraint.
+
+**Decided (2026-07-23): the new `'archived'` value.**
+
+## Implementation notes (as built)
+
+- `supabase/migrations/026_offer_archive_and_safe_delete.sql` — adds
+  `offer_status.archived` (additive enum value) and the
+  `offers_delete_company` policy scoped to zero live dependents. **Written,
+  not applied** — same protocol as migration 025, needs explicit
+  confirmation before `apply_migration` runs.
+- `src/types/enums.ts` — `OfferStatus` gained `'archived'`.
+- `src/repositories/v2/offerRepository.ts` — new `getDependentCounts(offerId)`
+  (read-only, used by the UI to choose dialog copy before acting);
+  `delete()` now counts dependents itself and branches to a real DELETE or
+  an UPDATE to `status: 'archived'`, returning `{ action: 'deleted' |
+  'archived' }` instead of `void`. **This changes `delete()`'s public
+  return shape** — flagging per CLAUDE.md's "don't change a repository's
+  public API shape without saying so," though it was an implied
+  consequence of this same proposal (§3) already shown before
+  implementing.
+- `app/company/offers/[id].tsx` — `handleDelete()` now checks dependents
+  first and picks one of two confirmation messages (Delete vs. Archive
+  wording) before showing the dialog; `deleteOffer()` branches on the
+  returned `action` — navigates away on a real delete, or reloads the
+  offer in place and shows an explanatory alert when it was archived
+  instead. No change to which offers show the Delete button (still gated
+  to `status === 'closed'`, pre-existing, unrelated to this change).
+- `app/admin/offers.tsx` — added `'archived'` to the tab list, status
+  label map, per-status next-actions map (terminal, empty array — same as
+  `expired`), status tone (`'muted'`), and sort order map. No changes
+  needed in `app/company/offers/index.tsx` (its `statusTone`/
+  `statusAccent` fallbacks already resolve `'archived'` correctly, same
+  as they do today for any status not explicitly listed) or on the
+  technician side (an archived offer flows through the same "closed,
+  historical" path `closed`/`expired` already use in
+  `app/technician/offers/[id].tsx`, no code changes required there).
+- `tsc --noEmit` clean, 96/96 tests passing (no pure-logic path touched by
+  this change).

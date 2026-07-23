@@ -257,8 +257,23 @@ export default function OfferDetailScreen() {
     if (!id) return;
     setStatusChanging(true);
     try {
-      await offerRepository.delete(id);
-      router.replace('/company/offers' as any);
+      const { action } = await offerRepository.delete(id);
+      if (action === 'deleted') {
+        router.replace('/company/offers' as any);
+        return;
+      }
+      // Archived, not deleted: the offer had existing applications or
+      // direct offers, so the row was kept (see
+      // docs/OFFER_DELETE_SOFT_DELETE_PROPOSAL.md) — stay on this page and
+      // reflect the new status instead of navigating away as if it were
+      // gone.
+      const updated = await offerRepository.getWithRequirements(id);
+      setOffer(updated);
+      setStatusChanging(false);
+      Alert.alert(
+        'Offer archived',
+        'This offer has existing applications or direct offers attached, so it was archived instead of permanently deleted. It is no longer visible to technicians, but every application, direct offer and chat tied to it is untouched.',
+      );
     } catch (e: any) {
       Alert.alert('Error', e?.message ?? 'Could not delete the offer.');
       setStatusChanging(false);
@@ -267,10 +282,17 @@ export default function OfferDetailScreen() {
 
   async function handleDelete() {
     if (!offer || !id) return;
+    const { applications, directOffers } = await offerRepository.getDependentCounts(id);
+    const hasDependents = applications > 0 || directOffers > 0;
+    const message = hasDependents
+      ? `This offer has ${applications} application(s) and ${directOffers} direct offer(s) attached, so it can't be permanently deleted. Archive it instead? It will stop being visible to technicians, but every application, direct offer and chat tied to it stays exactly as it is.`
+      : 'This action cannot be undone.';
+    const confirmLabel = hasDependents ? 'Archive' : 'Delete';
+
     if (Platform.OS === 'web') {
       const confirmed = typeof window === 'undefined'
         ? true
-        : window.confirm('Delete offer?\n\nThis action cannot be undone. All applications and direct offers linked to this offer will also be removed.');
+        : window.confirm(`Delete offer?\n\n${message}`);
       if (!confirmed) return;
       await deleteOffer();
       return;
@@ -278,10 +300,10 @@ export default function OfferDetailScreen() {
 
     Alert.alert(
       'Delete offer?',
-      'This action cannot be undone. All applications and direct offers linked to this offer will also be removed.',
+      message,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: deleteOffer },
+        { text: confirmLabel, style: 'destructive', onPress: deleteOffer },
       ],
     );
   }

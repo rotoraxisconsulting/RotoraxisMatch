@@ -207,12 +207,56 @@ export const offerRepository = {
     });
   },
 
-  async delete(id: string): Promise<void> {
+  /**
+   * Live dependents = rows representing an actual transaction against this
+   * offer (applications, direct offers). Used to decide, BEFORE acting,
+   * whether delete() can remove the row for real or must archive it
+   * instead — see docs/OFFER_DELETE_SOFT_DELETE_PROPOSAL.md. Exposed
+   * separately (not just inlined into delete()) so the UI can show the
+   * right confirmation copy before the user commits to an action.
+   */
+  async getDependentCounts(offerId: string): Promise<{ applications: number; directOffers: number }> {
+    const [applications, directOffers] = await Promise.all([
+      supabase.from('offer_applications').select('id', { count: 'exact', head: true }).eq('offer_id', offerId),
+      supabase.from('offer_requests').select('id', { count: 'exact', head: true }).eq('offer_id', offerId),
+    ]);
+    throwIfError(applications.error);
+    throwIfError(directOffers.error);
+    return { applications: applications.count ?? 0, directOffers: directOffers.count ?? 0 };
+  },
+
+  /**
+   * Zero applications AND zero direct offers ever referenced this offer →
+   * nothing else in the system depends on the row, so a real DELETE is
+   * safe and removes it. Otherwise the row is never deleted — it's
+   * archived in place (status: 'archived'), leaving every application,
+   * direct offer and chat tied to it completely untouched. Re-derives the
+   * dependent counts itself rather than trusting a caller's earlier
+   * getDependentCounts() result, since state can change between the two
+   * calls (e.g. the UI's pre-check for dialog copy vs. this actually
+   * running) — worst case a borderline race means this deletes for real
+   * instead of archiving, never the reverse, which is the safe direction
+   * to be wrong in.
+   * offers_delete_company (migration 026) enforces the same
+   * zero-dependents rule at the database level too — this method decides
+   * the branch proactively so an RLS-blocked delete (0 rows, no error)
+   * never happens in normal use, it's a backstop, not the fix itself.
+   */
+  async delete(id: string): Promise<{ action: 'deleted' | 'archived' }> {
+    const { applications, directOffers } = await this.getDependentCounts(id);
+
+    if (applications === 0 && directOffers === 0) {
+      const { error } = await supabase.from('offers').delete().eq('id', id);
+      throwIfError(error);
+      return { action: 'deleted' };
+    }
+
     const { error } = await supabase
       .from('offers')
-      .delete()
+      .update({ status: 'archived' as OfferStatus })
       .eq('id', id);
     throwIfError(error);
+    return { action: 'archived' };
   },
 
   async replaceRequirements(offerId: string, requirements: {

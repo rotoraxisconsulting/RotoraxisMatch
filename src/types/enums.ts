@@ -34,7 +34,7 @@ export type OfferRequestStatus =
   | 'expired'
   | 'withdrawn';
 
-export type OfferStatus = 'draft' | 'published' | 'closed' | 'expired';
+export type OfferStatus = 'draft' | 'published' | 'closed' | 'expired' | 'archived';
 
 export type CompanyMemberRole = 'admin' | 'recruiter' | 'viewer';
 
