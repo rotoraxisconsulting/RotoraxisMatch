@@ -189,18 +189,26 @@ export default function TechnicianDocumentsScreen() {
         uploadedAt: new Date().toISOString(),
       });
 
-      // Record medical consent
+      // Record medical consent. ignoreDuplicates: true — user_consents has
+      // no UPDATE policy (deliberate: it's an immutable audit trail, see
+      // migration 015), so a second medical upload under the same
+      // consent_version must skip the conflicting row instead of taking
+      // the default upsert's ON CONFLICT DO UPDATE path, which RLS would
+      // reject. Logged rather than thrown: the document row above already
+      // saved successfully, and this is a secondary audit write — failing
+      // it should not make the upload look like it failed.
       if (uploadType === 'medical') {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          await supabase.from('user_consents').upsert(
+          const { error: consentError } = await supabase.from('user_consents').upsert(
             {
               user_id: user.id,
               consent_type: 'medical_document',
               consent_version: CONSENT_VERSION,
             },
-            { onConflict: 'user_id,consent_type,consent_version' },
+            { onConflict: 'user_id,consent_type,consent_version', ignoreDuplicates: true },
           );
+          if (consentError) console.error('Failed to record medical consent:', consentError);
         }
       }
 

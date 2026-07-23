@@ -141,15 +141,20 @@ export default function TechnicianSignupScreen() {
         return;
       }
 
-      // Step 3: Record ToS consent
-      await supabase.from('user_consents').upsert(
+      // Step 3: Record ToS consent. ignoreDuplicates: true — user_consents
+      // has no UPDATE policy (immutable audit trail, migration 015); a
+      // retried signup for the same user_id/version must skip the
+      // conflicting row rather than take the default upsert's
+      // ON CONFLICT DO UPDATE path, which RLS would reject.
+      const { error: consentError } = await supabase.from('user_consents').upsert(
         {
           user_id: data.user!.id,
           consent_type: 'tos_privacy',
           consent_version: CONSENT_VERSION,
         },
-        { onConflict: 'user_id,consent_type,consent_version' },
+        { onConflict: 'user_id,consent_type,consent_version', ignoreDuplicates: true },
       );
+      if (consentError) console.error('Failed to record ToS consent:', consentError);
     }
 
     // Step 4: Redirect to pending verification
