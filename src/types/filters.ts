@@ -51,12 +51,18 @@ export interface TechnicianFilters {
 /** @deprecated use TechnicianSearchFilters instead */
 export interface MapFilters {
   licenseCategories?: string[];
-  aircraftTypes?: string[];
+  // Family keys ("<manufacturer>::<aircraftFamily>", see getAircraftFamilyKey)
+  // from the 606-row aircraft_type_ratings catalog (Fase 3b screen 4,
+  // 2026-07-22) — same shape as TechnicianFilters.aircraftFamilyKeys above,
+  // ApproximateFilterSection, and offerMatchExplain.ts's broad filter.
+  aircraftFamilyKeys?: string[];
   verificationStatuses?: string[];
   availabilityStatuses?: string[];
   /** @deprecated use licenseCategories instead */
   licenseCategory?: string;
-  /** @deprecated use aircraftTypes instead */
+  /** @deprecated unused since Fase 3b screen 4 — use aircraftFamilyKeys instead */
+  aircraftTypes?: string[];
+  /** @deprecated unused since Fase 3b screen 4 — use aircraftFamilyKeys instead */
   aircraftType?: string;
   /** @deprecated use verificationStatuses instead */
   verificationStatus?: string;

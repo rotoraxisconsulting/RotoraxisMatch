@@ -71,14 +71,18 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
       setLoading(true);
       setHasSearched(true);
 
-      // Map V1 TechnicianFilters → V2 search params
+      // Map V1 TechnicianFilters (single-select UI) → V2 search params
+      // (array-based — technicianRepositoryV2.search() takes arrays for
+      // every multi-value dimension, single UI selections just wrap in a
+      // 1-element array; the map screen's own multi-select filters pass
+      // their arrays straight through to the same signature).
       const v2Filters = {
-        licenseCode: filters.licenseCategory ?? undefined,
+        licenseCodes: filters.licenseCategory ? [filters.licenseCategory] : undefined,
         aircraftFamilyKeys: filters.aircraftFamilyKeys?.length ? filters.aircraftFamilyKeys : undefined,
         country: filters.country ?? undefined,
         city: filters.city ?? undefined,
-        verificationStatus: filters.verificationStatus ?? undefined,
-        availabilityStatus: filters.availabilityStatus as AvailabilityStatus | undefined,
+        verificationStatuses: filters.verificationStatus ? [filters.verificationStatus] : undefined,
+        availabilityStatuses: filters.availabilityStatus ? [filters.availabilityStatus as AvailabilityStatus] : undefined,
       };
 
       // Load previews, the acceptance records and the ratings catalog in parallel

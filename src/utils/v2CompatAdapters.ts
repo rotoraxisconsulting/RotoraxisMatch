@@ -28,6 +28,7 @@ import { MatchRequest, MatchRequestStatus } from '../types/matchRequest';
 import { resolveLocationSnapshot } from '../constants/locationCities';
 import { AircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { TechnicianHabilitation } from '../types/technician';
+import { AircraftTypeRatingCatalog } from '../types/catalog';
 
 // A habilitation may now be rating-only (aircraftTypeCode undefined). For
 // V1-shaped flat lists we fall back to the rating's aircraft family so
@@ -45,6 +46,41 @@ export function habilitationAircraftCodes(habilitations: TechnicianHabilitation[
     }
   }
   return [...codes];
+}
+
+// Fase 3b screens 3-4 — "Type ratings" labels (renamed from "Aircraft"),
+// showing each EXACT rating's catalog displayName instead of the family/
+// legacy-code strings habilitationAircraftCodes() above returns. Legacy
+// habilitations (aircraftTypeCode only, no rating id) have no exact rating
+// to show and are skipped — same as TypeRatingRequirementsEditor/
+// HabilitationsEditor. Shared by search.tsx and the map (native + web) so
+// both render the same labels from the same rule, never two independent
+// copies.
+export function resolveTypeRatingLabels(habilitations: TechnicianHabilitation[], ratingIndex: AircraftRatingIndex): string[] {
+  const labels = new Set<string>();
+  habilitations.forEach((h) => {
+    if (!h.aircraftTypeRatingId) return;
+    const rating = ratingIndex.get(h.aircraftTypeRatingId);
+    if (rating) labels.add(rating.displayName);
+  });
+  return [...labels];
+}
+
+// Airplane/Helicopter/Mixed badge, derived from the 606-row catalog's own
+// productType field — never a hardcoded aircraft category lookup. A
+// habilitation with no resolvable rating, or a rating whose productType
+// hasn't been backfilled, contributes nothing (never guessed).
+export function resolveTechnicianProductTypes(
+  habilitations: TechnicianHabilitation[],
+  ratingIndex: AircraftRatingIndex,
+): Set<NonNullable<AircraftTypeRatingCatalog['productType']>> {
+  const types = new Set<NonNullable<AircraftTypeRatingCatalog['productType']>>();
+  habilitations.forEach((h) => {
+    if (!h.aircraftTypeRatingId) return;
+    const productType = ratingIndex.get(h.aircraftTypeRatingId)?.productType;
+    if (productType) types.add(productType);
+  });
+  return types;
 }
 
 // ---------------------------------------------------------------------------

@@ -13,16 +13,26 @@ import {
 import { WebView } from 'react-native-webview';
 import { ArrowLeft, CheckCircle, Clock, Send, SlidersHorizontal } from 'lucide-react-native';
 import { SafeTechnicianView } from '../types';
+import { TechnicianHabilitation } from '../types/technician';
 import { MapFilters, MapFilterValue } from '../types/filters';
 import { MapOfferMatchOption } from '../types/mapOffers';
 import { colors, spacing } from '../theme';
 import { LICENSE_CATEGORIES } from '../constants/licenses';
-import { AIRCRAFT_TYPES } from '../constants/aircraftTypes';
+import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
+import { getFamilies } from '../constants/aircraftTypeRatingViews';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
+import { resolveTypeRatingLabels } from '../utils/v2CompatAdapters';
+import { CollapsibleAircraftFilter } from './CollapsibleAircraftFilter';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
 export interface TechnicianMapProps {
   technicians: SafeTechnicianView[];
+  // Raw habilitations per technician id, keyed the same way as
+  // technicians — used to resolve "Type ratings" catalog displayName
+  // labels for pins/popups instead of the flattened
+  // technician.aircraftTypes family/legacy-code strings.
+  habilitationsById: Record<string, TechnicianHabilitation[]>;
   filters: MapFilters;
   onFilterChange: (key: keyof MapFilters, value: MapFilterValue) => void;
   loading: boolean;
@@ -154,15 +164,15 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       var licenses = (m.licenseCategories || []).map(function(l) {
         return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(10,22,40,0.07);color:#1E3A5F;border:1px solid rgba(10,22,40,0.15);margin:0 3px 3px 0;">'+escHtml(l)+'</span>';
       }).join('');
-      var at = m.aircraftTypes || [];
-      var aircraft = at.slice(0,4).map(escHtml).join(' &bull; ') + (at.length>4 ? ' +' + (at.length-4) : '');
+      var tr = m.typeRatings || [];
+      var typeRatings = tr.slice(0,4).map(escHtml).join(' &bull; ') + (tr.length>4 ? ' +' + (tr.length-4) : '');
       var sendButton = '<button type="button" data-tech-id="'+escAttr(m.id)+'" onclick="post(\\'map-select-technician:\\' + this.getAttribute(\\'data-tech-id\\'))" style="width:100%;min-height:38px;margin-top:10px;border:0;border-radius:11px;background:#0A1628;color:#FFFFFF;font-size:12px;font-weight:700;">Send direct offer</button>';
       return '<div>' +
         '<div style="font-weight:700;font-size:15px;color:#1A2332;margin-bottom:2px;">'+escHtml(m.anonymousCode)+'</div>' +
         '<div style="font-size:12px;color:#475569;margin-bottom:8px;">'+escHtml(m.city)+', '+escHtml(m.country)+(m.baseAirport?' &bull; '+escHtml(m.baseAirport):'')+' &bull; '+escHtml(String(m.yearsExperience))+' yrs exp</div>' +
         '<div style="margin-bottom:8px;">'+chip(availLabel(m.availability),ac)+chip(m.verificationStatus,vc)+'</div>' +
         (licenses ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Licenses</div><div style="margin-bottom:8px;">'+licenses+'</div>' : '') +
-        (aircraft ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Aircraft</div><div style="font-size:12px;color:#475569;margin-bottom:6px;">'+aircraft+'</div>' : '') +
+        (typeRatings ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Type ratings</div><div style="font-size:12px;color:#475569;margin-bottom:6px;">'+typeRatings+'</div>' : '') +
         sendButton +
       '</div>';
     }
@@ -276,13 +286,15 @@ const USE_MINIMAL = false;
 
 type MultiFilterKey =
   | 'licenseCategories'
-  | 'aircraftTypes'
+  | 'aircraftFamilyKeys'
   | 'verificationStatuses'
   | 'availabilityStatuses';
 
-const LEGACY_FILTER_KEYS: Record<MultiFilterKey, keyof MapFilters> = {
+// aircraftFamilyKeys has no legacy single-value fallback — the old
+// singular filters.aircraftType held a legacy code/label, not a family
+// key, and is unused since Fase 3b screen 4 (2026-07-22).
+const LEGACY_FILTER_KEYS: Partial<Record<MultiFilterKey, keyof MapFilters>> = {
   licenseCategories: 'licenseCategory',
-  aircraftTypes: 'aircraftType',
   verificationStatuses: 'verificationStatus',
   availabilityStatuses: 'availabilityStatus',
 };
@@ -291,14 +303,15 @@ function selectedFilterValues(filters: MapFilters, key: MultiFilterKey): string[
   const value = filters[key];
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') return [value];
-  const legacyValue = filters[LEGACY_FILTER_KEYS[key]];
+  const legacyKey = LEGACY_FILTER_KEYS[key];
+  const legacyValue = legacyKey ? filters[legacyKey] : undefined;
   return typeof legacyValue === 'string' ? [legacyValue] : [];
 }
 
 function activeFilterCount(f: MapFilters): number {
   return (
     selectedFilterValues(f, 'licenseCategories').length +
-    selectedFilterValues(f, 'aircraftTypes').length +
+    selectedFilterValues(f, 'aircraftFamilyKeys').length +
     selectedFilterValues(f, 'verificationStatuses').length +
     selectedFilterValues(f, 'availabilityStatuses').length
   );
@@ -359,7 +372,7 @@ interface FilterSheetProps {
 
 function FilterSheet({ visible, filters, onFilterChange, onClose }: FilterSheetProps) {
   const selectedLicenses = selectedFilterValues(filters, 'licenseCategories');
-  const selectedAircraft = selectedFilterValues(filters, 'aircraftTypes');
+  const selectedAircraft = selectedFilterValues(filters, 'aircraftFamilyKeys');
   const selectedVerification = selectedFilterValues(filters, 'verificationStatuses');
   const selectedAvailability = selectedFilterValues(filters, 'availabilityStatuses');
 
@@ -376,11 +389,10 @@ function FilterSheet({ visible, filters, onFilterChange, onClose }: FilterSheetP
   }
   function clearAll() {
     onFilterChange('licenseCategories', undefined);
-    onFilterChange('aircraftTypes', undefined);
+    onFilterChange('aircraftFamilyKeys', undefined);
     onFilterChange('verificationStatuses', undefined);
     onFilterChange('availabilityStatuses', undefined);
     onFilterChange('licenseCategory', undefined);
-    onFilterChange('aircraftType', undefined);
     onFilterChange('verificationStatus', undefined);
     onFilterChange('availabilityStatus', undefined);
   }
@@ -448,16 +460,11 @@ function FilterSheet({ visible, filters, onFilterChange, onClose }: FilterSheetP
             ))}
           </View>
 
-          <Text style={[styles.sheetSectionLabel, styles.sectionGap]}>Aircraft Type</Text>
-          <View style={styles.chipGrid}>
-            {AIRCRAFT_TYPES.map((a) => (
-              <FilterChip
-                key={a}
-                label={a}
-                selected={selectedAircraft.includes(a)}
-                onPress={() => toggle('aircraftTypes', a)}
-              />
-            ))}
+          <View style={styles.sectionGap}>
+            <CollapsibleAircraftFilter
+              selectedKeys={selectedAircraft}
+              onChange={(next) => setMultiFilter('aircraftFamilyKeys', next)}
+            />
           </View>
         </ScrollView>
       </View>
@@ -588,6 +595,7 @@ function OfferSelectionSheet({
 
 export function TechnicianMap({
   technicians,
+  habilitationsById,
   filters,
   onFilterChange,
   loading,
@@ -607,6 +615,10 @@ export function TechnicianMap({
   const [, setLastMessage] = useState<string>('—');
   const [, setWebViewError] = useState<string | null>(null);
 
+  const { ratings } = useAircraftTypeRatingsCatalog();
+  const ratingIndex = useMemo(() => buildAircraftRatingIndex(ratings), [ratings]);
+  const familyByKey = useMemo(() => new Map(getFamilies(ratings).map((f) => [f.key, f])), [ratings]);
+
   const markerPayload = useMemo(
     () =>
       technicians
@@ -620,14 +632,14 @@ export function TechnicianMap({
           city: t.city,
           country: t.country,
           licenseCategories: t.licenseCategories,
-          aircraftTypes: t.aircraftTypes,
+          typeRatings: resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex),
           specialties: t.specialties,
           verificationStatus: t.verificationStatus,
           yearsExperience: t.yearsExperience,
           availability: t.availability.status,
           matchingScore: t.matchingScore,
         })),
-    [technicians],
+    [technicians, habilitationsById, ratingIndex],
   );
 
   useEffect(() => {
@@ -640,7 +652,7 @@ export function TechnicianMap({
 
   const filterCount = activeFilterCount(filters);
   const selectedLicenses = selectedFilterValues(filters, 'licenseCategories');
-  const selectedAircraft = selectedFilterValues(filters, 'aircraftTypes');
+  const selectedAircraft = selectedFilterValues(filters, 'aircraftFamilyKeys');
   const selectedVerification = selectedFilterValues(filters, 'verificationStatuses');
   const selectedAvailability = selectedFilterValues(filters, 'availabilityStatuses');
   const activeChips = [
@@ -655,7 +667,11 @@ export function TechnicianMap({
       value,
       label: optionLabel(AVAILABILITY_OPTIONS, value),
     })),
-    ...selectedAircraft.map((value) => ({ key: 'aircraftTypes' as const, value, label: value })),
+    ...selectedAircraft.map((value) => ({
+      key: 'aircraftFamilyKeys' as const,
+      value,
+      label: familyByKey.get(value)?.displayName ?? value,
+    })),
   ];
 
   function removeFilterValue(key: MultiFilterKey, value: string) {
@@ -797,14 +813,6 @@ export function TechnicianMap({
                 onPress={() => onFilterChange('verificationStatus', undefined)}
               >
                 <Text style={styles.activeChipText}>{filters.verificationStatus} ×</Text>
-              </TouchableOpacity>
-            )}
-            {filters.aircraftType && (
-              <TouchableOpacity
-                style={styles.activeChip}
-                onPress={() => onFilterChange('aircraftType', undefined)}
-              >
-                <Text style={styles.activeChipText}>{filters.aircraftType} ×</Text>
               </TouchableOpacity>
             )}
           </ScrollView>

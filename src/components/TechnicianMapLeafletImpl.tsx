@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   View,
@@ -11,14 +11,24 @@ import {
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import { ArrowLeft, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react-native';
 import { SafeTechnicianView, AvailabilityStatus, VerificationStatus } from '../types';
+import { TechnicianHabilitation } from '../types/technician';
 import { MapFilters, MapFilterValue } from '../types/filters';
 import { MapOfferMatchOption } from '../types/mapOffers';
 import { colors, spacing } from '../theme';
 import { LICENSE_CATEGORIES } from '../constants/licenses';
-import { AIRCRAFT_TYPES } from '../constants/aircraftTypes';
+import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
+import { getFamilies } from '../constants/aircraftTypeRatingViews';
+import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
+import { resolveTypeRatingLabels } from '../utils/v2CompatAdapters';
+import { CollapsibleAircraftFilter } from './CollapsibleAircraftFilter';
 
 export interface TechnicianMapProps {
   technicians: SafeTechnicianView[];
+  // Raw habilitations per technician id, keyed the same way as
+  // technicians — used to resolve "Type ratings" catalog displayName
+  // labels for pins/popups instead of the flattened
+  // technician.aircraftTypes family/legacy-code strings.
+  habilitationsById: Record<string, TechnicianHabilitation[]>;
   filters: MapFilters;
   onFilterChange: (key: keyof MapFilters, value: MapFilterValue) => void;
   loading: boolean;
@@ -205,13 +215,15 @@ const AVAILABILITY_OPTIONS = [
 
 type MultiFilterKey =
   | 'licenseCategories'
-  | 'aircraftTypes'
+  | 'aircraftFamilyKeys'
   | 'verificationStatuses'
   | 'availabilityStatuses';
 
-const LEGACY_FILTER_KEYS: Record<MultiFilterKey, keyof MapFilters> = {
+// aircraftFamilyKeys has no legacy singular fallback — it's a new field
+// (Fase 3b screen 4), unlike the other three which predate the array-based
+// multi-select and still support a single legacy value in MapFilters.
+const LEGACY_FILTER_KEYS: Partial<Record<MultiFilterKey, keyof MapFilters>> = {
   licenseCategories: 'licenseCategory',
-  aircraftTypes: 'aircraftType',
   verificationStatuses: 'verificationStatus',
   availabilityStatuses: 'availabilityStatus',
 };
@@ -220,14 +232,15 @@ function selectedFilterValues(filters: MapFilters, key: MultiFilterKey): string[
   const value = filters[key];
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') return [value];
-  const legacyValue = filters[LEGACY_FILTER_KEYS[key]];
+  const legacyKey = LEGACY_FILTER_KEYS[key];
+  const legacyValue = legacyKey ? filters[legacyKey] : undefined;
   return typeof legacyValue === 'string' ? [legacyValue] : [];
 }
 
 function activeFilterCount(filters: MapFilters): number {
   return (
     selectedFilterValues(filters, 'licenseCategories').length +
-    selectedFilterValues(filters, 'aircraftTypes').length +
+    selectedFilterValues(filters, 'aircraftFamilyKeys').length +
     selectedFilterValues(filters, 'verificationStatuses').length +
     selectedFilterValues(filters, 'availabilityStatuses').length
   );
@@ -329,6 +342,7 @@ function PopupOfferSelector({
 
 export default function TechnicianMapLeafletImpl({
   technicians,
+  habilitationsById,
   filters,
   onFilterChange,
   loading,
@@ -338,6 +352,9 @@ export default function TechnicianMapLeafletImpl({
   onSendOffer,
 }: TechnicianMapProps) {
   useLeafletCss();
+  const { ratings } = useAircraftTypeRatingsCatalog();
+  const ratingIndex = useMemo(() => buildAircraftRatingIndex(ratings), [ratings]);
+  const familyByKey = useMemo(() => new Map(getFamilies(ratings).map((f) => [f.key, f])), [ratings]);
   const { width } = useWindowDimensions();
   const isCompactMap = width < 760;
   const [filterOpen, setFilterOpen] = useState(false);
@@ -351,7 +368,7 @@ export default function TechnicianMapLeafletImpl({
     : { left: sidePanelWidth + 40 };
 
   const selectedLicenses = selectedFilterValues(filters, 'licenseCategories');
-  const selectedAircraft = selectedFilterValues(filters, 'aircraftTypes');
+  const selectedAircraft = selectedFilterValues(filters, 'aircraftFamilyKeys');
   const selectedVerification = selectedFilterValues(filters, 'verificationStatuses');
   const selectedAvailability = selectedFilterValues(filters, 'availabilityStatuses');
   const filterCount = activeFilterCount(filters);
@@ -371,11 +388,10 @@ export default function TechnicianMapLeafletImpl({
 
   function clearAll() {
     onFilterChange('licenseCategories', undefined);
-    onFilterChange('aircraftTypes', undefined);
+    onFilterChange('aircraftFamilyKeys', undefined);
     onFilterChange('verificationStatuses', undefined);
     onFilterChange('availabilityStatuses', undefined);
     onFilterChange('licenseCategory', undefined);
-    onFilterChange('aircraftType', undefined);
     onFilterChange('verificationStatus', undefined);
     onFilterChange('availabilityStatus', undefined);
   }
@@ -392,7 +408,11 @@ export default function TechnicianMapLeafletImpl({
       value,
       label: optionLabel(AVAILABILITY_OPTIONS, value),
     })),
-    ...selectedAircraft.map((value) => ({ key: 'aircraftTypes' as const, value, label: value })),
+    ...selectedAircraft.map((value) => ({
+      key: 'aircraftFamilyKeys' as const,
+      value,
+      label: familyByKey.get(value)?.displayName ?? value,
+    })),
   ];
   const legendItems = [
     { color: colors.success, label: 'Available' },
@@ -485,15 +505,18 @@ export default function TechnicianMapLeafletImpl({
                   </div>
                 )}
 
-                {t.aircraftTypes.length > 0 && (
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={popupLabelStyle}>Aircraft</div>
-                    <div style={{ fontSize: 12, color: colors.textSecondary }}>
-                      {t.aircraftTypes.slice(0, 4).join(' · ')}
-                      {t.aircraftTypes.length > 4 ? ` +${t.aircraftTypes.length - 4}` : ''}
+                {(() => {
+                  const typeRatings = resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex);
+                  return typeRatings.length > 0 ? (
+                    <div style={{ marginBottom: 6 }}>
+                      <div style={popupLabelStyle}>Type ratings</div>
+                      <div style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {typeRatings.slice(0, 4).join(' · ')}
+                        {typeRatings.length > 4 ? ` +${typeRatings.length - 4}` : ''}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ) : null;
+                })()}
 
                 <button
                   type="button"
@@ -652,14 +675,6 @@ export default function TechnicianMapLeafletImpl({
                 <Text style={styles.activeChipText}>{filters.verificationStatus} ×</Text>
               </TouchableOpacity>
             )}
-            {filters.aircraftType && (
-              <TouchableOpacity
-                style={styles.activeChip}
-                onPress={() => onFilterChange('aircraftType', undefined)}
-              >
-                <Text style={styles.activeChipText}>{filters.aircraftType} ×</Text>
-              </TouchableOpacity>
-            )}
           </ScrollView>
         </View>
       )}
@@ -734,19 +749,10 @@ export default function TechnicianMapLeafletImpl({
             </View>
 
             <Text style={styles.sectionLabel}>Aircraft Type</Text>
-            <View style={styles.chipRow}>
-              {AIRCRAFT_TYPES.map((a) => (
-                <TouchableOpacity
-                  key={a}
-                  style={[styles.chip, selectedAircraft.includes(a) && styles.chipActive]}
-                  onPress={() => toggle('aircraftTypes', a)}
-                >
-                  <Text style={[styles.chipText, selectedAircraft.includes(a) && styles.chipTextActive]}>
-                    {a}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <CollapsibleAircraftFilter
+              selectedKeys={selectedAircraft}
+              onChange={(next) => setMultiFilter('aircraftFamilyKeys', next)}
+            />
           </ScrollView>
         </View>
       )}

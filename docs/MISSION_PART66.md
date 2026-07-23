@@ -964,3 +964,141 @@ para cumplir lo que la pantalla de borrado promete ("all personal
 information"), con la tensión RGPD real (derecho al olvido vs.
 obligaciones de trazabilidad regulatoria aeronáutica) expuesta sin
 resolver. A retomar aparte, con calma.
+
+### Pantalla 4 — mapa de técnicos (COMPLETADA, pendiente tu validación)
+- `app/map.tsx` + `src/state/useMapTechnicians.ts` +
+  `src/components/TechnicianMap.native.tsx` +
+  `src/components/TechnicianMapLeafletImpl.tsx` (dos implementaciones
+  paralelas — WebView+HTML/Leaflet para móvil, react-leaflet JSX para web —
+  mismo `TechnicianMapProps`, tratadas como una sola pantalla).
+- **Filtro amplio, antes decorativo por partida doble**: el hook llamaba
+  `technicianRepositoryV2.search({})` (sin filtros) y post-filtraba EN EL
+  CLIENTE con una copia propia de `matchesAny` — mismo patrón de bug que
+  pantalla 3, más una segunda copia de la lógica de comparación que podía
+  divergir de la de `search()`. Corregido: `useMapTechnicians.ts` pasa los
+  filtros reales (`licenseCodes`, `aircraftFamilyKeys`, `verificationStatuses`,
+  `availabilityStatuses`) directamente a `technicianRepositoryV2.search()` —
+  la MISMA función que ya usa `useTechnicianSearch.ts` (pantalla 3), no una
+  tercera copia. `scoreMapMatch()` (solo para ordenar resultados, nunca
+  mostrado en UI) se simplificó a "¿esta dimensión está activa?" en vez de
+  re-verificar un match que `search()` ya garantiza — dejar la comparación
+  vieja habría sido activamente incorrecta ahora (compara family keys contra
+  strings legacy que nunca coinciden).
+- **Listas hardcodeadas eliminadas**: las dos implementaciones tenían un
+  grid de chips `AIRCRAFT_TYPES.map(...)` (33 códigos legacy,
+  `constants/aircraftTypes.ts`) dentro del panel de filtros. Sustituido en
+  ambas por `CollapsibleAircraftFilter` (nuevo componente compartido,
+  `src/components/CollapsibleAircraftFilter.tsx` — sección colapsada que
+  muestra solo la selección activa y monta `AircraftFamilyPicker` al
+  expandir), ya usado por pantalla 3 — mismo patrón, mismo componente, no
+  una reimplementación paralela.
+- **Chips de filtro activo**: antes mostraban el código legacy tal cual
+  (`label: value`); ahora resuelven `displayName` real vía un
+  `familyByKey` construido con `getFamilies(ratings)` en el propio
+  componente (verificado en vivo — ver más abajo, el chip mostró "Airbus
+  A318/A319/A320/A321 family", no la key cruda `Airbus::A320`).
+- **Pines/popups del mapa**: renombrado "Aircraft" → "Type ratings"
+  (mismo criterio que pantallas 1-3). Las etiquetas ahora son `displayName`
+  de cada rating exacta vía `resolveTypeRatingLabels()` (la misma función
+  que pantalla 3, `v2CompatAdapters.ts` — no una cuarta copia), resueltas
+  desde un nuevo campo `habilitationsById: Record<string,
+  TechnicianHabilitation[]>` que `useMapTechnicians.ts` expone en paralelo
+  a `technicians` (mismo fetch ya hecho, sin llamada extra) y que
+  `app/map.tsx` pasa como prop nueva a `TechnicianMap`. Antes usaban
+  `t.aircraftTypes` (family/código legacy aplanado, V1-compat).
+- **`MapFilters.aircraftFamilyKeys?: string[]`** (nuevo campo;
+  `aircraftTypes`/`aircraftType` quedan `@deprecated` sin uso, igual que
+  `TechnicianFilters.aircraftType` en pantalla 3).
+- **Técnicos eliminados — confirmado, no solo asumido por herencia**: el
+  mapa ya no llama `search({})` sino `search()` con filtros reales, pero
+  en ambos casos pasa por `technician_public_view` (la vista que arregló
+  la migración 024), así que la exclusión aplica igual. Verificado en vivo
+  contra rotoaxismatch-dev (lectura directa, sin necesitar transacción de
+  prueba — el técnico ya está borrado de verdad):
+  `technician_profiles`/`profiles` para `anonymous_code = 'TF0E8866C8'`
+  devuelve `status: 'deleted'` con `user_id = e6f3be26-efa9-4fb7-b1ea-f22400ec358e`;
+  la misma consulta contra `technician_public_view` devuelve cero filas.
+  Nota: ese `user_id` no coincide con el `6146de18-...` anotado en el
+  inventario de la sección del bug [Deleted] más arriba para el mismo
+  `anonymous_code` — recuento de estados (`9 active, 1 deleted, 0` en el
+  resto) sigue siendo idéntico al de aquel momento, así que sigue siendo
+  el mismo y único técnico borrado; el id discrepante parece un error de
+  transcripción en algún punto, no un segundo borrado. Séñalado aquí por
+  transparencia, no bloquea el cierre de esta pantalla.
+- **Verificado en vivo (ruta devtest temporal, sin necesitar cuentas)**:
+  `TechnicianMap` renderizado directamente con props falsas (2 técnicos
+  fake, catálogo REAL vía `catalogRepository.getAircraftTypeRatings()`) —
+  bypassa Supabase auth/RLS por completo, igual que los devtest standalone
+  de pantallas 1-3. Confirmado por captura: mapa con 2 pines, popup con
+  "TYPE RATINGS" → "Airbus A320 family — CFM56" (no el código legacy fake
+  que llevaba `t.aircraftTypes`), panel de filtros con sección "Aircraft
+  type" colapsada ("Any aircraft"), expansión a tabs Airplanes/Helicopters
+  + buscador, selección de A320 → chip "Airbus A318/A319/A320/A321 family"
+  + badge "1" en el botón Filters. Cero errores de consola en las 4
+  capturas. Esto ejercita el path WEB (`TechnicianMapLeafletImpl.tsx`,
+  react-leaflet); el path NATIVO (`TechnicianMap.native.tsx`, WebView +
+  HTML/JS inyectado) no se pudo renderizar en un dispositivo/simulador
+  real — verificado por paridad de código (mismo cambio aplicado a ambos
+  ficheros, mismo `familyByKey`/`ratingIndex`/`resolveTypeRatingLabels`,
+  mismo renombrado de etiqueta) + tsc limpio, no por captura. El filtrado
+  real end-to-end contra Supabase (RLS bloquea lectura de
+  `technician_habilitations`/`technician_profiles` sin sesión de empresa
+  autenticada, igual que en pantalla 3) queda pendiente de tu validación
+  con tu cuenta real.
+- 79/79 tests, tsc limpio.
+
+## Fase 3b — cierre
+
+Las 4 pantallas (oferta, perfil de técnico, búsqueda, mapa) comparten ahora
+una sola fuente para el filtro/selector de aeronave: el catálogo real de
+606 endorsements EASA (`aircraft_type_ratings`) vía `getFamilies()` /
+`AircraftFamilyPicker` / `CollapsibleAircraftFilter`, con una sola regla de
+comparación por familia (`getAircraftFamilyKey()` +
+`resolveLegacyCodeToFamilyKeys()`) reutilizada por el matching
+(`offerMatchExplain.ts`) y por el filtro amplio de búsqueda/mapa
+(`technicianRepositoryV2.search()`). Cero implementaciones paralelas: cada
+pieza (picker de familias, sección colapsada, resolución de labels
+"Type ratings", regla de cobertura por familia) tiene un solo sitio dueño,
+consumido por las 4 pantallas.
+
+**Grep global de la fase** — cero listas de aeronaves hardcodeadas y cero
+imports de `constants/aircraftTypes.ts` en las 4 pantallas de la 3b
+(`app/company/offers/new.tsx`, `edit.tsx`, `app/company/search.tsx`,
+`app/map.tsx` y sus componentes). Barrido de TODA la app (no solo las 4
+pantallas), buscando tanto imports de `constants/aircraftTypes.ts` como
+arrays de nombres de aeronave sueltos: quedan exactamente 3 consumidores
+fuera de las 4 pantallas, los tres ya existentes antes de esta fase y
+fuera de su alcance declarado:
+1. `src/components/technician/HabilitationsEditor.tsx` (pantalla 2) —
+   `AIRCRAFT_TYPE_CATALOG` usado SOLO para poner label a
+   `LegacyHabilitationRow[]`, filas de datos viejas que todavía usan
+   `aircraftTypeCode` (el código de la tabla de 33) en vez de
+   `aircraftTypeRatingId` (la rating exacta de la 606) — visualización de
+   histórico, de solo lectura, no un selector nuevo. Depende
+   estructuralmente de que exista `aircraft_types`/su copia TS, así que cae
+   dentro del alcance de eliminación de la Fase 5 por construcción.
+2. `src/components/TechnicianFilters.tsx` — componente muerto, no
+   importado por ninguna pantalla activa (confirmado, ver nota en pantalla
+   3). No tocado, ya señalado para que la Fase 5 lo borre.
+3. `app/technician/offers/index.tsx` (browsing de ofertas del técnico,
+   FUERA de las 4 pantallas de la 3b) — `inferAircraftCategory`/
+   `AircraftCategory` para el filtro de categoría amplia Airplane/
+   Helicopter sobre `offer.requiredAircraftTypes`. Es una feature
+   preexistente distinta (badge de categoría, no el selector/filtro de
+   aeronave en sí) que esta fase nunca tuvo en su alcance de 4 pantallas —
+   señalado aquí para que quede registrado antes del inventario de la
+   Fase 5, no arreglado ahora.
+- `src/data/technicians.json` (seeds legacy, `src/data/seeds/*`) también
+  contiene nombres de aeronave hardcodeados pero es dato, no código, y
+  CLAUDE.md ya documenta que nada bajo `src/`/`app/` lo lee — fuera de
+  alcance por diseño, no una omisión de este grep.
+
+**Tests**: 79/79 pasando, tsc limpio en las 4 pantallas + los componentes
+compartidos.
+
+**Pendiente para ti**: validación visual/funcional de la pantalla 4 con tu
+cuenta de empresa real (el mismo bloqueo de RLS que pantallas 3 y el fix
+[Deleted] impidió probar el flujo end-to-end real aquí también) — en
+particular, confirmar que el filtro de aeronave del mapa realmente reduce
+resultados contra datos reales, y que el técnico borrado (TF0E8866C8) no
+aparece aunque tenga direct offers `accepted` bajo tu empresa Airbus.

@@ -75,16 +75,26 @@ function habilitationCoversFamilyKey(
   return false;
 }
 
+// Empty/undefined means "no filter on this dimension" (matches everything);
+// non-empty means "must match at least one" (OR within the array). Same
+// semantics useMapTechnicians.ts's own matchesAny() already used
+// client-side — now the one place both search() callers (search screen,
+// map) go through server-side, instead of each rolling its own post-filter.
+function matchesAny<T>(selected: T[] | undefined, value: T | undefined): boolean {
+  if (!selected || selected.length === 0) return true;
+  return value !== undefined && selected.includes(value);
+}
+
 function matchesSearchFilters(
   preview: SafeTechnicianPreview,
   filters: {
     technicianType?: string;
-    licenseCode?: string;
+    licenseCodes?: string[];
     aircraftFamilyKeys?: string[];
     country?: string;
     city?: string;
-    verificationStatus?: string;
-    availabilityStatus?: AvailabilityStatus;
+    verificationStatuses?: string[];
+    availabilityStatuses?: AvailabilityStatus[];
     availableImmediately?: boolean;
   },
   ratingIndex: AircraftRatingIndex,
@@ -92,10 +102,15 @@ function matchesSearchFilters(
   if (filters.technicianType && preview.technicianType !== filters.technicianType) return false;
   if (filters.country && preview.country !== filters.country) return false;
   if (filters.city && preview.city !== filters.city) return false;
-  if (filters.verificationStatus && preview.verificationStatus !== filters.verificationStatus) return false;
-  if (filters.availabilityStatus && preview.availability.status !== filters.availabilityStatus) return false;
+  if (!matchesAny(filters.verificationStatuses, preview.verificationStatus)) return false;
+  if (!matchesAny(filters.availabilityStatuses, preview.availability.status)) return false;
   if (filters.availableImmediately === true && !preview.availability.immediately) return false;
-  if (filters.licenseCode && !preview.licenses.includes(filters.licenseCode as LicenseCode)) return false;
+  if (
+    filters.licenseCodes && filters.licenseCodes.length > 0 &&
+    !filters.licenseCodes.some((code) => preview.licenses.includes(code as LicenseCode))
+  ) {
+    return false;
+  }
   if (
     filters.aircraftFamilyKeys && filters.aircraftFamilyKeys.length > 0 &&
     !preview.habilitations.some((h) =>
@@ -391,12 +406,12 @@ export const technicianRepositoryV2 = {
 
   async search(filters: {
     technicianType?: string;
-    licenseCode?: string;
+    licenseCodes?: string[];
     aircraftFamilyKeys?: string[];
     country?: string;
     city?: string;
-    verificationStatus?: string;
-    availabilityStatus?: AvailabilityStatus;
+    verificationStatuses?: string[];
+    availabilityStatuses?: AvailabilityStatus[];
     availableImmediately?: boolean;
   }): Promise<SafeTechnicianPreview[]> {
     const { data, error } = await supabase

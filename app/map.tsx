@@ -23,7 +23,7 @@ export default function MapScreen() {
     setFilters((prev) => ({ ...prev, [key]: value }));
   }
 
-  const { technicians, loading } = useMapTechnicians(filters);
+  const { technicians, loading, habilitationsById } = useMapTechnicians(filters);
 
   useEffect(() => {
     let active = true;
@@ -99,6 +99,7 @@ export default function MapScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <TechnicianMap
         technicians={technicians}
+        habilitationsById={habilitationsById}
         filters={filters}
         onFilterChange={handleFilterChange}
         loading={loading}
