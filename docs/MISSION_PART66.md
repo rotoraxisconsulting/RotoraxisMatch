@@ -761,7 +761,7 @@ Rama: part66-phase3, partiendo de main actualizado.
   intacta y es la única habilitación de esa cuenta.
 - Pantalla 3 (búsqueda) en curso — ver sección propia más abajo.
 
-### Pantalla 3 — búsqueda de técnicos (COMPLETADA, pendiente tu validación)
+### Pantalla 3 — búsqueda de técnicos (COMPLETADA, validada por ti)
 - `app/company/search.tsx` + `src/repositories/v2/technicianRepositoryV2.ts` +
   `src/state/useTechnicianSearch.ts` + `src/types/filters.ts`.
 - **Nuevo componente compartido**: `src/components/AircraftFamilyPicker.tsx`
@@ -965,7 +965,7 @@ information"), con la tensión RGPD real (derecho al olvido vs.
 obligaciones de trazabilidad regulatoria aeronáutica) expuesta sin
 resolver. A retomar aparte, con calma.
 
-### Pantalla 4 — mapa de técnicos (COMPLETADA, pendiente tu validación)
+### Pantalla 4 — mapa de técnicos (COMPLETADA, validada por ti, 2026-07-23)
 - `app/map.tsx` + `src/state/useMapTechnicians.ts` +
   `src/components/TechnicianMap.native.tsx` +
   `src/components/TechnicianMapLeafletImpl.tsx` (dos implementaciones
@@ -1018,13 +1018,14 @@ resolver. A retomar aparte, con calma.
   `technician_profiles`/`profiles` para `anonymous_code = 'TF0E8866C8'`
   devuelve `status: 'deleted'` con `user_id = e6f3be26-efa9-4fb7-b1ea-f22400ec358e`;
   la misma consulta contra `technician_public_view` devuelve cero filas.
-  Nota: ese `user_id` no coincide con el `6146de18-...` anotado en el
-  inventario de la sección del bug [Deleted] más arriba para el mismo
-  `anonymous_code` — recuento de estados (`9 active, 1 deleted, 0` en el
-  resto) sigue siendo idéntico al de aquel momento, así que sigue siendo
-  el mismo y único técnico borrado; el id discrepante parece un error de
-  transcripción en algún punto, no un segundo borrado. Séñalado aquí por
-  transparencia, no bloquea el cierre de esta pantalla.
+  **Corrección (2026-07-23): no hay anomalía.** `6146de18-...` (anotado en
+  el inventario de la sección del bug [Deleted] más arriba) es
+  `technician_profiles.id`; `e6f3be26-...` (arriba) es su `user_id`
+  (= `profiles.id`, la fila del email anonimizado) — dos columnas de la
+  MISMA fila, no dos ids en conflicto. El inventario original citó una
+  columna y esta verificación posterior citó la otra; sigue siendo el
+  mismo y único técnico borrado, sin segundo borrado ni error de
+  transcripción.
 - **Verificado en vivo (ruta devtest temporal, sin necesitar cuentas)**:
   `TechnicianMap` renderizado directamente con props falsas (2 técnicos
   fake, catálogo REAL vía `catalogRepository.getAircraftTypeRatings()`) —
@@ -1048,6 +1049,27 @@ resolver. A retomar aparte, con calma.
 - 79/79 tests, tsc limpio.
 
 ## Fase 3b — cierre
+
+### Estado: Fase 3 y Fase 3b COMPLETADAS y validadas en la app (2026-07-23)
+Validadas por ti las 4 pantallas de la 3b (oferta, perfil de técnico,
+búsqueda y mapa — la última, pantalla 4, validada el 2026-07-23, cierra la
+fase). Fase 3 (vigencia) ya estaba validada previamente (ver sección
+"Fase 3 — vigencia" arriba). Además del alcance planeado, esta rama dejó
+estos extras:
+- Migración 022 (family key sin FK legacy en
+  `offer_required_aircraft_types`), 023 (normalización de
+  `aircraft_family` en las 80 filas curadas) y 024 (`technician_public_view`
+  excluye perfiles `deleted`/`blocked`/`suspended`) — las tres aplicadas
+  contra rotoaxismatch-dev con tu OK.
+- Filtro server-side real (no post-filtrado en cliente) por familia de
+  aeronave en búsqueda (`app/company/search.tsx`) y en mapa (`app/map.tsx`),
+  ambos vía `technicianRepositoryV2.search()`.
+- Componentes compartidos extraídos: `AircraftFamilyPicker.tsx` y
+  `CollapsibleAircraftFilter.tsx`, reusados por oferta/búsqueda/mapa en vez
+  de tener cada pantalla su propia copia.
+- Fix del bug de cuentas eliminadas (técnico borrado seguía visible/
+  contactable en búsqueda, mapa, matching y candidatos de oferta) — ver
+  sección "Bug prioritario" arriba.
 
 Las 4 pantallas (oferta, perfil de técnico, búsqueda, mapa) comparten ahora
 una sola fuente para el filtro/selector de aeronave: el catálogo real de
@@ -1096,9 +1118,8 @@ fuera de su alcance declarado:
 **Tests**: 79/79 pasando, tsc limpio en las 4 pantallas + los componentes
 compartidos.
 
-**Pendiente para ti**: validación visual/funcional de la pantalla 4 con tu
-cuenta de empresa real (el mismo bloqueo de RLS que pantallas 3 y el fix
-[Deleted] impidió probar el flujo end-to-end real aquí también) — en
-particular, confirmar que el filtro de aeronave del mapa realmente reduce
-resultados contra datos reales, y que el técnico borrado (TF0E8866C8) no
-aparece aunque tenga direct offers `accepted` bajo tu empresa Airbus.
+**Validado por ti (2026-07-23)**: pantalla 4 confirmada en la app con tu
+cuenta de empresa real — el filtro de aeronave del mapa reduce resultados
+contra datos reales, y el técnico borrado (TF0E8866C8) no aparece pese a
+tener direct offers `accepted` bajo tu empresa Airbus. Con esto, **la Fase
+3b queda CERRADA.**
