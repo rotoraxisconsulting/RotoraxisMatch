@@ -75,9 +75,19 @@ export function evaluateDirectOfferConflict(
 
 /**
  * Guard for offerApplicationRepository.create() (a technician applying to
- * an offer). `existingActiveDirectOffer` is the technician's active direct
- * offer for this same offer, if any. `existingApplication` is the
- * technician's own offer_applications row for this offer, if any — at
+ * an offer). One application per technician per offer, regardless of
+ * status, was already decided and implemented once — see
+ * docs/V2_S0B_H6_ONE_APPLICATION_PER_OFFER_REPORT.md (2026-05-31), back
+ * when this repository read/wrote a local JSON array. That guard clause
+ * did not survive the rewrite to real Supabase queries — the ported
+ * create() checked for a conflicting direct offer but never checked its
+ * own table at all, silently regressing H6's rule (confirmed by reading
+ * that report while auditing this method for Fase 3b hardening, not a
+ * newly-invented rule). This function restores it.
+ *
+ * `existingActiveDirectOffer` is the technician's active direct offer for
+ * this same offer, if any. `existingApplication` is the technician's own
+ * offer_applications row for this offer, if any — at
  * most one can ever exist (UNIQUE(technician_id, offer_id), migration
  * 001) and its status can never be re-opened once terminal (rejected/
  * expired/withdrawn — see assertOfferRelationTransition/
