@@ -50,7 +50,7 @@ import { getMatchScoreWeights, getTechnicianMatchesForOffer, MatchScoreWeights, 
 import { OfferRequiredHabilitation, OfferWithRequirements } from '../../../src/types/offer';
 import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest';
 import { MatchScore } from '../../../src/types/matching';
-import { useCompanySession } from '../../../src/state/SessionContext';
+import { useCompanySession, useSession } from '../../../src/state/SessionContext';
 import { canManageOffers, canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
 import { habilitationAircraftCodes } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
@@ -161,6 +161,7 @@ export default function OfferDetailScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { companyId, companyMemberRole } = useCompanySession();
+  const { sessionLoading } = useSession();
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
@@ -177,7 +178,12 @@ export default function OfferDetailScreen() {
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
-    if (!id) return;
+    // companyId hydrates asynchronously in SessionContext, independently of
+    // the auth guard CompanyLayout already waits for — reading it before
+    // that fetch resolves (e.g. a fresh page load straight into this
+    // screen) would call getForCompany('') and crash on the Postgres UUID
+    // cast. Same guard as app/company/offers/index.tsx.
+    if (!id || !companyId) return;
     const [o, reqs, apps] = await Promise.all([
       offerRepository.getWithRequirements(id),
       offerRequestRepository.getForCompany(companyId),
@@ -198,13 +204,14 @@ export default function OfferDetailScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (!companyId) return;
       let active = true;
       setLoading(true);
       load()
         .then(() => { if (active) loadMatches(); })
         .finally(() => { if (active) setLoading(false); });
       return () => { active = false; };
-    }, [load, loadMatches]),
+    }, [load, loadMatches, companyId]),
   );
 
   async function handleRefresh() {
@@ -412,7 +419,7 @@ export default function OfferDetailScreen() {
 
   const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
 
-  if (loading) {
+  if (loading || sessionLoading) {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
@@ -494,7 +501,7 @@ export default function OfferDetailScreen() {
           ) : null}
         </CompanyCard>
 
-        {canManage ? (
+        {canManage && offer.status !== 'archived' ? (
           <CompanyCard style={styles.sectionCard}>
             <SectionTitle title="Actions" />
             <View style={styles.actionRow}>

@@ -36,7 +36,7 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
 import { OfferWithRequirements } from '../../../src/types/offer';
-import { useCompanySession } from '../../../src/state/SessionContext';
+import { useCompanySession, useSession } from '../../../src/state/SessionContext';
 import { canManageOffers } from '../../../src/utils/companyPermissionsV2';
 
 type OfferCounts = {
@@ -85,6 +85,7 @@ export default function OffersListScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { companyId, companyMemberRole } = useCompanySession();
+  const { sessionLoading } = useSession();
   const canManage = canManageOffers(companyMemberRole);
 
   const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
@@ -92,7 +93,14 @@ export default function OffersListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // companyId hydrates asynchronously in SessionContext, independently of
+  // the auth guard CompanyLayout already waits for — a screen that reads
+  // companyId as soon as it mounts (e.g. right after router.replace() from
+  // another screen, before that fetch resolves) can otherwise call
+  // getForCompany('') and crash on the Postgres UUID cast. Guarded here the
+  // same way app/company/index.tsx already guards its own companyId reads.
   const load = useCallback(async () => {
+    if (!companyId) return;
     const [allOffers, apps, requests] = await Promise.all([
       offerRepository.getAllWithRequirements(),
       offerApplicationRepository.getForCompany(companyId),
@@ -117,11 +125,12 @@ export default function OffersListScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (!companyId) return;
       let active = true;
       setLoading(true);
       load().finally(() => { if (active) setLoading(false); });
       return () => { active = false; };
-    }, [load]),
+    }, [load, companyId]),
   );
 
   async function handleRefresh() {
@@ -133,7 +142,7 @@ export default function OffersListScreen() {
   const published = offers.filter((o) => o.status === 'published');
   const drafts = offers.filter((o) => o.status === 'draft');
 
-  if (loading) {
+  if (loading || sessionLoading) {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />

@@ -245,17 +245,30 @@ export const offerRepository = {
   async delete(id: string): Promise<{ action: 'deleted' | 'archived' }> {
     const { applications, directOffers } = await this.getDependentCounts(id);
 
+    // .delete()/.update() report error: null even when RLS silently matches
+    // zero rows (this is exactly the bug this whole method exists to close
+    // — see offers_delete_company, migration 026) — error === null is NOT
+    // proof the mutation happened. .select('id') forces Postgres to return
+    // the affected row(s), so an empty result is detectable and treated as
+    // failure instead of silently reported as success.
     if (applications === 0 && directOffers === 0) {
-      const { error } = await supabase.from('offers').delete().eq('id', id);
+      const { data, error } = await supabase.from('offers').delete().eq('id', id).select('id');
       throwIfError(error);
+      if (!data || data.length === 0) {
+        throw new Error('Could not delete this offer — it may no longer exist, or you may not have permission.');
+      }
       return { action: 'deleted' };
     }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('offers')
       .update({ status: 'archived' as OfferStatus })
-      .eq('id', id);
+      .eq('id', id)
+      .select('id');
     throwIfError(error);
+    if (!data || data.length === 0) {
+      throw new Error('Could not archive this offer — it may no longer exist, or you may not have permission.');
+    }
     return { action: 'archived' };
   },
 
