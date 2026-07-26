@@ -275,6 +275,28 @@ verifica antes qué los consume (incl. scripts/testMatching.ts).
 4. VERIFICAR: build limpio, tests pasando, grep de '@deprecated' y 'V1' a
    cero en src/, flujo completo (perfil → oferta → matching) funcionando
    con datos migrados.
+5. BLINDAJE DE DEUDA — endurecer `useCompanySession()`/`useTechnicianSession()`
+   (`src/state/SessionContext.tsx`) para que devuelvan `LocalCompanySession |
+   null` / `LocalTechnicianSession | null` (null mientras `sessionLoading`)
+   en vez de un objeto con `companyId: ''`/`technicianId: ''`. Contexto
+   (2026-07-24, hardening post-Fase-3b): el mismo crash — leer
+   companyId/technicianId antes de que `SessionContext` resolviera su
+   propio fetch async (`company_members`/`technician_profiles`),
+   independiente del guard de auth de los layouts — apareció TRES veces
+   seguidas pantalla a pantalla (offers list, offer detail, useMapTechnicians)
+   antes de cerrarse en la raíz: gatear `CompanyLayout`/`TechnicianLayout`
+   también en `sessionLoading` (además de mover `app/map.tsx` →
+   `app/company/map.tsx`, la única ruta que vivía fuera de ambos layouts).
+   Ese gate de layout cierra el bug ACTIVO (inventario: 18 de 28
+   consumidores de SessionContext sin guard, ninguno puede ya montarse con
+   el id vacío) pero no impide que una ruta FUTURA fuera de esos dos
+   layouts repita el error de `map.tsx` — exactamente el tipo de deuda que
+   esta fase existe para blindar. Endurecer el tipo hace que cualquier
+   consumidor nuevo que no compruebe antes de desestructurar falle en
+   `tsc`, en vez de compilar con un `''` que parece válido. Migración
+   mecánica pero amplia: ~18 archivos consumidores necesitarán un guard
+   explícito para volver a compilar (ver inventario completo en el
+   historial de esta sesión si hace falta recuperarlo).
 Informe final: migrado automático / needsReview (lista) / borrado / archivado.
 
 ## Duda regulatoria abierta (no bloquees por esto)
