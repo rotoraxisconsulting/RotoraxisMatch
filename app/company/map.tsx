@@ -3,14 +3,14 @@ import { StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Stack, useRouter } from 'expo-router';
-import { TechnicianMap } from '../src/components/TechnicianMap';
-import { useMapTechnicians } from '../src/state/useMapTechnicians';
-import { offerRequestRepository } from '../src/repositories/v2/offerRequestRepository';
-import { getOfferMatchesForTechnician } from '../src/utils/matchingV2';
-import { useCompanySession } from '../src/state/SessionContext';
-import { MapFilters, MapFilterValue } from '../src/types/filters';
-import { MapOfferMatchOption } from '../src/types/mapOffers';
-import { colors } from '../src/theme';
+import { TechnicianMap } from '../../src/components/TechnicianMap';
+import { useMapTechnicians } from '../../src/state/useMapTechnicians';
+import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
+import { getOfferMatchesForTechnician } from '../../src/utils/matchingV2';
+import { useCompanySession } from '../../src/state/SessionContext';
+import { MapFilters, MapFilterValue } from '../../src/types/filters';
+import { MapOfferMatchOption } from '../../src/types/mapOffers';
+import { colors } from '../../src/theme';
 
 export default function MapScreen() {
   const router = useRouter();

@@ -554,7 +554,7 @@ function ActionPanel({
           icon="map"
           accent={companyUi.green}
           softAccent={companyUi.greenSoft}
-          onPress={() => router.push('/map' as any)}
+          onPress={() => router.push('/company/map' as any)}
           style={rail ? styles.actionFull : cardWidthStyle}
         />
         <ActionCard
