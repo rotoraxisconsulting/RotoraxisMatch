@@ -61,6 +61,14 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    // companyId hydrates asynchronously in SessionContext (a separate
+    // company_members fetch, independent of the auth guard the layout
+    // waits for) — reading it before that resolves calls getForCompany('')
+    // and crashes on the Postgres UUID cast. Same guard as
+    // app/company/offers/index.tsx and [id].tsx; loading stays true until
+    // companyId arrives and this callback (recreated via the companyId
+    // dependency below) reruns automatically.
+    if (!companyId) return;
     setLoading(true);
     const selected = {
       licenses: selectedValues(filters.licenseCategories, filters.licenseCategory),
