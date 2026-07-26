@@ -1145,3 +1145,85 @@ cuenta de empresa real — el filtro de aeronave del mapa reduce resultados
 contra datos reales, y el técnico borrado (TF0E8866C8) no aparece pese a
 tener direct offers `accepted` bajo tu empresa Airbus. Con esto, **la Fase
 3b queda CERRADA.**
+
+## Estado al 2026-07-26: bloque de hardening cerrado, Fase 4 cerrada, Fase 5.1 en checkpoint
+
+### Bloque de hardening post-3b (2026-07-23/24)
+- **Tests de flujos de escritura**: cobertura nueva para
+  `src/utils/offerRelationStateMachine.ts` (antes cero tests pese a regir
+  accept/reject/withdraw en offer_requests Y offer_applications). Al
+  auditarlo, hueco real encontrado en `offerApplicationRepository.create()`
+  — no comprobaba su propia tabla antes de insertar, solo la de direct
+  offers. Verificado contra `docs/V2_S0B_H6_ONE_APPLICATION_PER_OFFER_REPORT.md`
+  (2026-05-31): es una regresión de una regla YA decidida ("una aplicación
+  por técnico y oferta, sea cual sea el estado, sin reaplicar") — el fix de
+  UI de aquel informe (`canApply = !existingApp`) seguía intacto, solo el
+  guard del repositorio se perdió al portar a Supabase real. Arreglado con
+  `evaluateDirectOfferConflict`/`evaluateApplicationConflict`, funciones
+  puras testeadas (17 tests nuevos).
+- **Auditoría RLS por operación** (`docs/RLS_OPERATION_AUDIT_2026-07-23_REPORT.md`):
+  inventario tabla por tabla, política por política, cruzado contra el
+  código real. Hallazgo principal: `offers` no tenía política DELETE para
+  la empresa propietaria, y `app/company/offers/[id].tsx` tenía (y tiene) un
+  botón "Delete offer" real conectado a ella — RLS bloqueaba el borrado en
+  silencio, 0 filas, sin error, la oferta reaparecía en la lista. Dos huecos
+  más de la misma forma que `tl_update_own` (`technician_aircraft_experience`
+  UPDATE, `documents` DELETE), ambos latentes. Migración 025 (las dos
+  políticas latentes + fix del upsert de `user_consents` sin
+  `ignoreDuplicates`) aplicada con tu OK.
+- **Modelo de archive/delete seguro para ofertas** (`docs/OFFER_DELETE_SOFT_DELETE_PROPOSAL.md`,
+  migración 026, aplicada con tu OK): `offers` gana el estado terminal
+  `archived`; `offerRepository.delete()` decide antes de actuar — cero
+  `offer_applications`/`offer_requests` → DELETE real; cualquiera existente
+  → UPDATE a `archived`, nada más se toca (sin cascada, sin huérfanos). RLS
+  `offers_delete_company` refuerza la misma regla en BD, con la misma
+  condición de cero dependientes.
+- **El propio arreglo del archive tenía un bug** (encontrado en tu re-test
+  real en la app, no en revisión de código): `offerRepository.delete()`
+  calculaba bien la rama pero nunca comprobaba que el DELETE/UPDATE
+  afectara alguna fila — el mismo fallo silencioso (`error === null` no es
+  prueba de nada) que todo este bloque existe para cerrar, reintroducido
+  por mí en la misma feature. Corregido con `.select('id')` + error visible
+  si vuelven 0 filas.
+- **El crash de `companyId`/`technicianId` vacío — 3 veces antes de la raíz**:
+  `SessionContext` resuelve `companyId`/`technicianId` con un fetch propio
+  (`company_members`/`technician_profiles`), independiente del guard de auth
+  que `CompanyLayout`/`TechnicianLayout` ya esperaban — una pantalla que
+  carga datos nada más montarse puede leer el id como `''` y reventar contra
+  el cast UUID de Postgres. Apareció en `company/offers/index.tsx`, luego
+  `[id].tsx`, luego `useMapTechnicians.ts` — cada vez parcheado localmente,
+  hasta que se pidió la raíz: inventario completo (28 consumidores de
+  SessionContext, 18 sin ningún guard) + gatear ambos layouts también en
+  `sessionLoading` (cierra los 15 anidados de una vez, sin tocarlos) + mover
+  `app/map.tsx` → `app/company/map.tsx` (la única ruta fuera de ambos
+  layouts). El blindaje de tipos (`T | null` en vez de `companyId: ''`), que
+  haría esto imposible de reintroducir en una ruta futura, queda como tarea
+  de Fase 5 (ver punto 5 de la sección Fase 5 arriba) — deliberadamente no
+  hecho aquí.
+- Efecto colateral encontrado y arreglado de paso: `app/_layout.tsx` seguía
+  declarando `<Stack.Screen name="map">` en la raíz tras el movimiento del
+  archivo — Metro lo avisaba en cada arranque (`WARN [Layout children]: No
+  route named "map"`), quitado.
+
+### Fase 4 — CERRADA (2026-07-23)
+`canHold(licenseCode, scope)` + `HabilitationScope` implementados en
+`src/utils/habilitationScope.ts` / `src/types/habilitationScope.ts` — unión
+discriminada `exact_rating | manufacturer_subgroup | full_subgroup |
+full_group`, las tres dimensiones (clase de aeronave, turbina/pistón, grupo
+EASA), reutilizando `getCompatibleProductType()` de la 3b para la dimensión
+de clase en vez de duplicarla. `EasaGroup` verificado contra los 5 valores
+reales en `aircraft_type_ratings.easa_group` (1=278, 2a=28, 2b=21, 2c=8,
+3=271 filas), no inventado. 15 tests nuevos. Confirmado por grep: cero
+consumidores en `app/`/`src/` fuera de los propios ficheros nuevos y el test
+— nada cableado a producción, tal como pedía el plan.
+
+### Fase 5.1 — INVENTARIO, checkpoint alcanzado (2026-07-26)
+Ver `docs/PHASE5_INVENTORY.md` completo. Resumen de una línea: la mayoría del
+inventario confirma exactamente lo que el plan esperaba (habilitaciones
+legacy: 0 filas que migrar hoy; `aircraft_types`: 3 consumidores ya
+conocidos; seeds: 1 solo consumidor, `validateSeeds.js`), PERO dos ítems
+(`c` — tipos `@deprecated` como `Technician`/`SafeTechnicianView`/`MatchRequest`,
+y `f` — `AvailabilityStatus`/`.status`) resultaron ser funcionalidad V2 ACTIVA
+mal etiquetada como legacy, no limpieza mecánica — requieren una decisión de
+alcance antes de que la migración 027 o la sub-fase 5.3 toquen nada
+relacionado. Parado en el checkpoint, esperando esa decisión.
