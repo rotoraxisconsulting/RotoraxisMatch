@@ -46,6 +46,8 @@ import {
   evaluateDirectOfferConflict,
   evaluateApplicationConflict,
 } from '../src/utils/offerRelationStateMachine';
+import { canHold, getCompatiblePropulsion } from '../src/utils/habilitationScope';
+import { HabilitationScope } from '../src/types/habilitationScope';
 
 let passed = 0;
 let failed = 0;
@@ -1292,6 +1294,138 @@ async function main() {
     const rejected = evaluateApplicationConflict(undefined, { status: 'rejected' });
     assert.equal(withdrawn, 'You already applied to this offer previously — re-applying is not available once an application has been withdrawn or decided.');
     assert.equal(rejected, withdrawn);
+  });
+
+  // ── Fase 4 scaffolding: canHold() / HabilitationScope ─────────────────
+  // NOT wired to any form, matching path, or UI — see
+  // docs/MISSION_PART66.md. Tests only, so the three dimensions (aircraft
+  // class, propulsion, EASA group) are locked in before anything ever
+  // consumes this.
+
+  await test('getCompatiblePropulsion — turbine categories', () => {
+    assert.equal(getCompatiblePropulsion('A1'), 'turbine');
+    assert.equal(getCompatiblePropulsion('A3'), 'turbine');
+    assert.equal(getCompatiblePropulsion('B1.1'), 'turbine');
+    assert.equal(getCompatiblePropulsion('B1.3'), 'turbine');
+  });
+
+  await test('getCompatiblePropulsion — piston categories, including B3 (not covered by the class-only Fase 3b mapping)', () => {
+    assert.equal(getCompatiblePropulsion('A2'), 'piston');
+    assert.equal(getCompatiblePropulsion('A4'), 'piston');
+    assert.equal(getCompatiblePropulsion('B1.2'), 'piston');
+    assert.equal(getCompatiblePropulsion('B1.4'), 'piston');
+    assert.equal(getCompatiblePropulsion('B3'), 'piston');
+  });
+
+  await test('getCompatiblePropulsion — B2/B2L/L/C have no propulsion restriction', () => {
+    assert.equal(getCompatiblePropulsion('B2'), undefined);
+    assert.equal(getCompatiblePropulsion('B2L'), undefined);
+    assert.equal(getCompatiblePropulsion('L'), undefined);
+    assert.equal(getCompatiblePropulsion('C'), undefined);
+  });
+
+  await test('canHold — exact_rating: matching class and propulsion holds', () => {
+    const scope: HabilitationScope = {
+      kind: 'exact_rating',
+      aircraftTypeRatingId: 'fx-a320-cfm56',
+      aircraftClass: 'Aeroplane',
+      propulsion: 'turbine',
+    };
+    assert.equal(canHold('B1.1', scope), true);
+  });
+
+  await test('canHold — aircraft class mismatch fails regardless of propulsion', () => {
+    const scope: HabilitationScope = {
+      kind: 'exact_rating',
+      aircraftTypeRatingId: 'fx-aw139',
+      aircraftClass: 'Helicopter',
+      propulsion: 'turbine',
+    };
+    assert.equal(canHold('B1.1', scope), false); // B1.1 is Aeroplane-only
+  });
+
+  await test('canHold — an unknown (undefined) scope class is never guessed as a match when the license is class-restricted', () => {
+    const scope: HabilitationScope = { kind: 'exact_rating', aircraftTypeRatingId: 'fx-unknown', propulsion: 'turbine' };
+    assert.equal(canHold('B1.1', scope), false);
+  });
+
+  await test('canHold — propulsion mismatch fails even when class matches', () => {
+    const scope: HabilitationScope = {
+      kind: 'exact_rating',
+      aircraftTypeRatingId: 'fx-a320-v2500',
+      aircraftClass: 'Aeroplane',
+      propulsion: 'piston',
+    };
+    assert.equal(canHold('B1.1', scope), false); // B1.1 is turbine-only
+  });
+
+  await test('canHold — an unknown (undefined) scope propulsion is never guessed as a match when the license is propulsion-restricted', () => {
+    const scope: HabilitationScope = { kind: 'exact_rating', aircraftTypeRatingId: 'fx-unknown', aircraftClass: 'Aeroplane' };
+    assert.equal(canHold('B1.1', scope), false);
+  });
+
+  await test('canHold — B3 requires BOTH Aeroplane class and piston propulsion (not just class, unlike the Fase 3b mapping alone)', () => {
+    const matching: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-c172', aircraftClass: 'Aeroplane', propulsion: 'piston',
+    };
+    const wrongPropulsion: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-tbm', aircraftClass: 'Aeroplane', propulsion: 'turbine',
+    };
+    assert.equal(canHold('B3', matching), true);
+    assert.equal(canHold('B3', wrongPropulsion), false);
+  });
+
+  await test('canHold — B2/B2L/C/L hold any class and any propulsion, never pre-filtered', () => {
+    const helicopterPiston: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-r44', aircraftClass: 'Helicopter', propulsion: 'piston',
+    };
+    const aeroplaneTurbine: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-a320', aircraftClass: 'Aeroplane', propulsion: 'turbine',
+    };
+    const unknownBoth: HabilitationScope = { kind: 'exact_rating', aircraftTypeRatingId: 'fx-unknown' };
+    for (const license of ['B2', 'B2L', 'C', 'L'] as const) {
+      assert.equal(canHold(license, helicopterPiston), true, `${license} + helicopter/piston`);
+      assert.equal(canHold(license, aeroplaneTurbine), true, `${license} + aeroplane/turbine`);
+      assert.equal(canHold(license, unknownBoth), true, `${license} + unknown/unknown`);
+    }
+  });
+
+  await test('canHold — exact_rating always demonstrates its own qualification, regardless of EASA group (never consults ALLOWED_KINDS_BY_GROUP)', () => {
+    const scope: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-a320-cfm56', aircraftClass: 'Aeroplane', propulsion: 'turbine',
+    };
+    assert.equal(canHold('B1.1', scope), true);
+  });
+
+  await test('canHold — Group 1: only exact_rating is a valid substitute, no subgroup/full-group scope ever qualifies', () => {
+    const base = { aircraftClass: 'Aeroplane' as const, propulsion: 'turbine' as const, easaGroup: '1' as const };
+    assert.equal(canHold('B1.1', { kind: 'manufacturer_subgroup', manufacturer: 'Airbus', ...base }), false);
+    assert.equal(canHold('B1.1', { kind: 'full_subgroup', ...base }), false);
+    assert.equal(canHold('B1.1', { kind: 'full_group', ...base }), false);
+  });
+
+  await test('canHold — Groups 2a/2b/2c: manufacturer_subgroup and full_subgroup both qualify', () => {
+    const propsAndClass = { aircraftClass: 'Aeroplane' as const, propulsion: 'turbine' as const };
+    for (const easaGroup of ['2a', '2b', '2c'] as const) {
+      assert.equal(canHold('B1.1', { kind: 'manufacturer_subgroup', manufacturer: 'Airbus', easaGroup, ...propsAndClass }), true, `manufacturer_subgroup/${easaGroup}`);
+      assert.equal(canHold('B1.1', { kind: 'full_subgroup', easaGroup, ...propsAndClass }), true, `full_subgroup/${easaGroup}`);
+      // full_group is NOT a valid substitute for a 2x subgroup per the mission brief
+      assert.equal(canHold('B1.1', { kind: 'full_group', easaGroup, ...propsAndClass }), false, `full_group/${easaGroup} should not qualify`);
+    }
+  });
+
+  await test('canHold — Group 3: full_group qualifies, subgroup-level scopes do not (the brief pairs group 3 with "full group", not "subgroup")', () => {
+    const base = { aircraftClass: 'Aeroplane' as const, propulsion: 'piston' as const, easaGroup: '3' as const };
+    assert.equal(canHold('B1.2', { kind: 'full_group', ...base }), true);
+    assert.equal(canHold('B1.2', { kind: 'manufacturer_subgroup', manufacturer: 'Cessna', ...base }), false);
+    assert.equal(canHold('B1.2', { kind: 'full_subgroup', ...base }), false);
+  });
+
+  await test('canHold — group validity is checked independently of class/propulsion: a valid group scope with the wrong class still fails', () => {
+    const scope: HabilitationScope = {
+      kind: 'full_group', easaGroup: '3', aircraftClass: 'Helicopter', propulsion: 'piston',
+    };
+    assert.equal(canHold('B1.2', scope), false); // B1.2 is Aeroplane-only — group being valid doesn't rescue a class mismatch
   });
 }
 

@@ -28,7 +28,6 @@ export default function RootLayout() {
             <Stack.Screen name="technician" options={{ headerShown: false }} />
             <Stack.Screen name="company" options={{ headerShown: false }} />
             <Stack.Screen name="admin" options={{ headerShown: false }} />
-            <Stack.Screen name="map" options={{ headerShown: false }} />
           </Stack>
         </SessionProvider>
       </AuthProvider>
