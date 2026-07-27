@@ -223,6 +223,15 @@ verifica antes qué los consume (incl. scripts/testMatching.ts).
 - NO migrar datos, NO tocar formularios con esto.
 
 ### Fase 5 — Migración y eliminación de todo lo legacy
+**Corrección tras el checkpoint 5.1 (2026-07-27, ver "Decisiones del
+checkpoint 5.1" más abajo — no re-descubras esto)**: los puntos 2
+("Availability: status → immediately") y 3 ("Tipos @deprecated: Technician,
+SafeTechnicianView... ") de este plan original están PARCIALMENTE
+ANULADOS/ACOTADOS — `AvailabilityStatus`/`.status` y
+`Technician`/`SafeTechnicianView`/`MatchRequest` resultaron ser
+funcionalidad V2 activa, no legacy. Ver la sección de decisiones para el
+alcance real de esta fase.
+
 1. INVENTARIO (no borres nada aún):
    - Habilitaciones con solo aircraftTypeCode (sin aircraftTypeRatingId)
    - Usos de los tipos deprecated Technician / SafeTechnicianView
@@ -1227,3 +1236,73 @@ y `f` — `AvailabilityStatus`/`.status`) resultaron ser funcionalidad V2 ACTIVA
 mal etiquetada como legacy, no limpieza mecánica — requieren una decisión de
 alcance antes de que la migración 027 o la sub-fase 5.3 toquen nada
 relacionado. Parado en el checkpoint, esperando esa decisión.
+
+### Decisiones del checkpoint 5.1 (2026-07-27)
+1. **(c)** Aparcado como misión propia post-Fase-5 (ver "Backlog
+   post-misión" abajo). Alcance de ESTA Fase 5, sub-fase 5.3: borrar solo
+   c.1 (`ContractType` V1, `LEGACY_CONTRACT_TYPES`, `AIRCRAFT_TYPES`/
+   `AircraftType` dentro de `aircraftTypes.ts`, `updateAircraftTypes()`) +
+   migrar c.2 (`LegacyVerificationStatus`, 4 archivos admin) — NUNCA la
+   eliminación completa de `Technician`/`SafeTechnicianView`/`MatchRequest`.
+   Etiquetas `@deprecated` de estos tres YA corregidas en el código
+   (2026-07-27, `src/types/technician.ts` y `src/types/matchRequest.ts`) a
+   comentarios veraces que apuntan a esta misma sección, para que ningún
+   inventario futuro los vuelva a marcar como borrables por error.
+2. **(f)** El filtro de disponibilidad de 3 estados SE QUEDA — es producto
+   (Fase 3b), no deuda. `AvailabilityStatus` re-etiquetado en el código
+   (2026-07-27) como campo V2 legítimo, no `@deprecated`; documentado que
+   `status` es la fuente de verdad y `immediately` su proyección derivada
+   CON PÉRDIDA (`open_to_offers` y `unavailable` colapsan ambos a `false`).
+   **El paso "Availability: status → immediately" del plan original de
+   Fase 5 (sección "MIGRAR datos" arriba) queda ANULADO** — no se hace, no
+   tiene sentido migrar hacia una representación que pierde información
+   que la propia Fase 3b necesita.
+3. **(h)** Los 33 docs candidatos del inventario se archivan a
+   `docs/archive/` en un commit único y reversible.
+   `DELETED_ACCOUNT_ANONYMIZATION_PROPOSAL.md` y
+   `RLS_OPERATION_AUDIT_2026-07-23_REPORT.md` se quedan activos.
+   `V2_S1_ADMIN_BOOTSTRAP_SQL.sql` se queda como referencia operativa.
+   `OFFER_DELETE_SOFT_DELETE_PROPOSAL.md` corregido antes de archivar (su
+   cabecera decía "migración 026 NOT yet applied", ya no es cierto).
+4. **Extras aprobados para la migración 027**: índice único parcial en
+   `technician_habilitations` (el hallazgo lateral del inventario, ítem a —
+   la UNIQUE existente no cubre `aircraft_type_rating_id`, así que hoy nada
+   a nivel de BD impide dos filas normalizadas duplicadas, aunque el editor
+   ya lo bloquea del lado cliente). La 027 se escribe genérica/idempotente
+   aunque hoy sean 0 filas a migrar — reutilizando
+   `planLegacyAircraftRatingBackfill()`/`scripts/backfillLegacyAircraftRatings.ts`
+   (ya existentes, Fase 3b) en vez de reimplementar la resolución en SQL.
+   La cláusula de "aircraftTypeCode a auditoría/log" del plan original
+   decae — las 2 únicas filas con código legacy hoy pertenecen a la cuenta
+   ya borrada (TF0E8866C8), sin necesidad real de un log de auditoría para
+   datos de una cuenta que ya no existe.
+
+### Backlog post-misión (borrador — se consolida formalmente en la 5.5)
+- **V2 UI migration — retire v2CompatAdapters** (añadido 2026-07-27,
+  origen: checkpoint Fase 5.1, decisión sobre el hallazgo `c`/`f` de
+  `docs/PHASE5_INVENTORY.md`). Migrar `app/technician/profile.tsx` (el
+  formulario de perfil completo), las dos implementaciones del mapa
+  (`TechnicianMap.native.tsx`/`TechnicianMapLeafletImpl.tsx`),
+  `app/company/search.tsx`, `MatchRequestCard.tsx`, `RequestContactModal.tsx`,
+  y los hooks `useCompanyDashboard.ts`/`useMapTechnicians.ts`/
+  `useTechnicianSearch.ts`/`useTechnicianDashboard.ts`/`useAdminDashboard.ts`
+  de los tipos V1-compat (`Technician`, `SafeTechnicianView`, `MatchRequest`/
+  `MatchRequestStatus`) a los tipos V2 nativos
+  (`TechnicianProfile`/`SafeTechnicianPreview`/`UnlockedTechnicianView`,
+  `OfferRequest`/`OfferApplication`), permitiendo retirar
+  `src/utils/v2CompatAdapters.ts` por completo. Anexo (inventario completo
+  de consumidores, archivo por archivo): `docs/PHASE5_INVENTORY.md`
+  sección c.3. Tamaño real: comparable a la propia Fase 3b (varias
+  pantallas grandes, checkpoint pantalla a pantalla recomendado), no un
+  cleanup de una sesión.
+- Notificaciones (pendiente de detallar — mencionado como backlog en
+  sesiones previas).
+- Arnés de tests CLI local de Supabase (`supabase start`, ver
+  [[project_part66_hardening]] en memoria — aprobado como primera tarea
+  tras el cierre de esta misión).
+- Retención RGPD más profunda en borrado de cuenta —
+  `docs/DELETED_ACCOUNT_ANONYMIZATION_PROPOSAL.md`, sin resolver, tensión
+  derecho al olvido vs. trazabilidad regulatoria aeronáutica.
+- Verificar `canHold()` (Fase 4) contra el texto real de AMC 66.A.45 antes
+  de cablearlo a ningún formulario/matching — la duda regulatoria abierta
+  sobre B2 sin motor sigue sin resolver.

@@ -1,23 +1,46 @@
 import { VerificationStatus } from './enums'; // owned by enums.ts — not re-exported here
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from './catalog';
 
-// --- V1 compat types — remove after V2-1d ---
+// --- V1 compat types ---
 
-/** @deprecated V2 uses `availability.immediately: boolean` instead */
+// Corrected 2026-07-27 (docs/PHASE5_INVENTORY.md item f): this was marked
+// @deprecated on the assumption that `immediately: boolean` would replace
+// it. It doesn't — `immediately` is a LOSSY one-way projection of `status`
+// (v2CompatAdapters.ts: 'available'->true, but 'open_to_offers' AND
+// 'unavailable' both collapse to false), not an equivalent. The 3-state
+// filter this type backs (available/open_to_offers/unavailable) is an
+// active Fase 3b product feature — technicianRepositoryV2.search()'s
+// availabilityStatuses filter, used live by both the search and map
+// screens. `status` is the source of truth; `immediately` is a derived
+// convenience for the "available right now" case only. Confirmed staying
+// — not legacy, not a Fase 5 cleanup target.
 export type AvailabilityStatus = 'available' | 'open_to_offers' | 'unavailable';
 
 /** @deprecated use ContractTypeCode from catalog.ts instead */
 export type ContractType = 'permanent' | 'contract' | 'temporary' | 'freelance';
 
-// Merged V1/V2 shape: V1 uses `status`, V2 uses `immediately`. Both optional during migration.
+// `immediately` (V2) and `status` (V2, see the correction above — NOT V1
+// legacy despite the historical field name) coexist on purpose: `status`
+// is the source of truth for the 3-state availability facet, `immediately`
+// is a derived boolean convenience for a single common filter case.
 export interface Availability {
-  immediately?: boolean;       // V2 — will be required after V2-1b
-  status?: AvailabilityStatus; // V1 compat — remove after V2-1d
+  immediately?: boolean;
+  status?: AvailabilityStatus;
   availableFrom?: string;
   contractTypes: (ContractType | ContractTypeCode)[];
 }
 
-/** @deprecated use TechnicianProfile instead */
+/**
+ * V1-shaped type, kept alive on purpose via v2CompatAdapters.ts
+ * (v2TechnicianToV1). This is the real, working form-state shape behind
+ * app/technician/profile.tsx (the entire technician profile screen) and
+ * the admin dashboard/technician-list screens today — NOT dead code and
+ * NOT safely deletable as a quick cleanup (confirmed by consumer grep,
+ * docs/PHASE5_INVENTORY.md item c, 2026-07-26). Retiring it in favor of
+ * TechnicianProfile everywhere is tracked as its own future mission ("V2 UI
+ * migration — retire v2CompatAdapters", see docs/MISSION_PART66.md
+ * backlog), not part of the Part-66 coherence mission's Fase 5.
+ */
 export interface Technician {
   id: string;
   anonymousCode: string;
@@ -39,7 +62,20 @@ export interface Technician {
   yearsExperience: number;
 }
 
-/** @deprecated use SafeTechnicianPreview or UnlockedTechnicianView from privacy.ts instead */
+/**
+ * V1-shaped type, kept alive on purpose via v2CompatAdapters.ts
+ * (v2SafePreviewToSafeView / v2UnlockedViewToSafeView). This is the real,
+ * working shape behind company/search.tsx, both map implementations
+ * (TechnicianMap.native.tsx / TechnicianMapLeafletImpl.tsx),
+ * MatchRequestCard, RequestContactModal, and useCompanyDashboard/
+ * useMapTechnicians/useTechnicianSearch today — NOT dead code and NOT
+ * safely deletable as a quick cleanup (confirmed by consumer grep,
+ * docs/PHASE5_INVENTORY.md item c, 2026-07-26). Retiring it in favor of
+ * SafeTechnicianPreview/UnlockedTechnicianView (privacy.ts) everywhere is
+ * tracked as its own future mission ("V2 UI migration — retire
+ * v2CompatAdapters", see docs/MISSION_PART66.md backlog), not part of the
+ * Part-66 coherence mission's Fase 5.
+ */
 export type SafeTechnicianView = Omit<Technician, 'fullName' | 'email' | 'phone'> & {
   matchingScore?: number;
   fullName?: string;

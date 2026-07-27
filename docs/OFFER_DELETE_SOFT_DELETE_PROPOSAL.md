@@ -1,8 +1,11 @@
 # Offer delete — soft-delete/archive model proposal
 
-**Status: DECIDED and implemented in code (2026-07-23); migration 026 NOT
-yet applied against Supabase, awaiting explicit go-ahead alongside
-migration 025.** The one open fork below (`'archived'` vs. reusing
+**Status: DECIDED, implemented, and APPLIED. Migration 026 applied against
+rotoaxismatch-dev on 2026-07-24 alongside migration 025, verified live
+(policy presence in `pg_policies` + a simulated-session delete/archive test
+inside a ROLLBACKed transaction — see docs/MISSION_PART66.md "Estado al
+2026-07-26"). Superseded by that verification; kept here for the design
+rationale, not as a pending item.** The one open fork below (`'archived'` vs. reusing
 `'closed'`) was resolved in favor of the new `'archived'` value. Written
 originally for discussion per the RLS
 audit finding that `offers` has no DELETE policy for the owning company
