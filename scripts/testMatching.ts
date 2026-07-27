@@ -34,7 +34,7 @@ import {
   ExistingNormalizedHabilitation,
 } from '../src/utils/aircraftRatingBackfillPlan';
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
-import { getFamilies, getByProductType, searchRatings } from '../src/constants/aircraftTypeRatingViews';
+import { getFamilies, getByProductType, searchRatings, resolveAircraftCategoryForFamilyKeys } from '../src/constants/aircraftTypeRatingViews';
 import { getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../src/constants/aircraftTypeRatings';
 import { getCompatibleProductType, isUnusualCombination } from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
@@ -813,6 +813,49 @@ async function main() {
   await test('Views — searchRatings is the centralized search entry point (delegates to filterAircraftTypeRatings)', () => {
     assert.deepEqual(searchRatings(FIXTURES, 'CFM56'), filterAircraftTypeRatings(FIXTURES, 'CFM56'));
     assert.equal(searchRatings(FIXTURES, 'CFM56')[0].id, 'fx-a320-cfm56');
+  });
+
+  // ── resolveAircraftCategoryForFamilyKeys (Fase 5.3 — replaces the
+  // deleted constants/aircraftTypes.ts's inferAircraftCategory() for
+  // app/technician/offers/index.tsx's Airplane/Helicopter filter, now that
+  // offer.requiredAircraftTypes stores family keys, migration 022) ──────
+
+  await test('resolveAircraftCategoryForFamilyKeys — empty list is null, never a guessed category', () => {
+    assert.equal(resolveAircraftCategoryForFamilyKeys(FIXTURES, []), null);
+  });
+
+  await test('resolveAircraftCategoryForFamilyKeys — a single Aeroplane family key resolves to "airplane"', () => {
+    const key = getAircraftFamilyKey({ manufacturer: 'Airbus', aircraftFamily: 'A318/A319/A320/A321' });
+    assert.equal(resolveAircraftCategoryForFamilyKeys(FIXTURES, [key]), 'airplane');
+  });
+
+  await test('resolveAircraftCategoryForFamilyKeys — a single Helicopter family key resolves to "helicopter"', () => {
+    const key = getAircraftFamilyKey({ manufacturer: 'Leonardo', aircraftFamily: 'AW139' });
+    assert.equal(resolveAircraftCategoryForFamilyKeys(FIXTURES, [key]), 'helicopter');
+  });
+
+  await test('resolveAircraftCategoryForFamilyKeys — mixing an Aeroplane and a Helicopter family key resolves to "mixed"', () => {
+    const airplaneKey = getAircraftFamilyKey({ manufacturer: 'Boeing', aircraftFamily: '777' });
+    const helicopterKey = getAircraftFamilyKey({ manufacturer: 'Leonardo', aircraftFamily: 'AW139' });
+    assert.equal(resolveAircraftCategoryForFamilyKeys(FIXTURES, [airplaneKey, helicopterKey]), 'mixed');
+  });
+
+  await test('resolveAircraftCategoryForFamilyKeys — a family key not in the loaded catalog is never guessed into a category', () => {
+    assert.equal(resolveAircraftCategoryForFamilyKeys(FIXTURES, ['Nonexistent::Family']), null);
+  });
+
+  await test('resolveAircraftCategoryForFamilyKeys — regression: the real live offer 922c1206\'s 3 helicopter family keys all resolve to "helicopter" (verified against rotoaxismatch-dev 2026-07-27)', () => {
+    const ratings = [
+      makeRating({ id: 'fx-as350', manufacturer: 'Airbus Helicopters', aircraftFamily: 'Eurocopter AS 350', productType: 'Helicopter', displayName: 'Eurocopter AS 350', commercialAliases: ['AS350'] }),
+      makeRating({ id: 'fx-ec135', manufacturer: 'Airbus Helicopters', aircraftFamily: 'Eurocopter EC 135', productType: 'Helicopter', displayName: 'Eurocopter EC 135', commercialAliases: ['EC135'] }),
+      makeRating({ id: 'fx-s76c', manufacturer: 'Sikorsky', aircraftFamily: 'Sikorsky S-76C', productType: 'Helicopter', displayName: 'Sikorsky S-76C', commercialAliases: ['S-76C'] }),
+    ];
+    const familyKeys = [
+      'Airbus Helicopters::Eurocopter AS 350',
+      'Airbus Helicopters::Eurocopter EC 135',
+      'Sikorsky::Sikorsky S-76C',
+    ];
+    assert.equal(resolveAircraftCategoryForFamilyKeys(ratings, familyKeys), 'helicopter');
   });
 
   // ── getAircraftFamilyKey / resolveLegacyCodeToFamilyKeys (migration 022) ──

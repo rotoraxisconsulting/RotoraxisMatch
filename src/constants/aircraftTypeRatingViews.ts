@@ -77,6 +77,51 @@ export function getByProductType(
   return ratings.filter((rating) => rating.productType === productType);
 }
 
+// Fase 5.3 — replaces the deleted constants/aircraftTypes.ts's
+// inferAircraftCategory(), which looked codes up against the legacy
+// 33-entry catalog. offer.requiredAircraftTypes (the approximate/broad
+// filter, migration 022) now stores family keys
+// ("<manufacturer>::<aircraftFamily>"), never legacy codes, so the
+// replacement resolves against the real 606-endorsement catalog's
+// productType instead. Same return shape (airplane/helicopter/mixed/null)
+// so the one screen that used this (app/technician/offers/index.tsx) only
+// had to change its data source, not its branching.
+//
+// A family key whose ratings have no productType backfilled, or that
+// isn't found in the loaded catalog at all, contributes nothing — never
+// guessed into either category, same "unpopulated means no facet" rule
+// getByProductType() already follows.
+export type ApproximateAircraftCategory = 'airplane' | 'helicopter' | 'mixed';
+
+export function resolveAircraftCategoryForFamilyKeys(
+  ratings: AircraftTypeRatingCatalog[],
+  familyKeys: string[],
+): ApproximateAircraftCategory | null {
+  if (familyKeys.length === 0) return null;
+
+  const productTypeByFamilyKey = new Map<string, AircraftTypeRatingCatalog['productType']>();
+  for (const rating of ratings) {
+    if (!rating.productType) continue;
+    const key = getAircraftFamilyKey(rating);
+    if (!productTypeByFamilyKey.has(key)) productTypeByFamilyKey.set(key, rating.productType);
+  }
+
+  let sawAeroplane = false;
+  let sawHelicopter = false;
+  let sawOther = false;
+  for (const familyKey of familyKeys) {
+    const productType = productTypeByFamilyKey.get(familyKey);
+    if (productType === 'Aeroplane') sawAeroplane = true;
+    else if (productType === 'Helicopter') sawHelicopter = true;
+    else if (productType) sawOther = true; // e.g. 'Gas Airship' — no dedicated bucket, folds into mixed
+  }
+
+  if (!sawAeroplane && !sawHelicopter && !sawOther) return null;
+  if (sawAeroplane && !sawHelicopter && !sawOther) return 'airplane';
+  if (sawHelicopter && !sawAeroplane && !sawOther) return 'helicopter';
+  return 'mixed';
+}
+
 // Centralized catalog search — every screen with a rating search box
 // imports this rather than rolling its own filter. Pass-through to
 // filterAircraftTypeRatings (aircraftTypeRatings.ts already owns the actual

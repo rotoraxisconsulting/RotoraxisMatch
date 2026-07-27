@@ -32,7 +32,8 @@ import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { CompanyProfileView } from '../../../src/types/company';
 import { OfferApplication } from '../../../src/types/offerRequest';
 import { ContractTypeCode } from '../../../src/types/catalog';
-import { inferAircraftCategory, AircraftCategory } from '../../../src/constants/aircraftTypes';
+import { resolveAircraftCategoryForFamilyKeys, ApproximateAircraftCategory } from '../../../src/constants/aircraftTypeRatingViews';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 
 function formatPublishedDate(iso: string): string {
   const d = new Date(iso);
@@ -79,7 +80,7 @@ function appStatusInfo(status: string): { label: string; tone: 'success' | 'warn
 }
 
 type ContractFilter = ContractTypeCode | 'all';
-type AircraftCategoryFilter = AircraftCategory | 'all';
+type AircraftCategoryFilter = ApproximateAircraftCategory | 'all';
 
 const AIRCRAFT_CAT_BADGE: Record<string, { label: string; tone: 'info' | 'warning' | 'muted' }> = {
   airplane:   { label: 'Airplane',   tone: 'info' },
@@ -92,6 +93,7 @@ export default function BrowseOffersScreen() {
   const { technicianId } = useTechnicianSession();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const { ratings, state: catalogState } = useAircraftTypeRatingsCatalog();
 
   const [matches, setMatches] = useState<OfferMatchResult[]>([]);
   const [companyMap, setCompanyMap] = useState<Record<string, CompanyProfileView>>({});
@@ -154,7 +156,7 @@ export default function BrowseOffersScreen() {
     .filter(({ offer }) => {
       if (contractFilter !== 'all' && offer.contractType !== contractFilter) return false;
       if (aircraftCatFilter !== 'all') {
-        const cat = inferAircraftCategory(offer.requiredAircraftTypes);
+        const cat = resolveAircraftCategoryForFamilyKeys(ratings, offer.requiredAircraftTypes);
         if (cat === null) return false;
         if (aircraftCatFilter === 'airplane' && cat === 'helicopter') return false;
         if (aircraftCatFilter === 'helicopter' && cat === 'airplane') return false;
@@ -175,7 +177,7 @@ export default function BrowseOffersScreen() {
       return b.score.total - a.score.total;
     });
 
-  if (loading) {
+  if (loading || catalogState === 'loading') {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
@@ -256,7 +258,7 @@ export default function BrowseOffersScreen() {
           const accent = scoreColor(score.total);
           const unread = isOfferUnread(offer.id);
           const status = appStatus ? appStatusInfo(appStatus) : null;
-          const aircraftCat = offer.requiredAircraftTypes.length > 0 ? inferAircraftCategory(offer.requiredAircraftTypes) : null;
+          const aircraftCat = offer.requiredAircraftTypes.length > 0 ? resolveAircraftCategoryForFamilyKeys(ratings, offer.requiredAircraftTypes) : null;
           const aircraftCatBadge = aircraftCat ? AIRCRAFT_CAT_BADGE[aircraftCat] : null;
 
           return (
