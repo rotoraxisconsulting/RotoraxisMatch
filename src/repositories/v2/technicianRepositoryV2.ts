@@ -325,24 +325,6 @@ export const technicianRepositoryV2 = {
   },
 
   /**
-   * @deprecated Unsafe: a flat aircraft-type list has no way to say which
-   * license each aircraft belongs to. The old implementation defaulted every
-   * aircraft to the technician's *first* license, which silently created
-   * false category+aircraft combinations (e.g. tagging a B2-only habilitation
-   * as if it were held under B1.3). Use replaceHabilitations() instead, which
-   * requires an explicit licenseCode per entry. This method is kept only so
-   * legacy call sites still type-check; calling it always throws so it can
-   * never re-create a false association.
-   */
-  async updateAircraftTypes(_technicianId: string, _aircraftTypeCodes: string[]): Promise<void> {
-    throw new Error(
-      'technicianRepositoryV2.updateAircraftTypes() is deprecated and unsafe — it cannot ' +
-      'determine which license an aircraft type belongs to. Use replaceHabilitations() with ' +
-      'explicit { licenseCode, aircraftTypeRatingId } pairs instead.',
-    );
-  },
-
-  /**
    * Replaces a technician's normalized habilitations with an explicit set of
    * { licenseCode, aircraftTypeRatingId } pairs. Never infers or defaults the
    * license — every row must name its own category. Only rows that already
@@ -388,19 +370,6 @@ export const technicianRepositoryV2 = {
   /** Deletes a single habilitation row (legacy or normalized) by id. */
   async deleteHabilitation(id: string): Promise<void> {
     const { error } = await supabase.from('technician_habilitations').delete().eq('id', id);
-    throwIfError(error);
-  },
-
-  async updateExperienceYears(technicianId: string, years: number): Promise<void> {
-    const relations = await loadTechnicianRelations([technicianId]);
-    const entries = relations[technicianId]?.aircraftExperience ?? [];
-    if (entries.length === 0) return;
-
-    const normalizedYears = Math.max(0, Math.round(years));
-    const { error } = await supabase
-      .from('technician_aircraft_experience')
-      .update({ value: normalizedYears, unit: 'years' })
-      .eq('technician_id', technicianId);
     throwIfError(error);
   },
 

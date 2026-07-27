@@ -542,7 +542,7 @@ async function main() {
 
     const weakProfileExactRating = makeTechnician({
       verificationStatus: 'pending',
-      availability: { immediately: false, contractTypes: ['temporary'] },
+      availability: { immediately: false, contractTypes: ['short_term'] },
       aircraftExperience: [],
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],

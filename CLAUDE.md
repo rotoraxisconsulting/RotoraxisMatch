@@ -22,9 +22,9 @@ The app must run on:
 - TypeScript
 - Expo Router
 - Supabase (Postgres + Auth + Storage + Edge Functions) — the active backend, not a future migration target. `src/repositories/v2/*` query Supabase directly (`src/lib/supabase.ts`); real Supabase Auth is wired (`AuthContext`, `/auth/*` screens); RLS is enabled on every table.
-- `supabase/migrations/*.sql` — ~20 numbered, idempotent, hand-reviewed migrations (see "Backend / data model notes" below). Never edit an already-applied migration; add a new one.
+- `supabase/migrations/*.sql` — ~28 numbered, idempotent, hand-reviewed migrations (see "Backend / data model notes" below). Never edit an already-applied migration; add a new one.
 
-`src/data/seeds/*.json` is legacy from the pre-Supabase phase. Nothing under `src/` or `app/` reads it anymore — its only remaining consumer is `scripts/validateSeeds.js`, which validates local-JSON *structural* invariants (kept as a cheap offline sanity check), not the live database. Do not build new features against it.
+`src/data/seeds/*.json` and its validator (`scripts/validateSeeds.js`) — pre-Supabase-phase legacy — were deleted 2026-07-27 (Fase 5.3, docs/MISSION_PART66.md): confirmed zero remaining consumers under `src/`/`app/`, and the validator had nothing left to validate once the JSON was gone.
 
 Do not use yet:
 - Firebase

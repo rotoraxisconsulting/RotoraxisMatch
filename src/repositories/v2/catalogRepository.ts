@@ -85,10 +85,10 @@ const aircraftTypeRatingsCache = createAircraftTypeRatingsCache({
 // aircraft_type_ratings catalog, just a database-backed one instead of a
 // hardcoded one. The "Required aircraft types" broad filter now derives
 // its options from getFamilies() over aircraft_type_ratings (see
-// ApproximateFilterSection.tsx), and aircraft_types itself is on the
-// Fase 5 deletion list alongside its TS mirror, src/constants/aircraftTypes.ts
-// (see docs/MISSION_PART66.md). Nothing in src/ queries aircraft_types
-// anymore.
+// ApproximateFilterSection.tsx). Its TS mirror, constants/aircraftTypes.ts,
+// was deleted 2026-07-27 (Fase 5.3, docs/MISSION_PART66.md) — nothing in
+// src/ imports it anymore. The table itself, public.aircraft_types, is
+// still live (migration 028, its DROP, is a separate checkpoint).
 
 export const catalogRepository = {
   async getLicenseCategories() {

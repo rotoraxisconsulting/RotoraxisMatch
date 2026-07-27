@@ -11,25 +11,8 @@ import {
   v2OfferRequestToMatchRequest,
   v2DocumentToV1,
   v2CompanyToV1,
-  applyV1PatchToV2Profile,
 } from '../utils/v2CompatAdapters';
 import { useTechnicianSession } from './SessionContext';
-
-export function computeProfileCompleteness(t: Technician): number {
-  let score = 0;
-  if (t.fullName?.trim()) score += 10;
-  if (t.email?.trim()) score += 10;
-  if (t.phone?.trim()) score += 5;
-  if (t.city?.trim()) score += 5;
-  if (t.country?.trim()) score += 5;
-  if (t.baseAirport?.trim()) score += 5;
-  if (t.licenseCategories.length > 0) score += 20;
-  if (t.aircraftTypes.length > 0) score += 15;
-  if (t.specialties.length > 0) score += 10;
-  if (t.availability.status !== 'unavailable') score += 5;
-  if (t.yearsExperience > 0) score += 10;
-  return Math.min(score, 100);
-}
 
 interface TechnicianDashboardState {
   technician: Technician | null;
@@ -39,7 +22,6 @@ interface TechnicianDashboardState {
   loading: boolean;
   acceptRequest: (requestId: string) => Promise<void>;
   rejectRequest: (requestId: string) => Promise<void>;
-  updateProfile: (patch: Partial<Technician>) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -101,39 +83,6 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
     [loadData],
   );
 
-  const updateProfile = useCallback(
-    async (patch: Partial<Technician>) => {
-      if (!technician) return;
-
-      // Apply patch to V1 compat object to compute profileCompleteness
-      const updatedV1: Technician = { ...technician, ...patch };
-      updatedV1.profileCompleteness = computeProfileCompleteness(updatedV1);
-
-      // Load the V2 profile to get reference fields (needed for firstName/lastName split)
-      const existingProfile = await technicianRepositoryV2.getById(technicianId);
-      if (!existingProfile) return;
-
-      const v2Patch = applyV1PatchToV2Profile(
-        { ...patch, profileCompleteness: updatedV1.profileCompleteness },
-        existingProfile,
-      );
-      await technicianRepositoryV2.update(technicianId, v2Patch);
-      if (patch.licenseCategories !== undefined) {
-        const entries = patch.licenseCategories.map((code) => ({ code }));
-        await technicianRepositoryV2.upsertLicenses(technicianId, entries);
-        await technicianRepositoryV2.removeUnreferencedLicenses(technicianId, patch.licenseCategories);
-      }
-      if (patch.aircraftTypes !== undefined) {
-        await technicianRepositoryV2.updateAircraftTypes(technicianId, patch.aircraftTypes);
-      }
-      if (patch.yearsExperience !== undefined) {
-        await technicianRepositoryV2.updateExperienceYears(technicianId, patch.yearsExperience);
-      }
-      await loadData();
-    },
-    [technician, technicianId, loadData],
-  );
-
   return {
     technician,
     requests,
@@ -142,7 +91,6 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
     loading,
     acceptRequest,
     rejectRequest,
-    updateProfile,
     refresh: loadData,
   };
 }

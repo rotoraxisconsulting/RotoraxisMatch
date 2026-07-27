@@ -16,9 +16,6 @@ import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from './catalog';
 // — not legacy, not a Fase 5 cleanup target.
 export type AvailabilityStatus = 'available' | 'open_to_offers' | 'unavailable';
 
-/** @deprecated use ContractTypeCode from catalog.ts instead */
-export type ContractType = 'permanent' | 'contract' | 'temporary' | 'freelance';
-
 // `immediately` (V2) and `status` (V2, see the correction above — NOT V1
 // legacy despite the historical field name) coexist on purpose: `status`
 // is the source of truth for the 3-state availability facet, `immediately`
@@ -27,7 +24,13 @@ export interface Availability {
   immediately?: boolean;
   status?: AvailabilityStatus;
   availableFrom?: string;
-  contractTypes: (ContractType | ContractTypeCode)[];
+  // Fase 5.3 — narrowed from (ContractType | ContractTypeCode)[] now that
+  // the V1 ContractType half (deleted, zero real consumers confirmed) is
+  // gone. Every write path (app/technician/profile.tsx) already only ever
+  // produces ContractTypeCode values via constants/contractTypes.ts's
+  // CONTRACT_TYPES; this is a type-level correction, not a runtime change
+  // — old persisted JSON isn't affected either way.
+  contractTypes: ContractTypeCode[];
 }
 
 /**
