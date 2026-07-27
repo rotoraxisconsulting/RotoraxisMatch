@@ -77,7 +77,7 @@ export function evaluateDirectOfferConflict(
  * Guard for offerApplicationRepository.create() (a technician applying to
  * an offer). One application per technician per offer, regardless of
  * status, was already decided and implemented once — see
- * docs/V2_S0B_H6_ONE_APPLICATION_PER_OFFER_REPORT.md (2026-05-31), back
+ * docs/archive/V2_S0B_H6_ONE_APPLICATION_PER_OFFER_REPORT.md (2026-05-31), back
  * when this repository read/wrote a local JSON array. That guard clause
  * did not survive the rewrite to real Supabase queries — the ported
  * create() checked for a conflicting direct offer but never checked its

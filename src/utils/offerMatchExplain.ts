@@ -6,7 +6,7 @@
 // aircraft/rating are only ever considered "matched together" when they come
 // from the SAME technician_habilitations row. Holding a license and having
 // some unrelated habilitation never counts as holding that license for that
-// aircraft. See docs/PART66_AIRCRAFT_MODEL_ANALYSIS.md section 6 for the
+// aircraft. See docs/archive/PART66_AIRCRAFT_MODEL_ANALYSIS.md section 6 for the
 // original bug report.
 //
 // Business principle (see CLAUDE.md "Backend / data model notes"): a

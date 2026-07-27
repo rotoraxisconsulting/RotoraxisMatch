@@ -8,7 +8,7 @@ import { ratingMatchesLegacyCode } from '../constants/aircraftTypeRatings';
 // --apply — write the 'mapped' rows.
 //
 // IMPORTANT: a migration that already ran does not re-run when new legacy
-// rows appear later (see docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md
+// rows appear later (see docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md
 // section 10 — this corrects an incorrect claim in an earlier report). This
 // module exists so the backfill is a repeatable, explicit, re-runnable
 // operation instead of something baked into a one-time migration.

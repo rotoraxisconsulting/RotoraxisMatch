@@ -9,7 +9,7 @@
 // in the mission brief (easaEndorsement/aircraftFamily/engineDesignation/
 // easaGroup/productType/tcHolders/modelAliases/commercialAliases/sourceRevision).
 //
-// Output of this script is ONLY the .sql file + docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md
+// Output of this script is ONLY the .sql file + docs/archive/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md
 // (CHECKPOINT 1 material). It never calls apply_migration — applying the
 // generated file against Supabase requires a separate, explicit step after
 // the user has reviewed the reconciliation report.
@@ -71,7 +71,7 @@ interface CurrentRow {
 // hand-typed 4 easa_endorsement strings with tiny formatting drift from the
 // real EASA source (missing spaces, an added manufacturer prefix). Found by
 // manually diffing all 80 curated strings against this JSON (documented in
-// docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md). Exact-string reconciliation
+// docs/archive/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md). Exact-string reconciliation
 // alone would treat these 4 as brand-new rows and create duplicates of
 // already-existing, FK-referenced ratings — instead the generated migration
 // corrects these 4 rows' easa_endorsement to the canonical JSON string
@@ -216,7 +216,7 @@ const BUSINESS_JET_KEYWORDS = [
   'latitude', 'longitude', 'pc-24', 'diamond i', 'diamond ii', 'jet commander',
   'sabreliner', 'hs 125', 'starship',
   // Added after auditing the group-1 Aeroplane classification table
-  // (docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md): several real
+  // (docs/archive/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md): several real
   // business jets are only identified in this source by their type
   // certificate code, not a marketing name — CL-600 (Challenger family),
   // BD-100/BD-700 (Challenger 300 / Global family), Cessna 5xx/6xx/7xx
@@ -389,7 +389,7 @@ async function main() {
 -- newer EDD revision JSON is added — never hand-edit the generated VALUES
 -- blocks below.
 --
--- Reconciliation strategy (see docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md
+-- Reconciliation strategy (see docs/archive/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md
 -- for full counts and manual-review flags):
 --   1. 4 rows from the initial 80-row seed (migration 016) had tiny
 --      formatting drift in easa_endorsement vs the real EASA source (missing

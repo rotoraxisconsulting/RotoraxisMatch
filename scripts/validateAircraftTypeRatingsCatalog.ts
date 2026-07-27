@@ -1,6 +1,6 @@
 // Validates the REAL aircraft_type_ratings catalog in Supabase — the single
 // source of truth for this catalog (see
-// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md). Unlike
+// docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md). Unlike
 // scripts/validateSeeds.js (which only checks local demo JSON and can no
 // longer see the catalog contents at all), this script reads the live table.
 //

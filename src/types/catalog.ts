@@ -53,8 +53,8 @@ export interface ContractTypeCatalog {
 // an EASA Part-66 AML (e.g. "Airbus A318/A319/A320/A321 (CFM56)"). Unlike the
 // legacy aircraft_types catalog (family/model only, no engine dimension) and
 // unlike the small Phase-1 engine_types/aircraft_ratings tables it replaces
-// (see docs/PART66_AIRCRAFT_MODEL_ANALYSIS.md and
-// docs/AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md), manufacturer/family/
+// (see docs/archive/PART66_AIRCRAFT_MODEL_ANALYSIS.md and
+// docs/archive/AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md), manufacturer/family/
 // engine are stored directly on the row — deliberately not normalized into a
 // separate reusable engine catalog, so a single table search covers
 // manufacturer, family, engine and aliases without joins.

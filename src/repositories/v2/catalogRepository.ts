@@ -13,7 +13,7 @@ import { ContractTypeCode, TechnicianTypeCode, CompanyTypeCode, AircraftTypeRati
 import { throwIfError } from './supabaseMappers';
 
 // public.aircraft_type_ratings is the ONLY source of truth for this catalog
-// — see docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md. There is no
+// — see docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md. There is no
 // TypeScript-side copy of the 80 rows anymore and no hardcoded fallback:
 // a failed/empty load surfaces as an explicit state (see
 // getAircraftTypeRatingsCacheStatus / useAircraftTypeRatingsCatalog), never
@@ -21,8 +21,8 @@ import { throwIfError } from './supabaseMappers';
 // product_type (Aeroplane/Helicopter/Gas Airship, the EASA source's own
 // top-level classification) was added by migration 020, confirmed applied
 // and populated for all 606 rows — see
-// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md and
-// docs/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md. Not consumed by any UI
+// docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md and
+// docs/archive/EASA_FULL_CATALOG_RECONCILIATION_REPORT.md. Not consumed by any UI
 // yet; reserved for a later phase's category faceting.
 const AIRCRAFT_TYPE_RATINGS_SELECT = `
   id,

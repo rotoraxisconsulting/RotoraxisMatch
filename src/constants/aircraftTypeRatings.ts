@@ -4,7 +4,7 @@ import { AircraftTypeRatingCatalog } from '../types/catalog';
 // FUNCTIONS ONLY. The 80-entry catalog itself lives exclusively in
 // Supabase (public.aircraft_type_ratings) — see
 // src/repositories/v2/catalogRepository.ts for the query and cache, and
-// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md for why the dual
+// docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md for why the dual
 // TypeScript+SQL copy that used to live in this file was removed.
 //
 // Every function here takes the catalog (or an index built from it) as an

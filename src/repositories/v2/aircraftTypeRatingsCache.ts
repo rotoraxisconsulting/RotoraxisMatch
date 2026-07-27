@@ -7,7 +7,7 @@ import { AircraftTypeRatingCatalog } from '../../types/catalog';
 // scripts/testMatching.ts. catalogRepository.ts wires one instance of this
 // up with the real Supabase queries.
 //
-// Design (see docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md section
+// Design (see docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md section
 // "Estrategia de caché" for the full rationale):
 //   - getActiveRatings() serves the last successful fetch for up to `ttlMs`
 //     before refetching. Concurrent calls while a fetch is already in

@@ -104,7 +104,7 @@ export interface TechnicianLicense {
 // aircraftTypeCode: legacy/general aircraft code with no motorization info.
 //   Present on rows written before this rating catalog existed; kept
 //   readable, never auto-migrated to a specific rating unless unambiguous
-//   (see docs/AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md).
+//   (see docs/archive/AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md).
 // At least one of the two is always set (DB CHECK constraint).
 // experienceYears / isCurrent are optional, per-rating declarations —
 // independent of technicianAircraftExperience (which is per legacy

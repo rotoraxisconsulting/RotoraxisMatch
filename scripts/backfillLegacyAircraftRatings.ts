@@ -4,13 +4,20 @@
 // legacy code. Never guesses among several candidates, never overwrites a
 // row that already has a rating, never touches aircraft_type_code.
 //
+// Also flags needs_review = true (migration 027) for rows that resolve to
+// zero ('no_match') or multiple ('ambiguous') candidates — recorded
+// explicitly instead of left silently unresolved, so a future UI/matching
+// pass (Fase 5.3) can surface them rather than rediscover them from
+// scratch. Never sets aircraft_type_rating_id for these — same
+// never-guess rule as the 'mapped' case, just the opposite outcome.
+//
 // IMPORTANT — corrects a claim in an earlier report: a migration that has
 // already been applied does NOT re-run automatically when new legacy rows
 // appear later (e.g. a technician created after the migration ran, still
 // using an old client that only writes aircraft_type_code). This script is
 // the explicit, re-runnable, idempotent replacement for "the migration will
 // just handle it" — run it again any time you want to sweep newly-created
-// legacy rows. See docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md
+// legacy rows. See docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md
 // section 10 for the full explanation.
 //
 // Requires SUPABASE_SERVICE_ROLE_KEY (bypasses RLS — this writes
@@ -129,13 +136,16 @@ async function main() {
     noMatch.forEach((p) => console.log(`  hab ${p.row.id} ("${p.row.aircraftTypeCode}")`));
   }
 
+  const needsReview = [...ambiguous, ...noMatch];
+
   if (!apply) {
-    console.log('\nDry run only — no rows written. Re-run with --apply to write the "Mapped" rows above.');
+    console.log('\nDry run only — no rows written. Re-run with --apply to write the "Mapped" rows above,');
+    console.log('and to flag needs_review = true on the "Ambiguous"/"No match" rows above.');
     return;
   }
 
-  if (mapped.length === 0) {
-    console.log('\nNothing to write — no unambiguous new mappings found.');
+  if (mapped.length === 0 && needsReview.length === 0) {
+    console.log('\nNothing to write — no unambiguous new mappings and no rows to flag.');
     return;
   }
 
@@ -152,9 +162,24 @@ async function main() {
     else succeeded += 1;
   }
   console.log(`Applied: ${succeeded}/${mapped.length}`);
-  if (failures.length > 0) {
+
+  console.log(`\nFlagging ${needsReview.length} row(s) needs_review = true (ambiguous/no_match)...`);
+  let flagged = 0;
+  const flagFailures: string[] = [];
+  for (const entry of needsReview) {
+    const { error } = await supabase
+      .from('technician_habilitations')
+      .update({ needs_review: true })
+      .eq('id', entry.row.id)
+      .is('aircraft_type_rating_id', null); // same idempotency guard — never flag a row someone else just normalized
+    if (error) flagFailures.push(`hab ${entry.row.id}: ${error.message}`);
+    else flagged += 1;
+  }
+  console.log(`Flagged: ${flagged}/${needsReview.length}`);
+
+  if (failures.length > 0 || flagFailures.length > 0) {
     console.log('Failures:');
-    failures.forEach((f) => console.log('  ' + f));
+    [...failures, ...flagFailures].forEach((f) => console.log('  ' + f));
     process.exitCode = 1;
   }
 }

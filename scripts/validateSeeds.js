@@ -17,7 +17,7 @@
 // aircraft_type_ratings NOTE: public.aircraft_type_ratings (Supabase) is the
 // ONLY source of truth for the 80-entry rating catalog — there is no
 // TypeScript copy left to parse here (see
-// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md). This script can
+// docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md). This script can
 // therefore only check that aircraftTypeRatingId / resolvedAircraftTypeRatingId
 // values in local seeds LOOK like a rating id (UUID shape) — it cannot
 // confirm they point at a real, still-existing catalog row. Run

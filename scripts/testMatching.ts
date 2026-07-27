@@ -5,7 +5,7 @@
 //
 // Deliberately does NOT import or duplicate the real 80-row aircraft_type_ratings
 // catalog — that catalog lives exclusively in Supabase now (see
-// docs/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md) and is validated
+// docs/archive/AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md) and is validated
 // against the live database by `npm run validate:aircraft-ratings`
 // (scripts/validateAircraftTypeRatingsCatalog.ts), not here. Every function
 // under test here takes its catalog/index as an argument, so a handful of
