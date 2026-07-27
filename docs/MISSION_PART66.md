@@ -281,9 +281,13 @@ alcance real de esta fase.
    - src/utils/matching.ts — código muerto, cero call sites reales (solo
      TechnicianCard.tsx lo importaba); su getMatchLabel diverge del actual
      ("Low match" en vez de "Weak match" para <40)
-4. VERIFICAR: build limpio, tests pasando, grep de '@deprecated' y 'V1' a
-   cero en src/, flujo completo (perfil → oferta → matching) funcionando
-   con datos migrados.
+4. VERIFICAR: build limpio, tests pasando y cero `@deprecated` mentirosos en
+   src/: cada `@deprecated` restante debe describir con precisión su estado
+   actual, los consumidores de compatibilidad que lo mantienen vivo, el
+   sistema recomendado para código nuevo y su condición de retirada. La
+   familia V1-compatible restante queda aparcada deliberadamente para la
+   misión post-Fase-5 y NO debe borrarse en esta fase. Confirmar también el
+   flujo completo (perfil → oferta → matching) con datos migrados.
 5. BLINDAJE DE DEUDA — endurecer `useCompanySession()`/`useTechnicianSession()`
    (`src/state/SessionContext.tsx`) para que devuelvan `LocalCompanySession |
    null` / `LocalTechnicianSession | null` (null mientras `sessionLoading`)

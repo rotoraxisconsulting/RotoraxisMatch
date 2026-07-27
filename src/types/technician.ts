@@ -3,9 +3,9 @@ import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from './catalog';
 
 // --- V1 compat types ---
 
-// Corrected 2026-07-27 (docs/PHASE5_INVENTORY.md item f): this was marked
-// @deprecated on the assumption that `immediately: boolean` would replace
-// it. It doesn't — `immediately` is a LOSSY one-way projection of `status`
+// Corrected 2026-07-27 (docs/PHASE5_INVENTORY.md item f): this was marked as
+// legacy on the assumption that `immediately: boolean` would replace it. It
+// doesn't — `immediately` is a LOSSY one-way projection of `status`
 // (v2CompatAdapters.ts: 'available'->true, but 'open_to_offers' AND
 // 'unavailable' both collapse to false), not an equivalent. The 3-state
 // filter this type backs (available/open_to_offers/unavailable) is an
@@ -70,10 +70,10 @@ export interface Technician {
  * (v2SafePreviewToSafeView / v2UnlockedViewToSafeView). This is the real,
  * working shape behind company/search.tsx, both map implementations
  * (TechnicianMap.native.tsx / TechnicianMapLeafletImpl.tsx),
- * MatchRequestCard, RequestContactModal, and useCompanyDashboard/
- * useMapTechnicians/useTechnicianSearch today — NOT dead code and NOT
- * safely deletable as a quick cleanup (confirmed by consumer grep,
- * docs/PHASE5_INVENTORY.md item c, 2026-07-26). Retiring it in favor of
+ * useCompanyDashboard.ts, useMapTechnicians.ts, and useTechnicianSearch.ts
+ * today — NOT dead code and NOT safely deletable as a quick cleanup
+ * (consumer grep refreshed after the dead V1 cards/modals were removed,
+ * 2026-07-27). Retiring it in favor of
  * SafeTechnicianPreview/UnlockedTechnicianView (privacy.ts) everywhere is
  * tracked as its own future mission ("V2 UI migration — retire
  * v2CompatAdapters", see docs/MISSION_PART66.md backlog), not part of the

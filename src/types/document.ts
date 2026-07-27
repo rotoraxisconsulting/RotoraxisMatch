@@ -16,7 +16,13 @@ export interface Document {
   expiresAt?: string;
 }
 
-/** @deprecated use Document instead */
+/**
+ * @deprecated V1 screen shape produced by v2DocumentToV1() and still consumed
+ * by the technician/admin document screens, AdminDocumentCard, and the
+ * technician/admin dashboard hooks. New code should use Document. Remove this
+ * interface only after those consumers use Document directly and the adapter
+ * conversion is retired.
+ */
 export interface TechnicianDocument {
   id: string;
   technicianId: string;

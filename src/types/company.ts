@@ -1,9 +1,14 @@
 import { VerificationStatus, CompanyMemberRole } from './enums'; // owned by enums.ts — not re-exported here
 import { CompanyTypeCode } from './catalog'; // owned by catalog.ts — not re-exported here
 
-// --- V1 compat types — remove after V2-1d ---
+// --- V1-compatible types — intentionally retained until the V2 UI migration ---
 
-/** @deprecated use CompanyTypeCode from catalog.ts instead */
+/**
+ * @deprecated V1 company-type union still required by the Company compatibility
+ * shape produced by v2CompanyToV1(). New code should use CompanyTypeCode from
+ * catalog.ts. Remove this union together with Company after its dashboard and
+ * admin consumers have migrated to CompanyProfile/CompanyProfileView.
+ */
 export type CompanyType =
   | 'airline'
   | 'mro'
@@ -16,7 +21,13 @@ export type CompanyType =
   | 'helicopter_operator'
   | 'other';
 
-/** @deprecated use CompanyProfile instead */
+/**
+ * @deprecated V1 display/state shape produced by v2CompanyToV1() and still
+ * consumed by the company/technician/admin dashboard hooks, the admin companies
+ * screen, and AdminCompanyCard. New code should use CompanyProfile or
+ * CompanyProfileView. Remove this interface only after those consumers use the
+ * V2 shapes and the adapter is no longer needed.
+ */
 export interface Company {
   id: string;
   companyName: string;
