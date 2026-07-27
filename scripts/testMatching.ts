@@ -110,6 +110,7 @@ function makeHab(licenseCode: string, extra: Partial<TechnicianHabilitation> = {
     technicianId: 'tech-test',
     licenseCode: licenseCode as any,
     createdAt: '2026-01-01T00:00:00.000Z',
+    needsReview: false,
     ...extra,
   };
 }

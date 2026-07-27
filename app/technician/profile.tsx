@@ -246,7 +246,7 @@ export default function TechnicianProfileScreen() {
           .eq('technician_id', techRow.id),
         supabase
           .from('technician_habilitations')
-          .select('id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, issued_at, expires_at, is_current')
+          .select('id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, issued_at, expires_at, is_current, needs_review')
           .eq('technician_id', techRow.id),
         supabase
           .from('technician_aircraft_experience')
@@ -271,6 +271,7 @@ export default function TechnicianProfileScreen() {
         issued_at: string | null;
         expires_at: string | null;
         is_current: boolean;
+        needs_review: boolean;
       }[];
       const normalizedHabs: HabRow[] = habRows
         .filter((r) => r.aircraft_type_rating_id)
@@ -285,7 +286,7 @@ export default function TechnicianProfileScreen() {
         }));
       const legacyHabs: LegacyHabRow[] = habRows
         .filter((r) => !r.aircraft_type_rating_id && r.aircraft_type_code)
-        .map((r) => ({ id: r.id, licenseCode: r.license_code, aircraftTypeCode: r.aircraft_type_code as string }));
+        .map((r) => ({ id: r.id, licenseCode: r.license_code, aircraftTypeCode: r.aircraft_type_code as string, needsReview: r.needs_review }));
       setHabilitations(normalizedHabs);
       setLegacyHabilitations(legacyHabs);
       setHabDirty(false);

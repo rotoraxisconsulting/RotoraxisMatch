@@ -250,7 +250,7 @@ export async function loadTechnicianRelations(technicianIds: string[]): Promise<
 
   const [licensesRes, habsRes, expRes] = await Promise.all([
     supabase.from('technician_licenses').select('id, technician_id, license_code, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
-    supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
+    supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at, needs_review').in('technician_id', uniqueIds),
     supabase.from('technician_aircraft_experience').select('id, technician_id, aircraft_type_code, value, unit, created_at').in('technician_id', uniqueIds),
   ]);
   throwIfError(licensesRes.error);
@@ -279,6 +279,7 @@ export async function loadTechnicianRelations(technicianIds: string[]): Promise<
       issuedAt: row.issued_at ?? undefined,
       expiresAt: row.expires_at ?? undefined,
       createdAt: row.created_at,
+      needsReview: row.needs_review ?? false,
     });
   }
   for (const row of (expRes.data ?? []) as DbRow[]) {

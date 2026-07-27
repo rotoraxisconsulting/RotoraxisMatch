@@ -5,9 +5,8 @@ import { TechnicianCard, TechnicianChip, TechnicianBadge, techUi } from './Techn
 import { AircraftTypeRatingPicker } from '../AircraftTypeRatingPicker';
 import { DateField } from '../DateField';
 import type { DateFieldPalette } from '../DateField.types';
-import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, getAircraftTypeRatingLabel, getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../../constants/aircraftTypeRatings';
 import { getCompatibleProductType, isUnusualCombination } from '../../utils/licenseCategoryProductType';
-import { AIRCRAFT_TYPE_CATALOG } from '../../constants/aircraftTypes';
 import { AircraftTypeRatingCatalog, LicenseCode } from '../../types/catalog';
 
 export interface HabilitationRow {
@@ -28,6 +27,12 @@ export interface LegacyHabilitationRow {
   id: string;
   licenseCode: string;
   aircraftTypeCode: string;
+  // Set by scripts/backfillLegacyAircraftRatings.ts (migration 027) when
+  // aircraftTypeCode resolved to zero or multiple catalog ratings and was
+  // left unmigrated on purpose — never guessed to a single winner. A row
+  // can also simply not have gone through that script yet, so `false` here
+  // means "not flagged", not "confirmed fine".
+  needsReview: boolean;
 }
 
 interface Props {
@@ -51,8 +56,25 @@ interface Props {
   dateFieldPalette: DateFieldPalette;
 }
 
-function legacyAircraftTypeLabel(code: string): string {
-  return AIRCRAFT_TYPE_CATALOG.find((a) => a.code === code)?.label ?? code;
+// Fase 5.3 — replaces the deleted constants/aircraftTypes.ts's lookup
+// (33-code legacy catalog) now that it's gone. Resolves the raw legacy
+// code against the REAL 606-endorsement catalog via
+// resolveLegacyCodeToFamilyKeys() (same inclusive, never-guess-a-winner
+// rule the broad/approximate filter and T3 matching already use) — shows
+// every family it could mean, joined, rather than picking one. Falls back
+// to the raw code verbatim when nothing resolves (no catalog rating lists
+// it as an alias), same as the old function's `?? code` fallback.
+function legacyAircraftTypeLabel(code: string, ratingIndex: AircraftRatingIndex): string {
+  const familyKeys = resolveLegacyCodeToFamilyKeys(code, ratingIndex);
+  if (familyKeys.size === 0) return code;
+
+  const familyByKey = new Map<string, string>();
+  for (const rating of ratingIndex.values()) {
+    familyByKey.set(getAircraftFamilyKey(rating), rating.aircraftFamily);
+  }
+  return [...familyKeys]
+    .map((key) => (familyByKey.has(key) ? `${familyByKey.get(key)} family` : key))
+    .join(' / ');
 }
 
 // Fase 3b screen 2 — the technician-side counterpart to
@@ -187,8 +209,11 @@ export function HabilitationsEditor({
         <View key={h.id} style={styles.habRow}>
           <View style={styles.habInfo}>
             <Text style={styles.habLicense}>{h.licenseCode}</Text>
-            <Text style={styles.habRating}>{legacyAircraftTypeLabel(h.aircraftTypeCode)} — general, engine not specified</Text>
-            <TechnicianBadge label="Legacy" tone="muted" small />
+            <Text style={styles.habRating}>{legacyAircraftTypeLabel(h.aircraftTypeCode, ratingsById)} — general, engine not specified</Text>
+            <View style={styles.chipRow}>
+              <TechnicianBadge label="Legacy" tone="muted" small />
+              {h.needsReview ? <TechnicianBadge label="Needs review — code not resolved to a catalog rating" tone="warning" small /> : null}
+            </View>
           </View>
         </View>
       ))}

@@ -120,6 +120,13 @@ export interface TechnicianHabilitation {
   issuedAt?: string;
   expiresAt?: string;
   createdAt: string;
+  // Migration 027 — set by scripts/backfillLegacyAircraftRatings.ts when a
+  // legacy aircraftTypeCode resolved to zero or multiple catalog ratings
+  // and was left unmigrated on purpose. Only meaningful when
+  // aircraftTypeRatingId is unset; matching (offerMatchExplain.ts) reads
+  // this to label a T3/approximate match as explicitly "needs review"
+  // instead of silently trusting it.
+  needsReview: boolean;
 }
 
 export interface TechnicianAircraftExperience {
