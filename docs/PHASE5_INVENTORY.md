@@ -299,7 +299,10 @@ procedimiento para bootstrapear un admin en un entorno nuevo; propongo
 mantenerlo como referencia operativa, no archivar.
 
 **Candidatos a archivar** (informes de punto-en-el-tiempo, ya reflejados en
-el estado actual del código/mission doc — 33 archivos):
+el estado actual del código/mission doc — **40 archivos**, corregido
+2026-07-27: el conteo manual original decía 33, recontado por exclusión
+antes de mover nada; ver `docs/MISSION_PART66.md` "Decisiones del
+checkpoint 5.1" para la nota completa):
 `AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md`,
 `AIRCRAFT_TYPE_RATINGS_SUPABASE_SOURCE_REPORT.md`, `DOCS_CLEANUP_REPORT.md`,
 `EASA_FULL_CATALOG_RECONCILIATION_REPORT.md`,
@@ -349,7 +352,7 @@ más. Sin urgencia por ninguno de los dos lados.
    (mi lectura: sí, es funcionalidad activa de la 3b), ¿re-etiquetamos
    `AvailabilityStatus` como campo V2 legítimo en vez de `@deprecated`, para
    que deje de aparecer como "legacy a borrar" en el próximo inventario?
-3. **(h)**: ¿archivo los 33 candidatos ya, o los revisas tú primero uno a
+3. **(h)**: ¿archivo los candidatos ya (40, no 33 — ver corrección arriba), o los revisas tú primero uno a
    uno? Puedo hacerlo en un solo commit reversible.
 4. Todo lo demás (a, b, d, e, g) no necesita decisión — son hechos
    confirmados, listos para que 5.2 actúe sobre ellos tal como estaban ya

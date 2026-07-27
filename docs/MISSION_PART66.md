@@ -1257,13 +1257,24 @@ relacionado. Parado en el checkpoint, esperando esa decisión.
    Fase 5 (sección "MIGRAR datos" arriba) queda ANULADO** — no se hace, no
    tiene sentido migrar hacia una representación que pierde información
    que la propia Fase 3b necesita.
-3. **(h)** Los 33 docs candidatos del inventario se archivan a
-   `docs/archive/` en un commit único y reversible.
+3. **(h)** Los docs candidatos del inventario se archivan a
+   `docs/archive/` en un commit único y reversible — **40 archivos, no 33**
+   (el número de `docs/PHASE5_INVENTORY.md` era un conteo manual mal
+   hecho, sobre todo en la serie `V2_S0B_H*`; recontado por exclusión
+   contra la lista de "se queda" con `ls`+grep antes de mover nada, no
+   vuelvas a fiarte del "33" en ningún inventario futuro).
    `DELETED_ACCOUNT_ANONYMIZATION_PROPOSAL.md` y
    `RLS_OPERATION_AUDIT_2026-07-23_REPORT.md` se quedan activos.
    `V2_S1_ADMIN_BOOTSTRAP_SQL.sql` se queda como referencia operativa.
    `OFFER_DELETE_SOFT_DELETE_PROPOSAL.md` corregido antes de archivar (su
-   cabecera decía "migración 026 NOT yet applied", ya no es cierto).
+   cabecera decía "migración 026 NOT yet applied", ya no es cierto). Al
+   archivar, grep posterior encontró referencias de código a las rutas
+   antiguas de 5 de estos docs — corregidas a `docs/archive/...` en
+   `scripts/`, `src/constants/`, `src/repositories/v2/`, `src/types/`,
+   `src/utils/`. Ese mismo grep tocó por error los comentarios de 3
+   migraciones YA APLICADAS (016/019/020) — revertido antes de commitear;
+   la regla de "nunca editar una migración aplicada" incluye sus
+   comentarios, no solo el DDL.
 4. **Extras aprobados para la migración 027**: índice único parcial en
    `technician_habilitations` (el hallazgo lateral del inventario, ítem a —
    la UNIQUE existente no cubre `aircraft_type_rating_id`, así que hoy nada
