@@ -13,7 +13,7 @@ import { Search, UserRound } from 'lucide-react-native';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { AdminTechnicianCard } from '../../src/components/AdminTechnicianCard';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import type { LegacyVerificationStatus, Technician, TechnicianWithRelations } from '../../src/types';
+import type { Technician, TechnicianWithRelations, VerificationStatus } from '../../src/types';
 import {
   AdminCard,
   AdminChip,
@@ -34,9 +34,12 @@ const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'rejected', label: 'Rejected' },
 ];
 
-// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
-function normalizedStatus(status: LegacyVerificationStatus): StatusFilter {
-  if (status === 'unverified') return 'pending';
+// Fase 5.3 — see the identical note in app/admin/companies.tsx:
+// LegacyVerificationStatus's 'unverified' branch was unreachable both by
+// the type checker (Technician.verificationStatus is VerificationStatus)
+// and at runtime (technician_profiles.verification_status is a genuine
+// Postgres ENUM, confirmed against rotoaxismatch-dev).
+function normalizedStatus(status: VerificationStatus): StatusFilter {
   return status;
 }
 

@@ -13,7 +13,7 @@ import { Building2, Search } from 'lucide-react-native';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { AdminCompanyCard } from '../../src/components/AdminCompanyCard';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
-import type { Company, CompanyTypeCode, LegacyVerificationStatus } from '../../src/types';
+import type { Company, CompanyTypeCode, VerificationStatus } from '../../src/types';
 import { COMPANY_TYPES } from '../../src/constants/companyTypes';
 import {
   AdminCard,
@@ -41,9 +41,14 @@ const TYPE_OPTIONS: { key: TypeFilter; label: string }[] = [
   ...COMPANY_TYPES.map((type): { key: TypeFilter; label: string } => ({ key: type.code, label: type.label })),
 ];
 
-// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
-function normalizedStatus(status: LegacyVerificationStatus): StatusFilter {
-  if (status === 'unverified') return 'pending';
+// Fase 5.3 — was typed to accept LegacyVerificationStatus ('unverified'
+// included) for "old persisted data" that could never actually reach here:
+// Company.verificationStatus is VerificationStatus at the type level, and
+// the live companies.verification_status column is a genuine Postgres
+// ENUM ('pending'/'verified'/'rejected' only, confirmed against
+// rotoaxismatch-dev) — Postgres itself rejects any other value, so
+// 'unverified' was unreachable both by the type checker and at runtime.
+function normalizedStatus(status: VerificationStatus): StatusFilter {
   return status;
 }
 

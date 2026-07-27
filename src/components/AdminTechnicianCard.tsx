@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { BriefcaseBusiness, CheckCircle, Clock, MapPin, UserRound, XCircle } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import type { LegacyVerificationStatus, Technician, TechnicianWithRelations, VerificationStatus } from '../types';
+import type { Technician, TechnicianWithRelations, VerificationStatus } from '../types';
 import { TECHNICIAN_TYPES } from '../constants/technicianTypes';
 import {
   AdminBadge,
@@ -41,17 +41,10 @@ const ACTIONS: ActionConfig[] = [
   { status: 'rejected', label: 'Reject', tone: 'error', color: adminUi.red, icon: XCircle },
 ];
 
-// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
-function normalizedStatus(status: LegacyVerificationStatus): VerificationStatus {
-  if (status === 'unverified') return 'pending';
-  return status;
-}
-
 function verificationTone(status: VerificationStatus): AdminTone {
-  const normalized = normalizedStatus(status);
-  if (normalized === 'verified') return 'success';
-  if (normalized === 'pending') return 'warning';
-  if (normalized === 'rejected') return 'error';
+  if (status === 'verified') return 'success';
+  if (status === 'pending') return 'warning';
+  if (status === 'rejected') return 'error';
   return 'muted';
 }
 
@@ -75,7 +68,7 @@ function compactValues(values: string[], max = 5): string[] {
 
 export function AdminTechnicianCard({ technician, details, onUpdateStatus }: Props) {
   const [loadingStatus, setLoadingStatus] = useState<VerificationStatus | null>(null);
-  const currentStatus = normalizedStatus(technician.verificationStatus);
+  const currentStatus = technician.verificationStatus;
 
   async function handleAction(status: VerificationStatus) {
     setLoadingStatus(status);

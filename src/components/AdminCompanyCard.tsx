@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Building2, CheckCircle, Clock, Mail, MapPin, Users, XCircle } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import type { Company, LegacyVerificationStatus, VerificationStatus } from '../types';
+import type { Company, VerificationStatus } from '../types';
 import { COMPANY_TYPES } from '../constants/companyTypes';
 import {
   AdminBadge,
@@ -41,17 +41,10 @@ const ACTIONS: ActionConfig[] = [
   { status: 'rejected', label: 'Reject', color: adminUi.red, icon: XCircle },
 ];
 
-// Accept LegacyVerificationStatus for runtime safety — old persisted data may have 'unverified'
-function normalizedStatus(status: LegacyVerificationStatus): VerificationStatus {
-  if (status === 'unverified') return 'pending';
-  return status;
-}
-
 function verificationTone(status: VerificationStatus): AdminTone {
-  const normalized = normalizedStatus(status);
-  if (normalized === 'verified') return 'success';
-  if (normalized === 'pending') return 'warning';
-  if (normalized === 'rejected') return 'error';
+  if (status === 'verified') return 'success';
+  if (status === 'pending') return 'warning';
+  if (status === 'rejected') return 'error';
   return 'muted';
 }
 
@@ -81,7 +74,7 @@ export function AdminCompanyCard({
   onUpdateStatus,
 }: Props) {
   const [loadingStatus, setLoadingStatus] = useState<VerificationStatus | null>(null);
-  const currentStatus = normalizedStatus(company.verificationStatus);
+  const currentStatus = company.verificationStatus;
 
   async function handleAction(status: VerificationStatus) {
     setLoadingStatus(status);
