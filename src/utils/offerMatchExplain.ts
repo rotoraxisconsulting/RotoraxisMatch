@@ -86,17 +86,43 @@ const HABILITATION_TIER_FRACTIONS = { exact: 1, related_family: 0.57, related_le
 // paperwork/renewal flag, not a disqualification.
 const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 
-// A mandatory exact-habilitation requirement that isn't met at T1 caps the
-// total here, regardless of how high the raw sum would otherwise be.
+// Ladder of score ceilings, loosest to tightest — Fase 5.3 (2026-07-27),
+// checkpoint-confirmed. Applied together via applyScoreCeilings() below,
+// most-restrictive-wins by construction (sequential Math.min, order never
+// matters): an exact match has no ceiling at all; anything else is capped
+// at progressively lower labels the weaker the confirmed evidence is.
+//
+//   no ceiling      — exact (T1) match: a confirmed, same-row qualification.
+//   BROAD_ONLY_CAP  — the requirement was only ever satisfied via the
+//                     approximate broad license/aircraft filter
+//                     (evaluateLegacyBroadMatch), never a confirmed exact
+//                     rating — can never read as "Excellent" (>=80).
+//   MANDATORY_UNMET_CAP — an exact MANDATORY habilitation requirement was
+//                     not met at T1.
+//   ZERO_QUALIFICATION_CAP — the offer asks for real qualification (exact
+//                     or broad) and the technician's habilitation score
+//                     came out to zero — stricter than the two above,
+//                     applies even for a preferred-only mismatch.
+const BROAD_ONLY_CAP = 79;
 const MANDATORY_UNMET_CAP = 59;
-// An offer that specifies real qualification requirements (exact
-// habilitations OR the broad license/aircraft sets) where the technician's
-// habilitation score came out to zero caps further — stricter than the
-// mandatory cap above, and applies even for a preferred-only mismatch,
-// because "verified + available + experienced + co-located" must never by
-// itself read as "Partial match" when the technician holds none of the
-// qualification the offer actually asked for.
 const ZERO_QUALIFICATION_CAP = 39;
+
+// Single place the whole ceiling ladder is combined — see the comment
+// above for what each one means and why "most restrictive wins" needs no
+// special-casing (Math.min chains regardless of which flags are true, or
+// how many). Exported for direct testing of the combination itself,
+// independent of whether today's branch structure can produce every
+// combination in practice (see scripts/testMatching.ts).
+export function applyScoreCeilings(
+  total: number,
+  flags: { isBroadOnlyMatch: boolean; hasMandatoryUnmet: boolean; isZeroQualification: boolean },
+): number {
+  let capped = total;
+  if (flags.isBroadOnlyMatch) capped = Math.min(capped, BROAD_ONLY_CAP);
+  if (flags.hasMandatoryUnmet) capped = Math.min(capped, MANDATORY_UNMET_CAP);
+  if (flags.isZeroQualification) capped = Math.min(capped, ZERO_QUALIFICATION_CAP);
+  return capped;
+}
 
 type HabilitationTier = 'exact' | 'related_family' | 'related_legacy' | 'not_met';
 
@@ -230,9 +256,17 @@ function evaluateHabilitationRequirement(
     : undefined;
   if (legacyRow) {
     const vigencia = evaluateVigencia(legacyRow, license, req.licenseCode, `general habilitation in ${legacyRow.aircraftTypeCode}`, today);
+    // Fase 5.3 — label only, no score change: migration 027's needs_review
+    // flag (set by scripts/backfillLegacyAircraftRatings.ts when this exact
+    // code resolved to zero or multiple ratings) is surfaced explicitly
+    // when true, instead of the clarification reading identically whether
+    // the row has been checked or not.
+    const reviewNote = legacyRow.needsReview
+      ? ' Flagged for review — no catalog rating could be confirmed automatically for this code.'
+      : '';
     return {
       tier: 'related_legacy',
-      clarificationText: `Approximate match without engine data: general habilitation in ${legacyRow.aircraftTypeCode} under ${req.licenseCode}.`,
+      clarificationText: `Approximate match without engine data: general habilitation in ${legacyRow.aircraftTypeCode} under ${req.licenseCode}.${reviewNote}`,
       vigenciaDegraded: vigencia.degraded,
       vigenciaNotice: vigencia.notice,
     };
@@ -242,9 +276,28 @@ function evaluateHabilitationRequirement(
   return { tier: 'not_met' };
 }
 
+// Fase 5.3 (2026-07-27, checkpoint-confirmed): this used to be a flat
+// 'legacy' | 'not_met' outcome, scored at FULL habilitation+license credit
+// whenever ANY sub-case matched — the exact "scores like an exact match"
+// bug the mission's own confirmed-facts list flagged. Now split by
+// evidence strength:
+//   - 'legacy_aircraft_confirmed': a REAL technician_habilitations row
+//     covers the required aircraft family — whether or not a license was
+//     also required (both the "license+aircraft same row" and
+//     "aircraft only" sub-cases below confirm a real row for that
+//     aircraft). Scored at the same fraction as T2 (related_family, 0.57)
+//     — same-row/real-row evidence, still never as strong as a confirmed
+//     exact rating.
+//   - 'legacy_category_only': the offer asked for a license category with
+//     NO aircraft requirement at all — nothing here confirms the
+//     technician has ANY relevant aircraft experience, only that they
+//     hold the license. Weaker evidence, scored at the T3 fraction
+//     (related_legacy, 0.29), with its own clarification saying so.
+//   - 'not_met': no evidence at all.
 interface BroadOutcome {
-  tier: 'legacy' | 'not_met';
+  tier: 'legacy_aircraft_confirmed' | 'legacy_category_only' | 'not_met';
   matchText?: string;
+  clarificationText?: string;
 }
 
 // Legacy broad requirements (offer_required_licenses / offer_required_aircraft_types)
@@ -266,6 +319,7 @@ function evaluateLegacyBroadMatch(
 ): BroadOutcome {
   const needsLicense = offer.requiredLicenses.length > 0;
   const needsAircraft = offer.requiredAircraftTypes.length > 0;
+  const APPROXIMATE_NOTE = 'Approximate requirement — engine not specified.';
 
   // A habilitation covers a required family key either via its resolved
   // rating (exact family match) or, for rows that only ever recorded a
@@ -287,15 +341,12 @@ function evaluateLegacyBroadMatch(
       return offer.requiredAircraftTypes.some((key) => habilitationCoversFamilyKey(h, key));
     });
     return row
-      ? { tier: 'legacy', matchText: `${row.licenseCode} + required aircraft in the same habilitation` }
+      ? {
+          tier: 'legacy_aircraft_confirmed',
+          matchText: `${row.licenseCode} + required aircraft in the same habilitation`,
+          clarificationText: APPROXIMATE_NOTE,
+        }
       : { tier: 'not_met' };
-  }
-
-  if (needsLicense) {
-    const holds =
-      technician.licenses.some((l) => offer.requiredLicenses.includes(l.licenseCode)) ||
-      technician.habilitations.some((h) => offer.requiredLicenses.includes(h.licenseCode));
-    return holds ? { tier: 'legacy', matchText: 'Required license category present in profile' } : { tier: 'not_met' };
   }
 
   if (needsAircraft) {
@@ -310,7 +361,27 @@ function evaluateLegacyBroadMatch(
     const covers = technician.habilitations.some((h) =>
       offer.requiredAircraftTypes.some((key) => habilitationCoversFamilyKey(h, key)),
     );
-    return covers ? { tier: 'legacy', matchText: 'Required aircraft present in profile' } : { tier: 'not_met' };
+    return covers
+      ? { tier: 'legacy_aircraft_confirmed', matchText: 'Required aircraft present in profile', clarificationText: APPROXIMATE_NOTE }
+      : { tier: 'not_met' };
+  }
+
+  if (needsLicense) {
+    // License-only: the offer never asked for a specific aircraft, so
+    // there is nothing here to confirm beyond the license category itself
+    // — the technician could hold this license with zero aircraft
+    // experience on record. Weaker than the two cases above, which both
+    // require a real technician_habilitations row for a specific family.
+    const holds =
+      technician.licenses.some((l) => offer.requiredLicenses.includes(l.licenseCode)) ||
+      technician.habilitations.some((h) => offer.requiredLicenses.includes(h.licenseCode));
+    return holds
+      ? {
+          tier: 'legacy_category_only',
+          matchText: 'Required license category present in profile',
+          clarificationText: 'Category-only match — no specific aircraft requirement to verify.',
+        }
+      : { tier: 'not_met' };
   }
 
   return { tier: 'not_met' };
@@ -352,6 +423,10 @@ export function calculateOfferTechnicianMatch(
   const vigenciaNotices: VigenciaNotice[] = [];
   const mandatoryMissing: string[] = [];
   let level: MatchLevel = 'not_met';
+  // True only when the qualification evidence came exclusively from the
+  // approximate broad filter — never from a confirmed exact rating. Drives
+  // BROAD_ONLY_CAP (see applyScoreCeilings).
+  let isBroadOnlyMatch = false;
 
   if (technician.verificationStatus === 'verified') {
     verified = weights.verified;
@@ -422,10 +497,22 @@ export function calculateOfferTechnicianMatch(
     // requirement sets, still resolved through a single joint habilitation
     // row whenever both a license and an aircraft are required together.
     const broad = evaluateLegacyBroadMatch(offer, technician, ratingIndex);
-    if (broad.tier === 'legacy') {
+    if (broad.tier !== 'not_met') {
       level = 'legacy';
+      isBroadOnlyMatch = true;
       if (broad.matchText) matches.push(broad.matchText);
-      habilitation = weights.habilitation;
+      if (broad.clarificationText) clarifications.push(broad.clarificationText);
+      // Never full/exact credit (Fase 5.3 fix) — a broad match is real
+      // evidence but never a confirmed exact rating. 'legacy_aircraft_
+      // confirmed' (a real technician_habilitations row for the required
+      // family) scores at the same fraction as T2; 'legacy_category_only'
+      // (license held, no aircraft ever asked for or confirmed) is weaker,
+      // same fraction as T3. See applyScoreCeilings() for the label
+      // ceiling this also imposes (never "Excellent").
+      const fraction = broad.tier === 'legacy_aircraft_confirmed'
+        ? HABILITATION_TIER_FRACTIONS.related_family
+        : HABILITATION_TIER_FRACTIONS.related_legacy;
+      habilitation = Math.round(weights.habilitation * fraction);
       license = weights.license;
     } else {
       level = 'not_met';
@@ -473,23 +560,16 @@ export function calculateOfferTechnicianMatch(
     location = weights.location;
   }
 
-  let total = verified + habilitation + license + availability + experience + location;
+  const rawTotal = verified + habilitation + license + availability + experience + location;
 
-  // Mandatory-as-ceiling: an unmet mandatory exact-habilitation requirement
-  // caps the total, regardless of how high the rest of the profile scored.
-  // Checked before the stricter zero-qualification cap so the stricter one
-  // wins when both apply (e.g. a mandatory requirement met at T4/not_met).
-  if (mandatoryMissing.length > 0) {
-    total = Math.min(total, MANDATORY_UNMET_CAP);
-  }
-  // Zero-qualification ceiling: an offer that asks for real qualification
-  // (exact habilitations or the broad license/aircraft sets) where the
-  // technician's habilitation score is zero can never read as "Partial" —
-  // verified + available + experienced + co-located must not manufacture
-  // that impression on their own.
-  if (hasQualificationRequirements && habilitation === 0) {
-    total = Math.min(total, ZERO_QUALIFICATION_CAP);
-  }
+  // Every score ceiling is applied in one place — see applyScoreCeilings()
+  // and the ladder documented above it. Most restrictive always wins,
+  // however many apply at once.
+  const total = applyScoreCeilings(rawTotal, {
+    isBroadOnlyMatch,
+    hasMandatoryUnmet: mandatoryMissing.length > 0,
+    isZeroQualification: hasQualificationRequirements && habilitation === 0,
+  });
 
   return {
     offerId: offer.id,
