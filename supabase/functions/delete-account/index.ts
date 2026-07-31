@@ -5,7 +5,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.107.0';
 const ALLOWED_ORIGINS = [
   'http://localhost:8081',
   'https://aviationjobtalent.vercel.app',
-  'https://avj-dev.vercel.app',
+  'https://ajt-dev.vercel.app',
   'https://app.aviationjobtalent.com',
 ];
 
