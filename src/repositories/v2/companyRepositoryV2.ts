@@ -21,6 +21,9 @@ function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
     ...(patch.email !== undefined ? { email: patch.email } : {}),
     ...(patch.companyType !== undefined ? { company_type: patch.companyType } : {}),
+    // '' -> NULL: la ausencia de web se representa de una sola forma, y el
+    // CHECK de la migracion 036 rechaza la cadena vacia de todos modos.
+    ...(patch.website !== undefined ? { website: patch.website || null } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
   };
 }
@@ -30,7 +33,7 @@ export const companyRepositoryV2 = {
     const { data, error } = await supabase
       .from('companies')
       .select(`
-        id, name, location_city_id, phone, email, company_type,
+        id, name, location_city_id, phone, email, company_type, website,
         verification_status, created_at, updated_at,
         location_airports ( country_name, city, iata, icao, latitude, longitude )
       `)
@@ -43,7 +46,7 @@ export const companyRepositoryV2 = {
     const { data, error } = await supabase
       .from('companies')
       .select(`
-        id, name, location_city_id, phone, email, company_type,
+        id, name, location_city_id, phone, email, company_type, website,
         verification_status, created_at, updated_at,
         location_airports ( country_name, city, iata, icao, latitude, longitude )
       `)
@@ -172,12 +175,19 @@ export const companyRepositoryV2 = {
       .update(companyPatchToDb(patch))
       .eq('id', id)
       .select(`
-        id, name, location_city_id, phone, email, company_type,
+        id, name, location_city_id, phone, email, company_type, website,
         verification_status, created_at, updated_at,
         location_airports ( country_name, city, iata, icao, latitude, longitude )
       `)
       .maybeSingle();
     throwIfError(error);
-    return data ? mapCompanyRow(data as any) : null;
+    // Mismo criterio que offerRepository.update: `companies_update_own` exige
+    // my_company_role(id) = 'admin', así que un recruiter o un viewer recibía
+    // data null, error null, y la pantalla se quedaba tan tranquila. Actualizar
+    // por id nunca tiene un "no pasó nada" legítimo.
+    if (!data) {
+      throw new Error('Could not save the company profile — only a company admin can change these details.');
+    }
+    return mapCompanyRow(data as any);
   },
 };

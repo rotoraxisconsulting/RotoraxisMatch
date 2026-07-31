@@ -65,6 +65,34 @@ export function getFamilies(ratings: AircraftTypeRatingCatalog[]): AircraftFamil
     });
 }
 
+/**
+ * Family keys persistidas → etiquetas mostrables.
+ *
+ * `offer_required_aircraft_types` guarda la family key cruda
+ * (`"<manufacturer>::<aircraftFamily>"`, migración 022). Esa key es un
+ * identificador interno y **nunca debe llegar al usuario final** — decisión
+ * registrada con la migración 023, donde se dejó constancia de que
+ * `displayName` no hereda el formato repetitivo de la key
+ * (p. ej. `Sikorsky::Sikorsky S-76C` → "Sikorsky S-76C family").
+ *
+ * Una key que ya no exista en el catálogo (rating desactivado, familia
+ * renombrada) se devuelve TAL CUAL en vez de descartarse: perder de la vista
+ * un requisito que la oferta sí tiene sería peor que enseñarlo feo, y además
+ * lo hace visible para poder corregirlo.
+ *
+ * Único dueño de esta resolución — las 4 pantallas que muestran requisitos
+ * amplios (browse de ofertas, detalle de oferta del técnico, lista de ofertas
+ * de empresa y moderación de admin) pasan por aquí, no por copias locales.
+ */
+export function resolveFamilyKeyLabels(
+  ratings: AircraftTypeRatingCatalog[],
+  keys: string[],
+): string[] {
+  if (keys.length === 0) return [];
+  const byKey = new Map(getFamilies(ratings).map((f) => [f.key, f.displayName]));
+  return keys.map((key) => byKey.get(key) ?? key);
+}
+
 // Ratings matching a specific productType facet (the Airplanes/Helicopters
 // tabs, Fase 3b.4). A rating with productType undefined (not backfilled)
 // matches NO facet — never guessed into one — so it simply won't appear

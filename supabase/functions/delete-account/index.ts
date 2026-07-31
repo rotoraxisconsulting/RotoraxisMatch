@@ -38,72 +38,39 @@ function makeJson(corsHeaders) {
 
 // ── Helpers ───────────────────────────────────────────────
 
-function deletedEmail(userId) {
-  return `deleted_${userId}@deleted.invalid`;
-}
+// El formato del email anonimizado (`deleted_<uuid>@deleted.invalid`) vive
+// ahora en handle_deleted_user() (migración 039), que es el único dueño de la
+// anonimización en base de datos. Se elimina de aquí para que no queden dos
+// definiciones que puedan divergir.
 
 async function deleteAccountTechnician(supabaseAdmin, userId) {
-  // 1. Resolve technician_profiles row
+  // 1. Resolve technician_profiles row — sólo para localizar los ficheros.
   const { data: techProfile, error: techErr } = await supabaseAdmin
     .from('technician_profiles')
-    .select('id, email')
+    .select('id')
     .eq('user_id', userId)
     .maybeSingle();
   if (techErr) throw new AppError(500, 'Could not retrieve technician profile.');
 
   if (techProfile) {
-    const technicianId = techProfile.id;
-
-    // 2. Delete documents from storage + clear DB records
+    // 2. Borrar los FICHEROS del bucket. Es lo único de este bloque que la base
+    //    de datos no puede hacer por sí sola, y por eso sigue aquí. Las FILAS de
+    //    `documents` las borra el trigger, junto con el resto de la lápida.
     const { data: docs } = await supabaseAdmin
       .from('documents')
-      .select('id, storage_path')
-      .eq('technician_id', technicianId);
+      .select('storage_path')
+      .eq('technician_id', techProfile.id);
 
-    if (docs && docs.length > 0) {
-      const paths = docs.map((d) => d.storage_path).filter(Boolean);
-      if (paths.length > 0) {
-        await supabaseAdmin.storage.from('technician-documents').remove(paths);
-      }
-      await supabaseAdmin
-        .from('documents')
-        .delete()
-        .eq('technician_id', technicianId);
+    const paths = (docs ?? []).map((d) => d.storage_path).filter(Boolean);
+    if (paths.length > 0) {
+      await supabaseAdmin.storage.from('technician-documents').remove(paths);
     }
-
-    // 3. Clear cover notes on applications
-    await supabaseAdmin
-      .from('offer_applications')
-      .update({ cover_note: null })
-      .eq('technician_id', technicianId);
-
-    // 4. Anonymize chat messages sent by this user
-    await supabaseAdmin
-      .from('chat_messages')
-      .update({ body: '[Message deleted]' })
-      .eq('sender_user_id', userId);
-
-    // 5. Anonymize technician_profiles PII
-    await supabaseAdmin
-      .from('technician_profiles')
-      .update({
-        first_name: '[Deleted]',
-        last_name: '[User]',
-        email: deletedEmail(userId),
-        phone: null,
-        social_links: null,
-        birth_date: '1900-01-01',
-      })
-      .eq('id', technicianId);
   }
 
-  // 6. Anonymize profiles row
-  await supabaseAdmin
-    .from('profiles')
-    .update({ email: deletedEmail(userId), status: 'deleted' })
-    .eq('id', userId);
-
-  // 7. Delete auth user (irreversible)
+  // 3. Borrar el usuario de auth. El trigger AFTER DELETE `on_auth_user_deleted`
+  //    construye la lápida entera (anonimizar PII, limpiar cover notes y mensajes,
+  //    borrar filas de documents, profiles.status='deleted') dentro de esta misma
+  //    transacción: si algo falla, no se borra nada y no queda fantasma.
   const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
   if (deleteErr) throw new AppError(500, 'Could not remove authentication credentials.');
 }
@@ -133,27 +100,15 @@ async function deleteAccountCompanyUser(supabaseAdmin, userId) {
     }
   }
 
-  // 3. Remove from company_members (so the company data is untouched)
-  if (member) {
-    await supabaseAdmin
-      .from('company_members')
-      .delete()
-      .eq('id', member.id);
-  }
-
-  // 4. Anonymize chat messages sent by this user
-  await supabaseAdmin
-    .from('chat_messages')
-    .update({ body: '[Message deleted]' })
-    .eq('sender_user_id', userId);
-
-  // 5. Anonymize profiles row
-  await supabaseAdmin
-    .from('profiles')
-    .update({ email: deletedEmail(userId), status: 'deleted' })
-    .eq('id', userId);
-
-  // 6. Delete auth user
+  // 3. Borrar el usuario de auth. El trigger `on_auth_user_deleted` quita la
+  //    membresía de company_members, anonimiza los mensajes de chat y marca
+  //    profiles.status='deleted', todo en esta misma transacción.
+  //
+  //    El guard de último admin de arriba se queda AQUÍ a propósito: es una
+  //    regla de producto ("no dejes a tu empresa sin administrador"), no un
+  //    invariante de integridad, así que no se replica en el trigger. Un
+  //    borrado que no pase por esta función se la salta — pero sigue sin poder
+  //    dejar un fantasma, que es lo que el trigger sí garantiza.
   const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
   if (deleteErr) throw new AppError(500, 'Could not remove authentication credentials.');
 }

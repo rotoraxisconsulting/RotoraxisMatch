@@ -23,6 +23,7 @@ import { getFamilies } from '../constants/aircraftTypeRatingViews';
 import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { resolveTypeRatingLabels } from '../utils/v2CompatAdapters';
 import { CollapsibleAircraftFilter } from './CollapsibleAircraftFilter';
+import { notify, confirmAction } from '../utils/platformAlert';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     };
 
     function availLabel(s) {
-      return s === 'available' ? 'Available' : s === 'open_to_offers' ? 'Open to offers' : 'Unavailable';
+      return s === 'open_to_offers' ? 'Open to offers' : 'Unavailable';
     }
     function escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -357,8 +358,10 @@ const VERIFICATION_OPTIONS = [
   { value: 'rejected', label: 'Rejected' },
 ] as const;
 
+// Dos estados desde 2026-07-29 — ver la nota gemela en
+// TechnicianMapLeafletImpl.tsx. Las dos implementaciones del mapa ofrecen las
+// mismas opciones por construcción.
 const AVAILABILITY_OPTIONS = [
-  { value: 'available', label: 'Available' },
   { value: 'open_to_offers', label: 'Open to offers' },
   { value: 'unavailable', label: 'Unavailable' },
 ] as const;
@@ -633,7 +636,9 @@ export function TechnicianMap({
           country: t.country,
           licenseCategories: t.licenseCategories,
           typeRatings: resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex),
-          specialties: t.specialties,
+          // `specialties` se quito del payload el 2026-07-29: el campo no tiene
+          // almacenamiento (siempre []) y la plantilla HTML inyectada nunca lo
+          // leyo. Ver app/technician/profile.tsx.
           verificationStatus: t.verificationStatus,
           yearsExperience: t.yearsExperience,
           availability: t.availability.status,
@@ -690,7 +695,7 @@ export function TechnicianMap({
     try {
       await onSendOffer(selectedOfferTechId, offerId);
     } catch (error: any) {
-      Alert.alert('Could not send offer', error?.message ?? 'An error occurred while sending this direct offer.');
+      notify('Could not send offer', error?.message ?? 'An error occurred while sending this direct offer.');
     } finally {
       setSendingOfferId(null);
     }

@@ -70,7 +70,8 @@ export default function DirectOffersScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
 
   const [rows, setRows] = useState<DirectOfferRow[]>([]);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
@@ -79,6 +80,11 @@ export default function DirectOffersScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!companyId) return;
+
     if (!companyId) return;
 
     // 1. Fetch offer_requests for this company

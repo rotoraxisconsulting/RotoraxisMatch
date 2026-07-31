@@ -68,13 +68,19 @@ export default function CompanyChatsScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
 
   const [entries, setEntries] = useState<RoomEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!companyId) return;
+
     const [rooms, unreadRoomIds] = await Promise.all([
       chatRepository.getRoomsForCompany(companyId),
       activityRepository.getUnreadChatRoomIds('company', companyId),

@@ -23,6 +23,7 @@ import { useCompanySession } from '../../state/SessionContext';
 import type { CompanyMember } from '../../types/company';
 import type { CompanyMemberRole } from '../../types/enums';
 import { spacing } from '../../theme';
+import { notify, confirmAction } from '../../utils/platformAlert';
 
 const ROLE_LABELS: Record<CompanyMemberRole, string> = {
   admin: 'Admin',
@@ -79,7 +80,10 @@ function roleColor(role: CompanyMemberRole): string {
 }
 
 export function CompanyTeamManagement({ companyName }: { companyName: string }) {
-  const { companyId, profileId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const profileId = companySession?.profileId;
+  const companyMemberRole = companySession?.companyMemberRole;
   const [members, setMembers] = useState<CompanyMember[]>([]);
   const [currentMember, setCurrentMember] = useState<CompanyMember | null>(null);
   const [loading, setLoading] = useState(true);
@@ -120,7 +124,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
     load()
       .catch((error) => {
         if (active) {
-          Alert.alert('Team members unavailable', errorMessage(error, 'Could not load company members.'));
+          notify('Team members unavailable', errorMessage(error, 'Could not load company members.'));
         }
       })
       .finally(() => {
@@ -183,7 +187,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
 
   async function doChangeRole(member: CompanyMember, newRole: CompanyMemberRole) {
     if (!companyId) {
-      Alert.alert('Error', 'Your company membership could not be resolved.');
+      notify('Error', 'Your company membership could not be resolved.');
       return;
     }
 
@@ -206,7 +210,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
       await companyRepositoryV2.updateMemberRole(companyId, target.id, newRole);
       await load();
     } catch (error) {
-      Alert.alert('Error', errorMessage(error, 'Could not change role.'));
+      notify('Error', errorMessage(error, 'Could not change role.'));
     } finally {
       setActioning(null);
     }
@@ -214,7 +218,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
 
   async function doRemoveMember(member: CompanyMember) {
     if (!companyId) {
-      Alert.alert('Error', 'Your company membership could not be resolved.');
+      notify('Error', 'Your company membership could not be resolved.');
       return;
     }
 
@@ -237,7 +241,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
       await companyRepositoryV2.removeMember(companyId, target.id);
       await load();
     } catch (error) {
-      Alert.alert('Error', errorMessage(error, 'Could not remove member.'));
+      notify('Error', errorMessage(error, 'Could not remove member.'));
     } finally {
       setActioning(null);
     }
@@ -245,7 +249,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
 
   async function doEditName(member: CompanyMember, newName: string) {
     if (!companyId) {
-      Alert.alert('Error', 'Your company membership could not be resolved.');
+      notify('Error', 'Your company membership could not be resolved.');
       return;
     }
 
@@ -254,7 +258,7 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
       await companyRepositoryV2.updateMemberName(companyId, member.id, newName);
       await load();
     } catch (error) {
-      Alert.alert('Error', errorMessage(error, 'Could not update member name.'));
+      notify('Error', errorMessage(error, 'Could not update member name.'));
     } finally {
       setActioning(null);
     }
@@ -385,11 +389,11 @@ export function CompanyTeamManagement({ companyName }: { companyName: string }) 
                     ]}
                     onPress={() => {
                       if (isLastAdmin) {
-                        Alert.alert('Cannot remove member', LAST_ADMIN_MESSAGE);
+                        notify('Cannot remove member', LAST_ADMIN_MESSAGE);
                         return;
                       }
                       if (isCurrentUser) {
-                        Alert.alert('Cannot remove member', 'You cannot remove your own company membership from this screen.');
+                        notify('Cannot remove member', 'You cannot remove your own company membership from this screen.');
                         return;
                       }
                       setRemoveTarget(member);

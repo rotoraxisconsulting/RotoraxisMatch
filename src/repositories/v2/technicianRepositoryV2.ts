@@ -6,7 +6,7 @@ import {
 } from '../../types/technician';
 import { SafeTechnicianPreview, TechnicianView, isUnlocked } from '../../types/privacy';
 import { LicenseCode } from '../../types/catalog';
-import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, buildAircraftRatingIndex, habilitationCoversFamilyKey } from '../../constants/aircraftTypeRatings';
 import { catalogRepository } from './catalogRepository';
 import {
   DbRow,
@@ -16,21 +16,71 @@ import {
   mapPublicTechnicianView,
   publicRowToPrivateCompat,
   throwIfError,
+  throwIfNoRows,
 } from './supabaseMappers';
 import { documentRepositoryV2 } from './documentRepositoryV2';
 import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan';
 
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
-  technician_type, location_city_id, availability, verification_status,
-  profile_completeness, social_links, created_at, updated_at
+  technician_type, location_city_id, availability, years_experience,
+  verification_status, profile_completeness, social_links, created_at, updated_at
 `;
 
 const PUBLIC_SELECT = `
-  id, anonymous_code, age, technician_type, location_city_id, country, city,
-  base_airport, latitude, longitude, availability, verification_status,
-  profile_completeness, first_name, last_name, email, phone, social_links
+  id, anonymous_code, technician_type, location_city_id, country, city,
+  base_airport, latitude, longitude, availability, years_experience,
+  verification_status, profile_completeness, first_name, last_name, email,
+  phone, social_links
 `;
+
+// Sub-fase de experiencia (2026-07-28) — FILTRO DURO, en el servidor.
+//
+// Traduce offer.minYearsExperience a un predicado de PostgREST, NO a un
+// post-filtrado en JS. Es el unico filtro de este repositorio que corre de
+// verdad en Postgres; los otros ocho siguen aplicandose en
+// matchesSearchFilters() sobre las filas ya traidas (deuda inventariada en
+// docs/MISSION_PART66.md, agravada por el tope de 1000 filas de PostgREST).
+//
+// La clausula `.is.null` NO es un detalle: ES la regla de producto "la
+// ausencia de dato nunca penaliza", escrita en SQL. Excluye solo a quien
+// tenga un valor DECLARADO por debajo del minimo; quien no ha declarado
+// nada sigue apareciendo y la UI lo muestra como "not specified".
+// Si alguna vez lo cambias a un `.gte()` a secas, estaras excluyendo
+// silenciosamente a todo el que no haya rellenado el campo.
+function applyMinYearsFilter<T extends { or: (f: string) => T }>(query: T, minYears?: number): T {
+  if (!minYears || minYears <= 0) return query;
+  return query.or(`years_experience.is.null,years_experience.gte.${minYears}`);
+}
+
+// ── Fase 5.6 (2026-07-28) — recorte visible en vez de silencioso ──────
+//
+// PostgREST corta cualquier respuesta en 1000 filas sin error ni aviso
+// (comprobado: `Content-Range: 0-999/2500`). Las dos consultas de abajo
+// traen filas de technician_public_view y aplican DESPUES, en JS, la mayor
+// parte de sus filtros (matchesSearchFilters) — asi que un recorte no solo
+// pierde resultados: hace que el filtro opere sobre un subconjunto
+// arbitrario. Correctitud, no escalabilidad.
+//
+// MITIGACION, no arreglo. El arreglo de fondo es llevar los 8 filtros al
+// servidor (backlog "search(): filtros a server-side", con alcance en
+// docs/MISSION_PART66.md). Mientras tanto: rango explicito, conteo exacto,
+// y un aviso ruidoso cuando el total supera lo traido.
+//
+// A diferencia del catalogo de ratings, aqui NO se lanza: dejar la busqueda
+// inutilizable seria peor que devolver los primeros N con un aviso. Esa es
+// justo la diferencia entre "un catalogo parcial es inservible" y "una
+// busqueda parcial sigue sirviendo".
+const TECHNICIAN_FETCH_LIMIT = 1000;
+
+function warnIfTruncated(context: string, fetched: number, total: number | null): void {
+  if (total === null || total <= fetched) return;
+  console.warn(
+    `[technicianRepositoryV2.${context}] Truncated: fetched ${fetched} of ${total} technicians ` +
+      `(limit ${TECHNICIAN_FETCH_LIMIT}). Filters are applied client-side AFTER this fetch, so results ` +
+      'are computed over a partial set. See docs/MISSION_PART66.md — backlog "search(): filtros a server-side".',
+  );
+}
 
 function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId' | 'createdAt'>>): Record<string, unknown> {
   return {
@@ -43,36 +93,17 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
     ...(patch.technicianType !== undefined ? { technician_type: patch.technicianType } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.availability !== undefined ? {
+      // Sólo `immediately` y `contract_types`. `status` es etiqueta de UI y
+      // NUNCA se persiste; `available_from` se retiró en la 041.
       availability: {
         immediately: Boolean(patch.availability.immediately),
-        available_from: patch.availability.availableFrom ?? null,
         contract_types: patch.availability.contractTypes ?? [],
       },
     } : {}),
+    ...(patch.yearsExperience !== undefined ? { years_experience: patch.yearsExperience ?? null } : {}),
     ...(patch.profileCompleteness !== undefined ? { profile_completeness: patch.profileCompleteness } : {}),
     ...(patch.socialLinks !== undefined ? { social_links: patch.socialLinks ?? null } : {}),
   };
-}
-
-// A habilitation covers a required family key either via its resolved
-// rating (exact family match) or, for rows that only ever recorded a bare
-// legacy code, via inclusive code->family resolution (see
-// resolveLegacyCodeToFamilyKeys — a code that aliases several families
-// counts for all of them, never a guessed single one). Same rule
-// offerMatchExplain.ts's evaluateLegacyBroadMatch uses for the offer-side
-// broad aircraft filter — one definition, reused, never a second one that
-// could drift.
-function habilitationCoversFamilyKey(
-  h: { aircraftTypeCode?: string; aircraftTypeRatingId?: string },
-  familyKey: string,
-  ratingIndex: AircraftRatingIndex,
-): boolean {
-  if (h.aircraftTypeRatingId) {
-    const rating = ratingIndex.get(h.aircraftTypeRatingId);
-    if (rating && getAircraftFamilyKey(rating) === familyKey) return true;
-  }
-  if (h.aircraftTypeCode && resolveLegacyCodeToFamilyKeys(h.aircraftTypeCode, ratingIndex).has(familyKey)) return true;
-  return false;
 }
 
 // Empty/undefined means "no filter on this dimension" (matches everything);
@@ -142,21 +173,25 @@ export const technicianRepositoryV2 = {
     const rows = (data ?? []) as DbRow[];
     return rows.map((row) => {
       const full = mapPrivateTechnicianRow(row);
-      const { licenses: _licenses, habilitations: _habilitations, aircraftExperience: _aircraftExperience, ...profile } = full;
+      const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
       return profile;
     });
   },
 
-  async getPublicProfiles(): Promise<TechnicianProfile[]> {
-    const { data, error } = await supabase
-      .from('technician_public_view')
-      .select(PUBLIC_SELECT)
-      .eq('verification_status', 'verified');
+  async getPublicProfiles(minYearsExperience?: number): Promise<TechnicianProfile[]> {
+    const { data, error, count } = await applyMinYearsFilter(
+      supabase
+        .from('technician_public_view')
+        .select(PUBLIC_SELECT, { count: 'exact' })
+        .eq('verification_status', 'verified'),
+      minYearsExperience,
+    ).range(0, TECHNICIAN_FETCH_LIMIT - 1);
     throwIfError(error);
+    warnIfTruncated('getPublicProfiles', (data ?? []).length, count ?? null);
     const rows = (data ?? []) as DbRow[];
     return rows.map((row) => {
       const full = publicRowToPrivateCompat(row);
-      const { licenses: _licenses, habilitations: _habilitations, aircraftExperience: _aircraftExperience, ...profile } = full;
+      const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
       return profile;
     });
   },
@@ -170,14 +205,14 @@ export const technicianRepositoryV2 = {
 
     if (!error && data) {
       const full = mapPrivateTechnicianRow(data as DbRow);
-      const { licenses: _licenses, habilitations: _habilitations, aircraftExperience: _aircraftExperience, ...profile } = full;
+      const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
       return profile;
     }
 
     const publicRow = await getPublicRow(id);
     if (!publicRow) return null;
     const full = publicRowToPrivateCompat(publicRow);
-    const { licenses: _licenses, habilitations: _habilitations, aircraftExperience: _aircraftExperience, ...profile } = full;
+    const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
     return profile;
   },
 
@@ -191,10 +226,9 @@ export const technicianRepositoryV2 = {
     return relations[technicianId]?.habilitations ?? [];
   },
 
-  async getAircraftExperience(technicianId: string) {
-    const relations = await loadTechnicianRelations([technicianId]);
-    return relations[technicianId]?.aircraftExperience ?? [];
-  },
+  // getAircraftExperience() eliminado con la tabla (migracion 031). Tenia
+  // cero call sites y la tabla cero filas: la mitad de lectura de una feature
+  // cuya mitad de escritura nunca se construyo.
 
   async getWithRelations(id: string): Promise<TechnicianWithRelations | null> {
     const relations = await loadTechnicianRelations([id]);
@@ -247,7 +281,7 @@ export const technicianRepositoryV2 = {
     throwIfError(error);
     if (!data) return null;
     const full = mapPrivateTechnicianRow(data as DbRow);
-    const { licenses: _licenses, habilitations: _habilitations, aircraftExperience: _aircraftExperience, ...profile } = full;
+    const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
     return profile;
   },
 
@@ -263,7 +297,7 @@ export const technicianRepositoryV2 = {
    */
   async upsertLicenses(technicianId: string, entries: LicenseEntry[]): Promise<void> {
     if (entries.length === 0) return;
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('technician_licenses')
       .upsert(
         entries.map((e) => ({
@@ -273,8 +307,13 @@ export const technicianRepositoryV2 = {
           expires_at: e.expiresAt ?? null,
         })),
         { onConflict: 'technician_id,license_code' },
-      );
+      )
+      .select('license_code');
     throwIfError(error);
+    // Hay entradas que escribir, así que 0 filas sólo puede significar que RLS
+    // (tl_insert_own / tl_update_own) no dejó pasar ninguna — nunca un no-op
+    // legítimo.
+    throwIfNoRows(data, 'Could not save your licences — your session may have expired. Sign in again and retry.');
   },
 
   /**
@@ -313,12 +352,16 @@ export const technicianRepositoryV2 = {
     const plan = planLicenseRemoval(candidateCodes, dependentCodes);
 
     if (plan.deletes.length > 0) {
-      const { error: deleteError } = await supabase
+      const { data: deleted, error: deleteError } = await supabase
         .from('technician_licenses')
         .delete()
         .eq('technician_id', technicianId)
-        .in('license_code', plan.deletes);
+        .in('license_code', plan.deletes)
+        .select('license_code');
       throwIfError(deleteError);
+      // plan.deletes sale de filas que acabamos de leer, así que si no cae
+      // ninguna es que RLS bloqueó el borrado, no que ya no estuvieran.
+      throwIfNoRows(deleted, 'Could not remove the deselected licences — your session may have expired.');
     }
 
     return { blocked: plan.blocked };
@@ -327,10 +370,12 @@ export const technicianRepositoryV2 = {
   /**
    * Replaces a technician's normalized habilitations with an explicit set of
    * { licenseCode, aircraftTypeRatingId } pairs. Never infers or defaults the
-   * license — every row must name its own category. Only rows that already
-   * carry a rating id are replaced; legacy rows (aircraft_type_code only,
-   * written before this rating catalog existed) are left untouched — they
-   * are never auto-migrated to a specific rating.
+   * license — every row must name its own category.
+   *
+   * Fase 5.3 (2026-07-28): this used to spare rows without a rating id (the
+   * legacy aircraft_type_code ones) from the delete. That exemption is gone
+   * with the legacy catalog — every habilitation carries a rating id, and
+   * migration 029 makes that a NOT NULL invariant.
    */
   async replaceHabilitations(
     technicianId: string,
@@ -343,15 +388,19 @@ export const technicianRepositoryV2 = {
       isCurrent?: boolean;
     }[],
   ): Promise<void> {
+    // SIN comprobación de filas, a propósito: un técnico que aún no tiene
+    // ninguna habilitación borra CERO filas legítimamente, y es el caso normal
+    // del primer guardado. Exigir >= 1 aquí convertiría el primer guardado de
+    // todo técnico nuevo en un error. La red se pone en el INSERT de abajo,
+    // que sí sabe cuántas filas debe producir.
     const { error: deleteError } = await supabase
       .from('technician_habilitations')
       .delete()
-      .eq('technician_id', technicianId)
-      .not('aircraft_type_rating_id', 'is', null);
+      .eq('technician_id', technicianId);
     throwIfError(deleteError);
 
     if (entries.length === 0) return;
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('technician_habilitations')
       .insert(
         entries.map((entry) => ({
@@ -363,14 +412,23 @@ export const technicianRepositoryV2 = {
           experience_years: entry.experienceYears ?? null,
           is_current: entry.isCurrent ?? true,
         })),
-      );
+      )
+      .select('id');
     throwIfError(error);
+    // Aquí el delete ya se llevó las filas viejas: si el insert no entra, el
+    // técnico se queda SIN habilitaciones y la pantalla diría "guardado".
+    throwIfNoRows(data, 'Could not save your type ratings — your session may have expired. Sign in again and retry.');
   },
 
-  /** Deletes a single habilitation row (legacy or normalized) by id. */
+  /** Deletes a single habilitation row by id. */
   async deleteHabilitation(id: string): Promise<void> {
-    const { error } = await supabase.from('technician_habilitations').delete().eq('id', id);
+    const { data, error } = await supabase
+      .from('technician_habilitations')
+      .delete()
+      .eq('id', id)
+      .select('id');
     throwIfError(error);
+    throwIfNoRows(data, 'Could not remove this type rating — it may no longer exist, or you may not have permission.');
   },
 
   async search(filters: {
@@ -382,11 +440,14 @@ export const technicianRepositoryV2 = {
     verificationStatuses?: string[];
     availabilityStatuses?: AvailabilityStatus[];
     availableImmediately?: boolean;
+    minYearsExperience?: number;
   }): Promise<SafeTechnicianPreview[]> {
-    const { data, error } = await supabase
-      .from('technician_public_view')
-      .select(PUBLIC_SELECT);
+    const { data, error, count } = await applyMinYearsFilter(
+      supabase.from('technician_public_view').select(PUBLIC_SELECT, { count: 'exact' }),
+      filters.minYearsExperience,
+    ).range(0, TECHNICIAN_FETCH_LIMIT - 1);
     throwIfError(error);
+    warnIfTruncated('search', (data ?? []).length, count ?? null);
 
     const rows = (data ?? []) as DbRow[];
     const [relations, ratings] = await Promise.all([

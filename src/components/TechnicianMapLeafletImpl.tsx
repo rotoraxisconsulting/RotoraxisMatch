@@ -41,9 +41,7 @@ export interface TechnicianMapProps {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function markerColor(s: AvailabilityStatus): string {
-  if (s === 'available') return colors.success;
-  if (s === 'open_to_offers') return colors.technician;
-  return colors.textMuted;
+  return s === 'open_to_offers' ? colors.success : colors.textMuted;
 }
 
 function hasMapCoordinates(t: SafeTechnicianView): boolean {
@@ -51,9 +49,7 @@ function hasMapCoordinates(t: SafeTechnicianView): boolean {
 }
 
 function availLabel(s: AvailabilityStatus): string {
-  if (s === 'available') return 'Available';
-  if (s === 'open_to_offers') return 'Open to offers';
-  return 'Unavailable';
+  return s === 'open_to_offers' ? 'Open to offers' : 'Unavailable';
 }
 
 function availColor(s: AvailabilityStatus): string {
@@ -207,8 +203,10 @@ const VERIFICATION_OPTIONS = [
   { value: 'rejected' as const, label: 'Rejected' },
 ];
 
+// Dos estados desde 2026-07-29 — mismas opciones que la búsqueda, mismo campo
+// y misma función de repositorio. Cierra el hallazgo I9 (mapa con 3 estados
+// frente a búsqueda con 2) por construcción, no por convención.
 const AVAILABILITY_OPTIONS = [
-  { value: 'available' as const, label: 'Available' },
   { value: 'open_to_offers' as const, label: 'Open to offers' },
   { value: 'unavailable' as const, label: 'Unavailable' },
 ];

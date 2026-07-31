@@ -8,6 +8,7 @@ import {
   mapOfferRow,
   throwIfError,
   withRequirements,
+  throwIfNoRows,
 } from './supabaseMappers';
 
 type OfferLocationInput = {
@@ -135,7 +136,15 @@ export const offerRepository = {
       .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
       .maybeSingle();
     throwIfError(error);
-    return data ? mapOfferRow(data as any) : null;
+    // `.select()` sin comprobar el resultado seguía siendo un éxito falso: con
+    // RLS bloqueando (p. ej. rol `viewer`, que no pasa can_act_for_company)
+    // `data` llega null, `error` null, y AMBOS llamantes descartan el retorno
+    // — la oferta "cambiaba de estado" y volvía al recargar. Actualizar por id
+    // algo que no existe o que no puedes tocar nunca es un resultado válido.
+    if (!data) {
+      throw new Error('Could not update this offer — it may no longer exist, or you may not have permission.');
+    }
+    return mapOfferRow(data as any);
   },
 
   async update(id: string, patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Promise<Offer | null> {
@@ -151,7 +160,12 @@ export const offerRepository = {
       .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
       .maybeSingle();
     throwIfError(error);
-    return data ? mapOfferRow(data as any) : null;
+    // Mismo motivo que updateStatus: app/company/offers/edit.tsx descarta el
+    // retorno, así que sin esto un guardado bloqueado por RLS era invisible.
+    if (!data) {
+      throw new Error('Could not save this offer — it may no longer exist, or you may not have permission.');
+    }
+    return mapOfferRow(data as any);
   },
 
   async create(data: {
@@ -310,8 +324,17 @@ export const offerRepository = {
         ),
       );
     }
-    const results = await Promise.all(inserts);
-    results.forEach((result) => throwIfError(result.error));
+    // Los DELETE de arriba no llevan comprobación de filas a propósito: una
+    // oferta sin requisitos borra cero filas legítimamente. Los INSERT sí,
+    // porque sólo se encolan cuando hay algo que escribir — cero filas ahí
+    // significa que RLS lo bloqueó (p. ej. un rol `viewer`, que no pasa
+    // can_act_for_company) y la pantalla habría dicho "guardado" tras haber
+    // borrado los requisitos anteriores.
+    const results = await Promise.all(inserts.map((q) => q.select('offer_id')));
+    results.forEach((result) => {
+      throwIfError(result.error);
+      throwIfNoRows(result.data, 'Could not save the offer requirements — you may not have permission to edit this offer.');
+    });
 
     if (requirements.habilitations !== undefined) {
       await this.replaceRequiredHabilitations(offerId, requirements.habilitations);
@@ -332,15 +355,22 @@ export const offerRepository = {
     throwIfError(deleteError);
 
     if (habilitations.length === 0) return;
-    const { error } = await supabase.from('offer_required_habilitations').insert(
-      habilitations.map((h) => ({
-        offer_id: offerId,
-        license_code: h.licenseCode,
-        aircraft_type_rating_id: h.aircraftTypeRatingId,
-        requirement_level: h.requirementLevel,
-        notes: h.notes ?? null,
-      })),
-    );
+    const { data, error } = await supabase
+      .from('offer_required_habilitations')
+      .insert(
+        habilitations.map((h) => ({
+          offer_id: offerId,
+          license_code: h.licenseCode,
+          aircraft_type_rating_id: h.aircraftTypeRatingId,
+          requirement_level: h.requirementLevel,
+          notes: h.notes ?? null,
+        })),
+      )
+      .select('offer_id');
     throwIfError(error);
+    // El delete ya se llevó los requisitos anteriores: si el insert no entra,
+    // la oferta se queda SIN requisitos exactos y el scoring cambia por
+    // completo, en silencio.
+    throwIfNoRows(data, 'Could not save the type rating requirements — you may not have permission to edit this offer.');
   },
 };

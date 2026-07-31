@@ -76,10 +76,10 @@ export default function PrivacyPolicyScreen() {
 
         <Section title="4. Privacy by default — technician identity">
           <P>
-            Technician identity is <Bold>private by default</Bold>. Companies can only see an anonymous code, country, city, base airport, licences, aircraft types, specialties, availability, years of experience, verification status and match score.
+            Technician identity is <Bold>private by default</Bold>. Companies can only see an anonymous code, country, city, base airport, licences, aircraft types, availability, years of experience, verification status and match score.
           </P>
           <P>
-            Full name, email address, phone number and identity documents are <Bold>never visible to companies</Bold> until both parties have accepted a connection (application accepted or direct offer accepted) and <Bold>identityRevealed = true</Bold>.
+            Full name, email address, phone number, professional links and identity documents are <Bold>never visible to companies</Bold> until both parties have accepted a connection (application accepted or direct offer accepted) and <Bold>identityRevealed = true</Bold>.
           </P>
           <P>
             Medical certificates and identity documents are <Bold>exclusively reviewed by our admin team</Bold> for verification purposes. They are never shared with companies in any form.

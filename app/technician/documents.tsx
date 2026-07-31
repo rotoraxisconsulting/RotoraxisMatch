@@ -112,7 +112,8 @@ function DocumentPanel({ document }: { document: TechnicianDocument }) {
 
 export default function TechnicianDocumentsScreen() {
   const router = useRouter();
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const { documents, loading, refresh } = useTechnicianDashboard();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;

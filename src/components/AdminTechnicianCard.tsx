@@ -7,9 +7,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BriefcaseBusiness, CheckCircle, Clock, MapPin, UserRound, XCircle } from 'lucide-react-native';
+import { BriefcaseBusiness, Cake, CheckCircle, Clock, Mail, MapPin, UserRound, XCircle } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
-import type { Technician, TechnicianWithRelations, VerificationStatus } from '../types';
+import type { Technician, TechnicianWithRelations, UserStatus, VerificationStatus } from '../types';
 import { TECHNICIAN_TYPES } from '../constants/technicianTypes';
 import {
   AdminBadge,
@@ -20,10 +20,15 @@ import {
 } from './admin/AdminUI';
 import type { AdminTone } from './admin/AdminUI';
 import { spacing } from '../theme';
+import { notify, confirmAction } from '../utils/platformAlert';
 
 interface Props {
   technician: Technician;
   details?: TechnicianWithRelations;
+  /** displayName completo (célula + motor) de cada type rating, resuelto por useAdminDashboard. */
+  typeRatingLabels?: string[];
+  /** Estado de CUENTA (`profiles.status`), distinto del de verificación del perfil. */
+  accountStatus?: UserStatus;
   onUpdateStatus: (id: string, status: VerificationStatus) => Promise<void>;
 }
 
@@ -60,22 +65,50 @@ function technicianTypeLabel(details?: TechnicianWithRelations): string {
   return TECHNICIAN_TYPES.find((type) => type.code === details.technicianType)?.label ?? details.technicianType;
 }
 
+// Fecha de nacimiento tal cual, no la edad derivada: para cotejar una
+// identidad contra un documento, la fecha es el dato; la edad es un resumen.
+function birthDateLabel(details?: TechnicianWithRelations): string {
+  if (!details?.birthDate) return 'Date of birth not provided';
+  const d = new Date(details.birthDate);
+  if (Number.isNaN(d.getTime())) return 'Date of birth not provided';
+  return `Born ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+}
+
+// Cuánto lleva esperando: es la métrica real de la cola de moderación.
+function waitingLabel(details?: TechnicianWithRelations): string {
+  if (!details?.createdAt) return 'Registered recently';
+  const created = new Date(details.createdAt);
+  if (Number.isNaN(created.getTime())) return 'Registered recently';
+  const days = Math.floor((Date.now() - created.getTime()) / 86_400_000);
+  if (days <= 0) return 'Registered today';
+  if (days === 1) return 'Waiting 1 day';
+  return `Waiting ${days} days`;
+}
+
 function compactValues(values: string[], max = 5): string[] {
   const unique = [...new Set(values.filter(Boolean))];
   if (unique.length <= max) return unique;
   return [...unique.slice(0, max), `+${unique.length - max}`];
 }
 
-export function AdminTechnicianCard({ technician, details, onUpdateStatus }: Props) {
+export function AdminTechnicianCard({ technician, details, typeRatingLabels, accountStatus, onUpdateStatus }: Props) {
   const [loadingStatus, setLoadingStatus] = useState<VerificationStatus | null>(null);
   const currentStatus = technician.verificationStatus;
+  // Una cuenta borrada es una LÁPIDA: se conserva para no evaporar el historial
+  // de la empresa, pero NO admite moderación. Cambiar su verificación llamaría a
+  // admin_update_technician_verification(), que escribe profiles.status sin
+  // mirar el estado actual: "Verify" la dejaría en 'active' y "Set pending" en
+  // 'pending_verification' — y technician_public_view (migración 024) admite
+  // AMBOS, así que el técnico borrado reaparecería en búsqueda, mapa y ranking.
+  const isDeleted = accountStatus === 'deleted';
+  const isPending = !isDeleted && currentStatus === 'pending';
 
   async function handleAction(status: VerificationStatus) {
     setLoadingStatus(status);
     try {
       await onUpdateStatus(technician.id, status);
     } catch (error) {
-      Alert.alert(
+      notify(
         'Technician verification failed',
         error instanceof Error ? error.message : 'Could not update technician verification.',
       );
@@ -84,16 +117,33 @@ export function AdminTechnicianCard({ technician, details, onUpdateStatus }: Pro
     }
   }
 
-  const availableActions = ACTIONS.filter((action) => action.status !== currentStatus);
+  // `pending` es un estado de NACIMIENTO al que no se vuelve.
+  //
+  // Significa "aún no te hemos comprobado", y eso es falso para alguien ya
+  // verificado o ya rechazado. Con la tarjeta de pendiente (arriba) el absurdo
+  // se vuelve visible: devolver a `pending` a un técnico con perfil completo y
+  // documentos le mostraría al admin "nothing to review here yet".
+  //
+  // Para RETIRAR el acceso a alguien ya comprobado el destino correcto es
+  // `rejected` (-> profiles.status = 'suspended'), no "pendiente".
+  //
+  // Esto es sólo la mitad de UI. La matriz completa, su enforcement en
+  // admin_update_technician_verification() y el validador que compruebe que
+  // ambos lados coinciden están en el backlog del mission doc — hasta
+  // entonces la regla vive únicamente aquí y un RPC directo puede saltársela.
+  const availableActions = isDeleted
+    ? []
+    : ACTIONS.filter((action) => action.status !== currentStatus && action.status !== 'pending');
   const licenseChips = compactValues(
     details?.licenses.map((license) => license.licenseCode) ?? technician.licenseCategories,
   );
-  // technician.aircraftTypes is already derived from the habilitations
-  // (via v2TechnicianToV1 -> habilitationAircraftCodes in useAdminDashboard,
-  // which has the aircraft ratings catalog loaded) — no need to recompute it
-  // here from `details.habilitations` with a second, separately-loaded copy
-  // of the catalog.
-  const habilitationChips = compactValues(technician.aircraftTypes);
+  // Etiquetas resueltas en useAdminDashboard, que es donde ya vive el catálogo
+  // cargado — aquí NO se carga una segunda copia (esa era y sigue siendo la
+  // razón de no recomputar desde `details.habilitations`). Lo que cambia es la
+  // fuente: `typeRatingLabels` trae el displayName COMPLETO (célula + motor),
+  // no la `aircraftFamily` suelta de `technician.aircraftTypes`, que perdía la
+  // motorización — la distinción que un type rating Part-66 codifica.
+  const habilitationChips = compactValues(typeRatingLabels ?? technician.aircraftTypes);
 
   return (
     <AdminCard
@@ -111,22 +161,61 @@ export function AdminTechnicianCard({ technician, details, onUpdateStatus }: Pro
             <Text style={styles.code}>{technician.anonymousCode}</Text>
           </View>
         </View>
-        <AdminBadge label={statusLabel(technician.verificationStatus)} tone={verificationTone(technician.verificationStatus)} />
+        {/* La lápida manda sobre el estado de verificación: mostrar "Verified"
+            a secas en una cuenta borrada fue lo que hacía que pareciera
+            moderable. El estado de verificación real se sigue viendo debajo. */}
+        {isDeleted ? (
+          <AdminBadge label="Deleted account" tone="error" />
+        ) : (
+          <AdminBadge label={statusLabel(technician.verificationStatus)} tone={verificationTone(technician.verificationStatus)} />
+        )}
       </View>
 
-      <View style={styles.metaGrid}>
-        <InfoPill icon={BriefcaseBusiness} label={technicianTypeLabel(details)} />
-        <InfoPill icon={MapPin} label={`${technician.city}, ${technician.country}`} />
-        <InfoPill icon={UserRound} label={`${technician.yearsExperience} years exp. - ${technician.profileCompleteness}% profile`} />
-      </View>
-
-      {licenseChips.length > 0 ? (
-        <ChipGroup label="Licenses" values={licenseChips} tone="navy" />
+      {isDeleted ? (
+        <Text style={styles.deletedNote}>
+          This account was deleted by its owner. The record is kept so company history stays
+          intact, but it can no longer be moderated and the technician cannot sign in again.
+          Verification status was {statusLabel(technician.verificationStatus).toLowerCase()} when it was deleted.
+        </Text>
       ) : null}
 
-      {habilitationChips.length > 0 ? (
-        <ChipGroup label="Habilitations" values={habilitationChips} tone="cyan" />
-      ) : null}
+      {/* Un técnico PENDIENTE no puede tocar su perfil ni subir un documento
+          hasta que se le apruebe, así que "0 years exp · 0% profile · sin
+          licencias" no es señal: es ruido estructural que hace parecer
+          abandonada una cuenta recién creada. Lo que se verifica aquí es la
+          IDENTIDAD, así que se muestra lo que sirve para eso. La fecha de
+          nacimiento SÍ va: la retirada de la edad (migración 040) fue del
+          contrato con las EMPRESAS, no del panel de moderación. */}
+      {isPending ? (
+        <>
+          <View style={styles.metaGrid}>
+            <InfoPill icon={Mail} label={details?.email ?? '—'} />
+            <InfoPill icon={Cake} label={birthDateLabel(details)} />
+            <InfoPill icon={BriefcaseBusiness} label={technicianTypeLabel(details)} />
+            <InfoPill icon={MapPin} label={`${technician.city}, ${technician.country}`} />
+            <InfoPill icon={Clock} label={waitingLabel(details)} />
+          </View>
+          <Text style={styles.pendingNote}>
+            Profile and documents come after verification — there is nothing to review here yet.
+          </Text>
+        </>
+      ) : (
+        <>
+          <View style={styles.metaGrid}>
+            <InfoPill icon={BriefcaseBusiness} label={technicianTypeLabel(details)} />
+            <InfoPill icon={MapPin} label={`${technician.city}, ${technician.country}`} />
+            <InfoPill icon={UserRound} label={`${technician.yearsExperience} years exp. - ${technician.profileCompleteness}% profile`} />
+          </View>
+
+          {licenseChips.length > 0 ? (
+            <ChipGroup label="Licenses" values={licenseChips} tone="navy" />
+          ) : null}
+
+          {habilitationChips.length > 0 ? (
+            <ChipGroup label="Habilitations" values={habilitationChips} tone="cyan" />
+          ) : null}
+        </>
+      )}
 
       <View style={styles.actions}>
         {availableActions.map((action) => (
@@ -225,6 +314,18 @@ const styles = StyleSheet.create({
   },
   cardRejected: {
     borderColor: '#FECACA',
+  },
+  pendingNote: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: adminUi.textMuted,
+    fontStyle: 'italic',
+  },
+  deletedNote: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: adminUi.textMuted,
+    fontStyle: 'italic',
   },
   header: {
     flexDirection: 'row',

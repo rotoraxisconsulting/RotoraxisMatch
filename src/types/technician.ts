@@ -1,29 +1,35 @@
 import { VerificationStatus } from './enums'; // owned by enums.ts — not re-exported here
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from './catalog';
 
-// --- V1 compat types ---
+// Disponibilidad: DOS estados, 2026-07-29.
+//
+// ── Corrección de la corrección (hallazgos B1/I2 de la auditoría) ──────
+// La nota de 2026-07-27 decía que `status` era la fuente de verdad y
+// `immediately` su proyección con pérdida. Era al revés, y se comprobó
+// contra los datos: `status` NO SE PERSISTE en ninguna fila — cero de 7
+// tenían la clave. Lo persistido siempre fue `immediately` (+ el difunto
+// `available_from`), y `status` se derivaba en memoria al leer.
+//
+// La consecuencia era un bug real: elegir "Open to offers" SIN fecha se
+// guardaba como `immediately=false, available_from=null` y al recargar
+// volvía a derivarse como "Unavailable". El técnico veía un estado que no
+// había elegido, y el filtro "Open to offers" de empresa no casaba con
+// nadie: ningún perfil tenía fecha.
+//
+// Resuelto colapsando a DOS estados, sin fecha. Ahora `immediately` ES el
+// modelo y `status` es sólo su etiqueta para UI y filtros, 1:1 y SIN
+// PÉRDIDA en los dos sentidos:
+//     immediately === true   <->  'open_to_offers'
+//     immediately === false  <->  'unavailable'
+// No queda ningún estado que no se pueda reconstruir desde el booleano.
+export type AvailabilityStatus = 'open_to_offers' | 'unavailable';
 
-// Corrected 2026-07-27 (docs/PHASE5_INVENTORY.md item f): this was marked as
-// legacy on the assumption that `immediately: boolean` would replace it. It
-// doesn't — `immediately` is a LOSSY one-way projection of `status`
-// (v2CompatAdapters.ts: 'available'->true, but 'open_to_offers' AND
-// 'unavailable' both collapse to false), not an equivalent. The 3-state
-// filter this type backs (available/open_to_offers/unavailable) is an
-// active Fase 3b product feature — technicianRepositoryV2.search()'s
-// availabilityStatuses filter, used live by both the search and map
-// screens. `status` is the source of truth; `immediately` is a derived
-// convenience for the "available right now" case only. Confirmed staying
-// — not legacy, not a Fase 5 cleanup target.
-export type AvailabilityStatus = 'available' | 'open_to_offers' | 'unavailable';
-
-// `immediately` (V2) and `status` (V2, see the correction above — NOT V1
-// legacy despite the historical field name) coexist on purpose: `status`
-// is the source of truth for the 3-state availability facet, `immediately`
-// is a derived boolean convenience for a single common filter case.
+// `immediately` es lo ÚNICO que se persiste (jsonb `availability`).
+// `status` viaja sólo en memoria, puesto por withAvailabilityStatus() para
+// que UI y filtros hablen en términos legibles. Nunca lo escribas al PATCH.
 export interface Availability {
   immediately?: boolean;
   status?: AvailabilityStatus;
-  availableFrom?: string;
   // Fase 5.3 — narrowed from (ContractType | ContractTypeCode)[] now that
   // the V1 ContractType half (deleted, zero real consumers confirmed) is
   // gone. Every write path (app/technician/profile.tsx) already only ever
@@ -101,48 +107,63 @@ export interface TechnicianLicense {
 // aircraft/rating are never inferred by combining independent lists.
 //
 // aircraftTypeRatingId: normalized exact aircraft+engine rating (FK into
-//   aircraft_type_ratings, e.g. "Airbus A320 family — CFM56"). New/edited
-//   rows created via technicianRepositoryV2.replaceHabilitations() always
-//   set this.
-// aircraftTypeCode: legacy/general aircraft code with no motorization info.
-//   Present on rows written before this rating catalog existed; kept
-//   readable, never auto-migrated to a specific rating unless unambiguous
-//   (see docs/archive/AIRCRAFT_TYPE_RATINGS_IMPLEMENTATION_REPORT.md).
-// At least one of the two is always set (DB CHECK constraint).
-// experienceYears / isCurrent are optional, per-rating declarations —
-// independent of technicianAircraftExperience (which is per legacy
-// aircraft_type_code, not per exact rating).
+//   aircraft_type_ratings, e.g. "Airbus A320 family — CFM56"). The ONLY way
+//   a habilitation names an aircraft. Optional here purely because the
+//   column stays nullable until migration 029 sets it NOT NULL; every row
+//   in existence already has it.
+//
+// Fase 5.3 (2026-07-28): the legacy `aircraftTypeCode` field is GONE, along
+// with `needsReview` (which only ever existed to flag a legacy code that
+// could not be resolved to a catalog rating). The pre-Part-66 aircraft_types
+// catalog is being retired outright with no compatibility path — decision
+// recorded in docs/MISSION_PART66.md. If you are about to re-add a bare
+// aircraft code here to make something easier: don't. A habilitation names
+// an aircraft through the rating catalog or it does not name one at all.
+//
+// experienceYears / isCurrent are optional, per-rating declarations.
+// experienceYears is INFORMATIONAL ONLY and never enters the match score —
+// "qualification scores, experience informs" (see offerMatchExplain.ts).
 export interface TechnicianHabilitation {
   id: string;
   technicianId: string;
   licenseCode: LicenseCode;
-  aircraftTypeCode?: string;
   aircraftTypeRatingId?: string;
   experienceYears?: number;
   isCurrent?: boolean;
   issuedAt?: string;
   expiresAt?: string;
   createdAt: string;
-  // Migration 027 — set by scripts/backfillLegacyAircraftRatings.ts when a
-  // legacy aircraftTypeCode resolved to zero or multiple catalog ratings
-  // and was left unmigrated on purpose. Only meaningful when
-  // aircraftTypeRatingId is unset; matching (offerMatchExplain.ts) reads
-  // this to label a T3/approximate match as explicitly "needs review"
-  // instead of silently trusting it.
-  needsReview: boolean;
 }
 
-export interface TechnicianAircraftExperience {
-  id: string;
-  technicianId: string;
-  aircraftTypeCode: string;
-  value: number;
-  unit: 'hours' | 'years';
-  createdAt: string;
-}
+// Sub-fase de experiencia (2026-07-28): TechnicianAircraftExperience ha sido
+// eliminado con su tabla (migracion 031). Era experiencia por codigo de
+// aeronave del modelo pre-Part-66: 0 filas, 4 lecturas vivas y CERO caminos
+// de escritura — una feature a medio construir cuyo unico efecto real era
+// dejar el componente `experience` del score permanentemente inalcanzable.
+// Lo sustituye TechnicianProfile.yearsExperience (arriba): visual y
+// filtrable, nunca puntuable.
 
+/**
+ * Objeto JSONB plano clave -> URL, persistido tal cual en
+ * technician_profiles.social_links. La forma NO cambio al encender la UI el
+ * 2026-07-29: `linkedin` ya era la unica clave con nombre y las otras dos
+ * entraban por el index signature; ahora son claves con nombre tambien, que
+ * es lo que la pantalla de perfil escribe.
+ *
+ * Invariantes de escritura (app/technician/profile.tsx):
+ *  - Una clave vacia NO se guarda: se omite del objeto. Nunca `""`.
+ *  - Si no queda ninguna clave, la columna se pone a NULL, no a `{}`.
+ *  - Las URLs se persisten ya normalizadas (ver utils/urlValidation.ts).
+ *
+ * Visibilidad: es un campo PRIVADO. Solo sale por technician_public_view
+ * cuando offer_accepted_between() abre la identidad — el mismo gate que
+ * firstName/email/phone. No lo muevas a SafeTechnicianPreview.
+ */
 export interface SocialLinks {
   linkedin?: string;
+  instagram?: string;
+  /** Web personal o portfolio del tecnico. No confundir con Company.website. */
+  website?: string;
   [key: string]: string | undefined;
 }
 
@@ -171,7 +192,12 @@ export interface TechnicianProfile {
   lastName: string;
   email: string;
   phone?: string;
-  birthDate: string; // ISO date — compute age, never expose raw
+  // ISO date — dato PRIVADO, nunca sale hacia una empresa.
+  // EMPTY STRING cuando la fila viene de `technician_public_view`: esa vista
+  // no expone `birth_date` ni ninguna edad derivada (migración 040).
+  // Nunca rellenar esto con una fecha inventada: hacerlo produjo el bug de
+  // "todos los técnicos tienen 56 años" (época Unix + calculateAge).
+  birthDate: string;
 
   // Public
   technicianType: TechnicianTypeCode;
@@ -181,6 +207,21 @@ export interface TechnicianProfile {
   locationCityId: string;
 
   availability: Availability;
+
+  // Sub-fase de experiencia (2026-07-28) — años TOTALES de carrera,
+  // autodeclarados por el técnico en su perfil.
+  //
+  // `undefined`/NULL = NO DECLARADO, distinto de 0 = declarado sin experiencia.
+  // Esa distinción es el motivo de que sea un campo propio y no la suma de
+  // habilitations.experienceYears: una suma no puede expresarla (sumar nada
+  // da 0), y la regla de la misión es que la AUSENCIA DE DATO NUNCA PENALIZA.
+  // El filtro duro por offer.minYearsExperience excluye solo a quien tenga un
+  // valor DECLARADO por debajo del mínimo; quien no ha declarado sigue
+  // apareciendo, marcado "not specified".
+  //
+  // NO puntúa. "La cualificación puntúa, la experiencia informa."
+  yearsExperience?: number;
+
   /** ADMIN-ONLY in Supabase — technician cannot write this field; set via admin-only RLS policy */
   verificationStatus: VerificationStatus;
   profileCompleteness: number;
@@ -194,5 +235,4 @@ export interface TechnicianProfile {
 export interface TechnicianWithRelations extends TechnicianProfile {
   licenses: TechnicianLicense[];
   habilitations: TechnicianHabilitation[];
-  aircraftExperience: TechnicianAircraftExperience[];
 }

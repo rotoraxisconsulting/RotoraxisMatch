@@ -21,12 +21,11 @@ const BREAKDOWN_LABELS: Record<keyof MatchScore['breakdown'], string> = {
   habilitation: 'Habilitation',
   license: 'License',
   verified: 'Verified',
-  availability: 'Availability',
-  experience: 'Experience',
+  contractFit: 'Contract fit',
   location: 'Location',
 };
 // Fixed display order — qualification first, since it dominates the score.
-const BREAKDOWN_ORDER: (keyof MatchScore['breakdown'])[] = ['habilitation', 'license', 'verified', 'availability', 'experience', 'location'];
+const BREAKDOWN_ORDER: (keyof MatchScore['breakdown'])[] = ['habilitation', 'license', 'verified', 'contractFit', 'location'];
 
 // Renders the explainable part of a MatchScore — the numeric breakdown per
 // criterion, what matches, what needs clarification, which mandatory

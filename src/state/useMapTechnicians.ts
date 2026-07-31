@@ -55,7 +55,8 @@ function scoreMapMatch(technician: SafeTechnicianView, filters: {
 }
 
 export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn {
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
   const [technicians, setTechnicians] = useState<SafeTechnicianView[]>([]);
   const [habilitationsById, setHabilitationsById] = useState<Record<string, TechnicianHabilitation[]>>({});
   const [loading, setLoading] = useState(true);

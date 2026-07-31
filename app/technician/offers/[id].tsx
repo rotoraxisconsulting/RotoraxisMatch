@@ -18,6 +18,7 @@ import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
 import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import { Button } from '../../../src/components/Button';
+import { ExternalLink } from '../../../src/components/ExternalLink';
 import {
   EmptyPanel,
   TechnicianBadge,
@@ -38,11 +39,13 @@ import { activityRepository } from '../../../src/repositories/v2/activityReposit
 import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
+import { resolveFamilyKeyLabels } from '../../../src/constants/aircraftTypeRatingViews';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { CompanyProfileView } from '../../../src/types/company';
 import { MatchScore } from '../../../src/types/matching';
 import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest';
 import { ChatRoom } from '../../../src/types/chat';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 function formatPublishedDate(iso: string): string {
   const d = new Date(iso);
@@ -93,7 +96,8 @@ function directOfferStatusInfo(status: string): { label: string; tone: 'success'
 }
 
 export default function OfferDetailScreen() {
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -111,9 +115,14 @@ export default function OfferDetailScreen() {
   const [coverNote, setCoverNote] = useState('');
   const [applying, setApplying] = useState(false);
 
-  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+  const { ratingIndex, ratings } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!technicianId) return;
+
     if (!id) return;
     const o = await offerRepository.getWithRequirements(id);
     // Do not abort for closed/expired offers — they may have existing applications that need to be shown as history.
@@ -174,7 +183,10 @@ export default function OfferDetailScreen() {
   const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
 
   async function handleApply() {
-    if (!offer) return;
+    if (!offer || !technicianId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     setApplying(true);
     try {
       const app = await offerApplicationRepository.create({
@@ -186,31 +198,33 @@ export default function OfferDetailScreen() {
       setExistingApp(app);
       setModalVisible(false);
       setCoverNote('');
-      Alert.alert('Application sent', 'The company will be notified of your application.');
+      notify('Application sent', 'The company will be notified of your application.');
     } catch (e: any) {
-      Alert.alert('Could not apply', e?.message ?? 'An error occurred.');
+      notify('Could not apply', e?.message ?? 'An error occurred.');
     } finally {
       setApplying(false);
     }
   }
 
   async function handleWithdraw() {
-    if (!existingApp) return;
-    Alert.alert('Withdraw application?', 'This will cancel your application. This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Withdraw',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await offerApplicationRepository.withdraw(existingApp.id, technicianId);
-            await load();
-          } catch (e: any) {
-            Alert.alert('Error', e?.message ?? 'Could not withdraw.');
-          }
-        },
-      },
-    ]);
+    // Fase 5.4 — sin sesion resuelta no se ejecuta la accion.
+    if (!existingApp || !technicianId) {
+      notify('Cannot withdraw yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
+    const confirmed = await confirmAction({
+      title: 'Withdraw application?',
+      message: 'This will cancel your application. This cannot be undone.',
+      confirmLabel: 'Withdraw',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      await offerApplicationRepository.withdraw(existingApp.id, technicianId);
+      await load();
+    } catch (e: any) {
+      notify('Error', e?.message ?? 'Could not withdraw.');
+    }
   }
 
   if (loading) {
@@ -235,9 +249,15 @@ export default function OfferDetailScreen() {
 
   const accent = score ? scoreColor(score.total) : colors.technician;
   const activeDirectOffer = existingDirectOffer && (existingDirectOffer.status === 'pending' || existingDirectOffer.status === 'accepted');
+  // Retirarse NO veta (2026-07-28, migracion 033): una aplicacion retirada
+  // se puede REACTIVAR — la misma fila vuelve a 'pending', conservando el
+  // historial. rejected/expired siguen siendo definitivos.
+  const wasWithdrawn = existingApp?.status === 'withdrawn';
   // One application per technician per offer. Also require offer to be open for discovery (history viewing is allowed).
-  const canApply = !activeDirectOffer && !existingApp && isOfferOpenForTechnicians(offer);
-  const activeApp = !!existingApp;
+  const canApply = !activeDirectOffer && (!existingApp || wasWithdrawn) && isOfferOpenForTechnicians(offer);
+  // Una retirada NO cuenta como aplicacion activa: si no, la pantalla
+  // mostraria su estado en vez del boton de volver a aplicar.
+  const activeApp = !!existingApp && !wasWithdrawn;
   const statusInfo = activeApp ? appStatusInfo(existingApp!.status) : null;
   const directOfferInfo = existingDirectOffer ? directOfferStatusInfo(existingDirectOffer.status) : null;
 
@@ -280,6 +300,9 @@ export default function OfferDetailScreen() {
               {company.companyType ? ` - ${COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType}` : ''}
             </Text>
           ) : null}
+          {company?.website ? (
+            <ExternalLink url={company.website} color={techUi.accent} />
+          ) : null}
           <Text style={styles.location}>
             {offer.locationCity}, {offer.locationCountry}
             {offer.locationBaseAirport ? ` - ${offer.locationBaseAirport}` : ''}
@@ -296,7 +319,9 @@ export default function OfferDetailScreen() {
             <Text style={styles.sectionTitle}>Requirements</Text>
             {offer.requiredTechnicianTypes.length > 0 && <ReqRow label="Technician types" items={offer.requiredTechnicianTypes} />}
             {offer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={offer.requiredLicenses} />}
-            {offer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft types" items={offer.requiredAircraftTypes} />}
+            {offer.requiredAircraftTypes.length > 0 && (
+              <ReqRow label="Aircraft types" items={resolveFamilyKeyLabels(ratings, offer.requiredAircraftTypes)} />
+            )}
             {offer.requiredHabilitations.length > 0 && (
               <ReqRow
                 label="Type rating requirements"
@@ -313,8 +338,7 @@ export default function OfferDetailScreen() {
             <BreakdownRow label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} accent={accent} />
             <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} accent={accent} />
             <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} accent={accent} />
-            <BreakdownRow label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} accent={accent} />
-            <BreakdownRow label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} accent={accent} />
+            <BreakdownRow label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} accent={accent} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} accent={accent} />
             <MatchExplanation score={score} hideBreakdown />
           </TechnicianCard>
@@ -361,7 +385,7 @@ export default function OfferDetailScreen() {
             </>
           ) : canApply ? (
             <Button
-              label="Apply to this offer"
+              label={wasWithdrawn ? 'Apply again' : 'Apply to this offer'}
               onPress={() => { setCoverNote(''); setModalVisible(true); }}
               fullWidth
             />

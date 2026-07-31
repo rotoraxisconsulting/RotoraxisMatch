@@ -51,16 +51,15 @@ export function areRatingsRelated(idA: string, idB: string, ratingIndex: Aircraf
   return familyTokens(b.aircraftFamily).some((t) => tokensA.has(t));
 }
 
-// Whether a legacy/general aircraft_type code (e.g. "A320", "AW139") is one
-// of this rating's known aliases — used to connect old, engine-less
-// technician/offer rows to a specific rating for the "related" match tier.
-// Exact token match only (case-insensitive) — never a fuzzy/partial match.
-// Already pure (takes the rating row itself) — no change needed here beyond
-// moving it out of the file that used to also hold the 80-entry array.
-export function ratingMatchesLegacyCode(rating: AircraftTypeRatingCatalog, code: string): boolean {
-  const target = normalizeAircraftRatingSearchText(code);
-  return rating.commercialAliases.some((alias) => normalizeAircraftRatingSearchText(alias) === target);
-}
+// Fase 5.3 (2026-07-28) — two functions lived here and are now gone with
+// the pre-Part-66 aircraft_types catalog they served:
+//   - ratingMatchesLegacyCode(): alias lookup for a bare legacy code. Its
+//     only consumer was the backfill planner, deleted with the script.
+//   - resolveLegacyCodeToFamilyKeys(): inclusive code -> family resolution,
+//     feeding the T3 match tier, the repository/matching broad filters and
+//     the legacy label in HabilitationsEditor. All four removed.
+// commercialAliases itself stays on the catalog rows — it is what the
+// AircraftTypeRatingPicker searches on, which is a live feature.
 
 export function getAircraftTypeRatingLabel(id: string, ratingIndex: AircraftRatingIndex): string {
   return ratingIndex.get(id)?.displayName ?? id;
@@ -77,25 +76,25 @@ export function getAircraftFamilyKey(rating: Pick<AircraftTypeRatingCatalog, 'ma
   return `${rating.manufacturer}::${rating.aircraftFamily}`;
 }
 
-// Inclusive resolution of a legacy aircraft_type_code to EVERY family it
-// could mean, never just the first/best guess — e.g. a bare "A320" can be
-// an alias under both an A320ceo-family rating and an A320neo-family
-// rating, and both count. The broad/approximate filter this feeds
-// (evaluateLegacyBroadMatch in offerMatchExplain.ts, and the T3
-// related_legacy tier above) is deliberately coarse, so widening on
-// ambiguity is correct — never narrowing to a guessed single winner (see
-// migration 022 / docs/MISSION_PART66.md, confirmed with the user
-// 2026-07-22). Returns an empty set for a code with no alias anywhere in
-// the given index.
-export function resolveLegacyCodeToFamilyKeys(code: string, ratingIndex: AircraftRatingIndex): Set<string> {
-  const target = normalizeAircraftRatingSearchText(code);
-  const keys = new Set<string>();
-  for (const rating of ratingIndex.values()) {
-    if (rating.commercialAliases.some((alias) => normalizeAircraftRatingSearchText(alias) === target)) {
-      keys.add(getAircraftFamilyKey(rating));
-    }
-  }
-  return keys;
+// ¿Cubre esta habilitación la familia pedida? A través de su rating resuelto,
+// y solo así (Fase 5.3: la vía del código de aeronave legacy desapareció con
+// el catálogo aircraft_types).
+//
+// IMPLEMENTACIÓN ÚNICA (2026-07-28): vivía duplicada literalmente en
+// offerMatchExplain.ts y technicianRepositoryV2.ts — el filtro amplio del
+// scorer y el de búsqueda del repositorio tienen que responder EXACTAMENTE lo
+// mismo, o una empresa vería en la búsqueda técnicos que el matching luego
+// puntúa a cero, y al revés. Dos copias es la forma de que eso pase sin que
+// nadie se entere. Vive aquí porque es una función pura sobre el catálogo,
+// que es lo que este fichero contiene por contrato (ver CLAUDE.md).
+export function habilitationCoversFamilyKey(
+  habilitation: { aircraftTypeRatingId?: string },
+  familyKey: string,
+  ratingIndex: AircraftRatingIndex,
+): boolean {
+  if (!habilitation.aircraftTypeRatingId) return false;
+  const rating = ratingIndex.get(habilitation.aircraftTypeRatingId);
+  return Boolean(rating && getAircraftFamilyKey(rating) === familyKey);
 }
 
 function sortComparator(a: AircraftTypeRatingCatalog, b: AircraftTypeRatingCatalog): number {

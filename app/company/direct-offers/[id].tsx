@@ -25,6 +25,7 @@ import {
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
+import { ExternalLink } from '../../../src/components/ExternalLink';
 import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import {
   CompanyBadge,
@@ -54,6 +55,7 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { MatchScore } from '../../../src/types/matching';
 import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 const TECH_TYPE_LABELS: Record<string, string> = {
   mechanic:    'Mechanic',
@@ -90,7 +92,9 @@ export default function DirectOfferDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberRole = companySession?.companyMemberRole;
 
   const [req, setReq] = useState<OfferRequest | null>(null);
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
@@ -105,6 +109,11 @@ export default function DirectOfferDetailScreen() {
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!companyId) return;
+
     if (!id) return;
     const request = await offerRequestRepository.getById(id);
     if (!request) return;
@@ -150,26 +159,20 @@ export default function DirectOfferDetailScreen() {
 
   async function handleWithdraw() {
     if (!req) return;
-    Alert.alert(
-      'Withdraw offer?',
-      'The technician will no longer be able to respond to this offer.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Withdraw',
-          style: 'destructive',
-          onPress: async () => {
-            setWithdrawing(true);
-            try {
-              await offerRequestRepository.updateStatus(req.id, 'withdrawn');
-              await load();
-            } finally {
-              setWithdrawing(false);
-            }
-          },
-        },
-      ],
-    );
+    const confirmed = await confirmAction({
+      title: 'Withdraw offer?',
+      message: 'The technician will no longer be able to respond to this offer.',
+      confirmLabel: 'Withdraw',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    setWithdrawing(true);
+    try {
+      await offerRequestRepository.updateStatus(req.id, 'withdrawn');
+      await load();
+    } finally {
+      setWithdrawing(false);
+    }
   }
 
   async function handleViewDoc(docId: string, storagePath: string) {
@@ -179,7 +182,7 @@ export default function DirectOfferDetailScreen() {
     setViewingDocId(null);
     if (error || !url) {
       win?.close();
-      Alert.alert('Error', error ?? 'Could not generate download link.');
+      notify('Error', error ?? 'Could not generate download link.');
       return;
     }
     openDocumentUrl(url, win);
@@ -348,6 +351,11 @@ export default function DirectOfferDetailScreen() {
                     <Text style={styles.profileName}>{unlockedView.firstName} {unlockedView.lastName}</Text>
                     <Text style={styles.profileSub}>{unlockedView.email}</Text>
                     {unlockedView.phone ? <Text style={styles.profileSub}>{unlockedView.phone}</Text> : null}
+                    {/* Ver la nota gemela en applications/[id].tsx: mismo gate
+                        que el email y el telefono, misma rama. */}
+                    {Object.entries(unlockedView.socialLinks ?? {}).map(([key, url]) =>
+                      url ? <ExternalLink key={key} url={url} color={companyUi.accent} /> : null,
+                    )}
                   </>
                 ) : (
                   <>

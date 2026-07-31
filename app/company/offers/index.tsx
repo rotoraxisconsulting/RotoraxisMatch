@@ -38,6 +38,9 @@ import { offerRequestRepository } from '../../../src/repositories/v2/offerReques
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { useCompanySession, useSession } from '../../../src/state/SessionContext';
 import { canManageOffers } from '../../../src/utils/companyPermissionsV2';
+import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
+import { resolveFamilyKeyLabels } from '../../../src/constants/aircraftTypeRatingViews';
+import { AircraftTypeRatingCatalog } from '../../../src/types/catalog';
 
 type OfferCounts = {
   applications: number;
@@ -72,11 +75,19 @@ function formatPublishedDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function compactRequirements(offer: OfferWithRequirements): string[] {
+function compactRequirements(
+  offer: OfferWithRequirements,
+  ratings: AircraftTypeRatingCatalog[],
+): string[] {
   return [
+    // NOTA: requiredTechnicianTypes sigue mostrando el código crudo
+    // ("avionic", "sheet_metal_worker") — es el hallazgo I6 del informe de
+    // auditoría, fuera del alcance de esta tanda. No tocado a propósito.
     ...offer.requiredTechnicianTypes,
     ...offer.requiredLicenses,
-    ...offer.requiredAircraftTypes,
+    // Nunca la family key cruda ("Airbus Helicopters::Eurocopter AS 350"):
+    // es un identificador interno. Ver resolveFamilyKeyLabels().
+    ...resolveFamilyKeyLabels(ratings, offer.requiredAircraftTypes),
   ].slice(0, 5);
 }
 
@@ -84,8 +95,11 @@ export default function OffersListScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberRole = companySession?.companyMemberRole;
   const { sessionLoading } = useSession();
+  const { ratings } = useAircraftTypeRatingsCatalog();
   const canManage = canManageOffers(companyMemberRole);
 
   const [offers, setOffers] = useState<OfferWithRequirements[]>([]);
@@ -196,7 +210,7 @@ export default function OffersListScreen() {
 
         {offers.map((offer) => {
           const offerCounts = counts[offer.id] ?? { applications: 0, directOffers: 0 };
-          const requirements = compactRequirements(offer);
+          const requirements = compactRequirements(offer, ratings);
           const hiddenReqs = Math.max(
             0,
             offer.requiredTechnicianTypes.length + offer.requiredLicenses.length + offer.requiredAircraftTypes.length - requirements.length,

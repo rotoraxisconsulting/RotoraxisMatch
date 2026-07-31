@@ -25,18 +25,21 @@ import { TechnicianTypeCode, LicenseCode } from './catalog';
 import { VerificationStatus } from './enums';
 import {
   TechnicianHabilitation,
-  TechnicianAircraftExperience,
   Availability,
   SocialLinks,
 } from './technician';
 import { Document } from './document';
 
 // What a company sees BEFORE offer acceptance.
-// No real identity, no documents, age derived (not birthDate).
+// No real identity, no documents, NO age (migración 040 — ver abajo).
 export interface SafeTechnicianPreview {
   id: string;
   anonymousCode: string;
-  age: number; // derived from birthDate
+  // SIN edad, a propósito (migración 040). La edad es característica protegida
+  // en normativa laboral europea: mostrarla al empleador durante el cribado es
+  // riesgo de discriminación, e incoherente con anonimizar el nombre justo para
+  // reducir sesgo. No aporta al cribado — licencias, type ratings y años de
+  // experiencia cubren lo relevante. `birthDate` nunca sale, ni derivada.
   technicianType: TechnicianTypeCode;
   // Required: derived from the persisted locationCityId on the underlying TechnicianProfile.
   locationCityId: string;
@@ -47,7 +50,9 @@ export interface SafeTechnicianPreview {
   longitude?: number;
   licenses: LicenseCode[];
   habilitations: TechnicianHabilitation[];
-  aircraftExperience: TechnicianAircraftExperience[];
+  // Años declarados — visual y filtrable, nunca puntuable. undefined = no
+  // declarado, se muestra "not specified".
+  yearsExperience?: number;
   availability: Availability;
   verificationStatus: VerificationStatus;
   // matchingScore is NOT stored here — use calculateOfferTechnicianMatch(offer, technician, ratingIndex) instead.

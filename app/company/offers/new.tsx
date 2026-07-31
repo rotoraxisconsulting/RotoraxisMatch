@@ -31,6 +31,7 @@ import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
 import { OfferStatus } from '../../../src/types/enums';
 import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 interface FormState {
   title: string;
@@ -66,7 +67,8 @@ export default function NewOfferScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
 
   const [form, setForm] = useState<FormState>({
     title: '',
@@ -97,6 +99,10 @@ export default function NewOfferScreen() {
   async function handleSave(status: OfferStatus) {
     const errs = computeErrors(form);
     if (Object.values(errs).some(Boolean)) { setErrors(errs); return; }
+    if (!companyId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -115,7 +121,7 @@ export default function NewOfferScreen() {
       });
       router.back();
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not save offer.');
+      notify('Error', e?.message ?? 'Could not save offer.');
     } finally {
       setSaving(false);
     }

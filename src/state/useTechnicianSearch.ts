@@ -45,7 +45,8 @@ interface UseTechnicianSearchReturn {
 const EMPTY_FILTERS: TechnicianFilters = {};
 
 export function useTechnicianSearch(): UseTechnicianSearchReturn {
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
   const [results, setResults] = useState<SafeTechnicianView[]>([]);
   const [filters, setFilters] = useState<TechnicianFilters>(EMPTY_FILTERS);
   const [loading, setLoading] = useState(false);
@@ -68,6 +69,16 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
     // _matchRequests is kept for call-site compat but ignored — privacy gate
     // uses V2 offerRequests + offerApplications loaded fresh each search.
     async (_matchRequests: MatchRequest[] = []) => {
+      // Fase 5.4 — sin sesión de empresa resuelta no se busca: el gate de
+      // privacidad depende del par companyId+technicianId, y con un id vacío
+      // no habría gate que aplicar.
+      if (!companyId) {
+        setResults([]);
+        setHasSearched(true);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       setHasSearched(true);
 

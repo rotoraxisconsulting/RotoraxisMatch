@@ -28,7 +28,7 @@ const SLIDES = [
     title: 'Built around verified profiles',
     subtitle: null,
     description:
-      'Technicians showcase licenses, aircraft types, specialties, experience, location and availability — all in one verified profile.',
+      'Technicians showcase licenses, type ratings, experience, location and availability — all in one verified profile.',
   },
   {
     id: 'privacy' as const,
@@ -42,7 +42,7 @@ const SLIDES = [
     title: 'Search by what actually matters',
     subtitle: null,
     description:
-      'Filter by license, aircraft type, specialty, base airport, country, availability and years of experience.',
+      'Filter by license, type rating, base airport, country, availability and years of experience.',
   },
   {
     id: 'platform' as const,

@@ -2,7 +2,7 @@
 export * from './enums';       // AppRole, UserStatus, VerificationStatus, DocumentStatus, OfferRequestStatus, OfferStatus, CompanyMemberRole, ExperienceUnit, SenderRole
 export * from './catalog';     // TechnicianTypeCode, LicenseCode, ContractTypeCode, CompanyTypeCode, catalog interfaces
 export * from './profile';     // Profile
-export * from './technician';  // TechnicianProfile, TechnicianWithRelations, TechnicianLicense, TechnicianHabilitation, TechnicianAircraftExperience, SocialLinks, Availability, AvailabilityStatus + V1 compat kept alive on purpose (v2CompatAdapters.ts): Technician, SafeTechnicianView
+export * from './technician';  // TechnicianProfile, TechnicianWithRelations, TechnicianLicense, TechnicianHabilitation, SocialLinks, Availability, AvailabilityStatus + V1 compat kept alive on purpose (v2CompatAdapters.ts): Technician, SafeTechnicianView
 export * from './privacy';     // SafeTechnicianPreview, UnlockedTechnicianView, TechnicianView, isUnlocked, TechnicianPublicPreviewDTO, TechnicianUnlockedDTO
 export * from './company';     // CompanyProfile, CompanyMember + V1 compat: Company, CompanyType
 export * from './offer';       // Offer, OfferWithRequirements

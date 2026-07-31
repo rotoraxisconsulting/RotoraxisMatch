@@ -81,12 +81,25 @@ export const activityRepository = {
 
     if (!events?.length) return;
 
-    await supabase
+    // NO lleva comprobación de filas afectadas, y es deliberado: con
+    // `ignoreDuplicates` un evento ya leído devuelve cero filas, que es
+    // justamente el caso normal al reabrir algo. Exigir >= 1 aquí lanzaría un
+    // error cada vez que vuelves a abrir una conversación ya vista.
+    //
+    // Lo que sí faltaba era mirar el error: la llamada se descartaba entera,
+    // así que un fallo de RLS o de red dejaba el punto rojo encendido para
+    // siempre sin que nadie se enterara. Se registra, no se lanza: marcar como
+    // leído es un efecto secundario de abrir una pantalla, y reventarla por
+    // esto sería peor que el badge desactualizado.
+    const { error } = await supabase
       .from('activity_reads')
       .upsert(
         events.map((e) => ({ activity_event_id: e.id, profile_id: profileId })),
         { onConflict: 'activity_event_id,profile_id', ignoreDuplicates: true },
       );
+    if (error) {
+      console.warn('[activityRepository.markRead] Could not mark activity as read:', error.message);
+    }
   },
 
   // Returns chat room IDs that have at least one unread message event.

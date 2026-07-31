@@ -20,6 +20,7 @@ import {
 } from './admin/AdminUI';
 import type { AdminTone } from './admin/AdminUI';
 import { spacing } from '../theme';
+import { notify, confirmAction } from '../utils/platformAlert';
 
 interface Props {
   company: Company;
@@ -81,7 +82,7 @@ export function AdminCompanyCard({
     try {
       await onUpdateStatus(company.id, status);
     } catch (error) {
-      Alert.alert(
+      notify(
         'Company verification failed',
         error instanceof Error ? error.message : 'Could not update company verification.',
       );
@@ -90,7 +91,12 @@ export function AdminCompanyCard({
     }
   }
 
-  const availableActions = ACTIONS.filter((action) => action.status !== currentStatus);
+  // Mismo criterio que AdminTechnicianCard: `pending` es un estado de
+  // nacimiento al que no se vuelve. Para retirar el acceso a una empresa ya
+  // comprobada el destino es `rejected`, no "pendiente".
+  const availableActions = ACTIONS.filter(
+    (action) => action.status !== currentStatus && action.status !== 'pending',
+  );
 
   return (
     <AdminCard

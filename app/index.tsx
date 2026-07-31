@@ -43,7 +43,7 @@ const VALUE_PROPS = [
   {
     icon: '🎯',
     title: 'Precision matching',
-    description: 'Find talent by license, type rating, specialty and location.',
+    description: 'Find talent by license, type rating and location.',
   },
 ];
 

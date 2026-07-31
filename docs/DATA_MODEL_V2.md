@@ -155,7 +155,7 @@ The technician's profile. Contains both private (identity) and public (professio
 | last_name | ✓ | **private** | Hidden until offer accepted |
 | email | ✓ | **private** | Hidden until offer accepted |
 | phone | — | **private** | Hidden until offer accepted |
-| birth_date | ✓ | **private** | Date — only derived `age` is exposed |
+| birth_date | ✓ | **private** | Date — NUNCA sale, ni siquiera derivada como `age` (retirada 2026-07-29, migración 040 — característica protegida, riesgo de discriminación en el cribado) |
 | technician_type | ✓ | public | FK → technician_types.code |
 | location_city_id | ✓ | public | FK → location_airports.id. Country, city, base airport and coordinates are derived from catalog |
 | availability | ✓ | public | JSONB (see shape below) |
@@ -567,7 +567,7 @@ These three transitions happen together, triggered by a **server-side DB trigger
 
 ### What companies see before acceptance
 
-- anonymous_code, age (derived from birth_date), location_city_id plus derived country, city, base_airport
+- anonymous_code, location_city_id plus derived country, city, base_airport (SIN age (retirada 2026-07-29, migración 040 — característica protegida, riesgo de discriminación en el cribado))
 - technician_type, licenses (codes), habilitations, aircraft experience
 - availability, verification_status
 - match_score **only in offer context** — computed dynamically via `calculateOfferTechnicianMatch(offer, technician)`, never stored on the profile row

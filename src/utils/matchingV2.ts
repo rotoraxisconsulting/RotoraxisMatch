@@ -30,8 +30,12 @@ export async function getTechnicianMatchesForOffer(offerId: string): Promise<Tec
   const offer = await offerRepository.getWithRequirements(offerId);
   if (!offer) return [];
 
+  // Filtro duro por experiencia: se aplica EN LA CONSULTA, no despues. Un
+  // tecnico con años declarados por debajo del minimo de la oferta no llega
+  // siquiera al scorer; el que no ha declarado nada si llega y no se le
+  // penaliza (ver applyMinYearsFilter en technicianRepositoryV2).
   const [profiles, ratings] = await Promise.all([
-    technicianRepositoryV2.getPublicProfiles(),
+    technicianRepositoryV2.getPublicProfiles(offer.minYearsExperience),
     catalogRepository.getAircraftTypeRatings(),
   ]);
   const ratingIndex = buildAircraftRatingIndex(ratings);

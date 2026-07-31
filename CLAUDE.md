@@ -33,12 +33,11 @@ Do not use yet:
 
 ## Core concept
 
-Technicians create profiles with licenses, aircraft types, specialties, location, coordinates and availability.
+Technicians create profiles with licenses, aircraft types, location, coordinates and availability.
 
 Companies search technicians by:
 - license
 - aircraft type
-- specialty
 - location
 - availability
 - verification status
@@ -46,28 +45,45 @@ Companies search technicians by:
 
 Technician identity is private by default.
 
-Companies can only see:
+Companies can only see (contrato V2, alineado con `technician_public_view` y
+`SafeTechnicianPreview` — esta lista era la de V1 y estaba desactualizada;
+corregida 2026-07-29 tras la auditoría de cierre):
 - anonymousCode
-- country
-- city
-- baseAirport
+- technicianType
+- country / city / baseAirport (+ latitude/longitude para el mapa)
 - licenses
-- aircraftTypes
-- specialties
+- habilitations (type ratings EASA célula+motor; el V1 `aircraftTypes` era la
+  familia suelta, sin motor)
 - availability
 - yearsExperience
 - verificationStatus
-- matchingScore
+- profileCompleteness
+- matchingScore (calculado por par oferta+técnico, nunca global)
 
 Companies must NOT see:
 - fullName
 - email
 - phone
+- socialLinks
+- birthDate
+- **age** — retirada del contrato público por decisión del 2026-07-29: es
+  característica protegida en normativa laboral europea y mostrarla al
+  empleador durante el cribado es riesgo de discriminación, además de
+  incoherente con anonimizar el nombre para reducir sesgo. No aporta al
+  cribado (licencias, ratings y años de experiencia ya cubren lo relevante).
+  ⚠ La vista SQL y los tipos TODAVÍA la exponen: la retirada está pendiente de
+  implementación (hallazgo B2 de `docs/FINAL_AUDIT_REPORT.md`). Hasta que se
+  complete, esta línea describe el destino acordado, no el estado actual.
 
 Identity is revealed only when:
 
 matchRequest.status === "accepted"
 AND identityRevealed === true
+
+El enforcer real es la base de datos, no el TypeScript: `technician_public_view`
+anula los 5 campos de identidad con `CASE WHEN offer_accepted_between(...)`, y
+RLS impide a una empresa leer `technician_profiles` directamente. El gate de
+`privacyV2.ts` es una decisión de UI sobre datos que ya vienen filtrados.
 
 ## Architecture rules
 
@@ -87,6 +103,7 @@ Do not couple UI directly to Supabase — go through a repository (`src/reposito
 
 ## Backend / data model notes
 
+- **Schema first, code second (expand-contract)**: when a change needs both a migration and code, the migration is applied FIRST, then the code that reads or writes the new shape. Never the reverse. Code that `SELECT`s a column that does not exist yet fails every query against that table — in dev it is a nuisance, in a real deploy it is an outage, and the window lasts until someone remembers to run the migration. Same rule on the way out: stop reading a column in code, ship that, and only then drop it. Recorded 2026-07-29 after `companies.website` (migration 036) was written into the repository selects before the column existed.
 - **Migrations**: numbered, additive, idempotent SQL files in `supabase/migrations/`. Never `DROP`/`DELETE`/`TRUNCATE` existing data in a migration; deactivate (`is_active = false`) rather than delete when a catalog row becomes obsolete. `016_part66_ratings_habilitations.sql` is the reference style for a well-commented, idempotent migration (header explaining intent/rationale, explicit backfill logic guarded against double-writes).
 - **Catalog tables with a TTL cache**: `aircraft_type_ratings` (EASA Part-66 aircraft-engine type ratings) is read through `src/repositories/v2/catalogRepository.ts`, backed by a dependency-injected, unit-testable TTL cache (`src/repositories/v2/aircraftTypeRatingsCache.ts`) and a shared hook (`src/state/useAircraftTypeRatingsCatalog.ts`) with explicit `loading`/`success`/`empty`/`error` states — never a hardcoded catalog baked into a TypeScript constant. `src/constants/aircraftTypeRatings.ts` holds only types and pure functions that take the loaded catalog/index as an argument.
 - **Same-row matching rule** (`src/utils/offerMatchExplain.ts`): a license category and an aircraft/engine rating only ever count as "held together" when they come from the SAME `technician_habilitations` row. Holding a license and separately having an unrelated habilitation must never be combined into a false match. This is a previously-fixed real bug — do not reintroduce it.

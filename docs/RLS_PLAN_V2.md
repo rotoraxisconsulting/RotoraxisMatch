@@ -149,7 +149,7 @@ CREATE POLICY profiles_update_admin ON profiles
 > This is the only table where column-level privacy is required. Bypassing the view is a privacy violation regardless of RLS.
 
 **Core privacy rules:**
-- A company can always read the public fields (anonymous_code, age, technician_type, location_city_id and derived city/country/base airport, verification_status, etc.).
+- A company can always read the public fields (anonymous_code, technician_type, location_city_id and derived city/country/base airport, verification_status, etc.). SIN age (retirada 2026-07-29, migración 040 — característica protegida, riesgo de discriminación en el cribado).
 - A company cannot read private fields (first_name, last_name, email, phone, birth_date, social_links) unless an accepted offer record exists.
 
 **Implementation approach:**

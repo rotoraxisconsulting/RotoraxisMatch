@@ -5,12 +5,13 @@
 // explainable instead of an opaque percentage:
 //   - 'exact'    every required habilitation matches license+rating exactly
 //                (tier T1 in offerMatchExplain.ts).
-//   - 'related'  same category + related rating/family (T2), or a legacy
-//                general habilitation covering the required aircraft with no
-//                engine on record (T3) — needs a human to confirm the detail
-//                (engine, recency, etc). breakdown.habilitation and the
-//                specific clarification text distinguish T2 from T3; both
-//                report as 'related' here to keep this a stable 4-value enum.
+//   - 'related'  same category + a related rating in the same aircraft
+//                family, different engine (tier T2) — needs a human to
+//                confirm the detail (engine, recency, etc).
+//                Fase 5.3 (2026-07-28): this used to also cover T3 (a legacy
+//                general habilitation with no engine on record). T3 is gone
+//                with the pre-Part-66 aircraft_types catalog, so 'related'
+//                now means T2 and only T2.
 //   - 'legacy'   the offer only has broad (unlinked) requirements; the match
 //                was resolved via a real technician_habilitations row, not by
 //                combining independent license/aircraft lists. Also used for
@@ -42,12 +43,19 @@ export interface MatchScore {
   // detect whether (and how much) a cap applied.
   total: number;
   label: MatchLabel;
+  // Sub-fase de experiencia (2026-07-28): `experience` ya no está aquí. Los
+  // años de experiencia no puntúan — informan y filtran (filtro duro
+  // server-side por offer.minYearsExperience). "La cualificación puntúa, la
+  // experiencia informa."
   breakdown: {
     verified: number;
     habilitation: number;
     license: number;
-    availability: number;
-    experience: number;
+    // Renombrada desde `availability` (2026-07-29): esta fila NUNCA midió
+    // disponibilidad, mide coincidencia de TIPO DE CONTRATO. La disponibilidad
+    // real es binaria y va como filtro/etiqueta, no como puntos. Conjunto
+    // vacío de contract_types = abierto a cualquiera = puntúa completo.
+    contractFit: number;
     location: number;
   };
   level: MatchLevel;

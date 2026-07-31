@@ -1,5 +1,149 @@
 # Misión: coherencia total del modelo Part-66 en RotoraxisMatch
 
+---
+
+# ESTADO AL 2026-07-31 — congelado para desplegar a pruebas
+
+> Lee esto primero. Lo de debajo de la línea es la narrativa histórica de la
+> misión, que sigue siendo válida pero ya no es la lista de tareas.
+
+La misión Part-66 está **cerrada**. Después vino la auditoría de cierre
+(`docs/FINAL_AUDIT_REPORT.md`) y un triaje en tandas. **Se congela aquí para
+recoger feedback real de usuarios**; lo pendiente NO se toca hasta tenerlo.
+
+## Hecho tras la auditoría (migraciones 037–041)
+
+| | Qué |
+|---|---|
+| **037** | `admin_update_technician_verification` rechaza cuentas borradas |
+| **038** | Políticas de admin sobre `storage.objects` usan `is_admin()` |
+| **039** | Lápida por trigger `AFTER DELETE` en `auth.users` + `auth_hooks_health()` |
+| **040** | La **edad** sale del contrato público (vista, tipos, UI, docs) |
+| **041** | Disponibilidad **binaria**, `available_from` retirado, nuevo DEFAULT |
+
+Además, sin migración: edad fabricada (todos "56 años") corregida · family keys
+`Fabricante::Familia` fuera de la UI en 4 pantallas · "Type ratings" con motor ·
+cuenta borrada no moderable · `UserStatus` gana `'deleted'` · fila del score
+renombrada a **Contract fit** con la regla del conjunto vacío · copy de
+`/auth/pending-verification` reescrito (verifica IDENTIDAD, no credenciales) ·
+tarjeta de admin para pendientes · **§9 cerrado** (mutaciones que ahora
+comprueban filas afectadas) · `pending` retirado como destino de moderación.
+
+## ⛔ P0 — lo primero cuando se retome
+
+1. **Tope de 1000 filas de PostgREST.** El catálogo está protegido (paginación +
+   aserción). Pendientes `search()` y `getPublicProfiles()`: hoy sólo avisan por
+   consola. Es correctitud, no escalabilidad — con >1000 técnicos el filtro opera
+   sobre un recorte arbitrario.
+2. **Pieza (iii): trigger para la relación cruzada duplicada.** Único invariante
+   de relación SIN respaldo en base de datos. Cualquier escritura fuera de los
+   repositorios puede crear el duplicado.
+
+## P1 — decidido, diseñado, sin implementar
+
+### 042 — historial de técnicos no activos · **Option B, decidida 2026-07-31**
+
+Un técnico sin `status = 'active'` no aparece en descubrimiento. El caso a
+resolver es el **historial**: una empresa con relación previa vería hoy
+"[Deleted user]", que es falso.
+
+**Mecanismo elegido — Option B**, por dejar la vista de descubrimiento estricta
+*por construcción*. Las alternativas (ampliar el allow-list, o un `OR` en el
+`WHERE`) mueven la garantía a "acordarse de filtrar en cada consulta", que es la
+patología con tres incidentes en este proyecto.
+
+- `technician_public_view` se endurece a `status = 'active'` y **no se toca más**.
+- Vista nueva, **mínima** (`id`, `anonymous_code`, `account_state`), que devuelve
+  **sólo filas no activas** y **sólo si `my_company_id()` ya tiene relación** con
+  ese técnico. Inservible para descubrimiento por construcción.
+- `account_state` ∈ `{deleted, unavailable}` — colapsa `pending`/`suspended`/
+  `blocked` en uno: la empresa nunca sabe el motivo, que es decisión de moderación.
+- Relación = fila en `offer_applications` **o** `offer_requests` para ese par.
+  `chat_rooms` no hace falta: implica aceptación.
+- Etiqueta **`Technician currently unavailable`**. `[Deleted user]` queda
+  reservado a `account_state = 'deleted'`.
+- Comportamiento: historial y mensajes legibles, tarjeta atenuada, cero acciones.
+- **Un helper único** resuelve el estado; los seis sitios lo consumen, no seis
+  copias: `applications/index:246` · `applications/[id]:269` · `chats/index:115` ·
+  `chats/[id]:109` · `direct-offers/[id]:227,236`.
+- Guard de oferta directa: *"This technician is not currently available."*
+
+### Transiciones de verificación — la mitad cara
+
+Hecho ya: `pending` retirado como destino en el panel (técnico y empresa).
+**Pendiente**: matriz declarada una sola vez, enforcement en
+`admin_update_technician_verification()`, y un `validate:*` que compruebe que
+ambos lados coinciden (patrón `validate:state-machine`).
+
+| Desde | Permitido |
+|---|---|
+| `pending` | → `verified`, → `rejected` |
+| `verified` | → `rejected` |
+| `rejected` | → `verified` |
+| cualquiera | **→ `pending` nunca** |
+
+> Nota de producto: con esto, retirar el acceso a alguien ya comprobado lo deja
+> como **"Rejected"**, más duro que "en revisión". Si se quiere un intermedio
+> suave, es un **estado nuevo**, no reutilizar `pending`.
+
+### Otros P1
+- `search()`: los 8 filtros a server-side (los difíciles: `licenseCodes` y
+  `aircraftFamilyKeys`; probablemente un RPC).
+- `validate:privacy-gate` — guarda de regresión sobre RLS + vista.
+- ~~**Numeración duplicada `014`**~~ — **RESUELTA 2026-07-31**, ver la norma abajo.
+- Retención RGPD + `user_consents`: la 015 lo llama "immutable audit trail" y
+  **no lo es** (FK `ON DELETE CASCADE`). Corregido en `COMMENT ON TABLE` (039);
+  la política de retención se decide junto a la de ofertas archivadas y perfiles
+  eliminados.
+- Ficheros huérfanos en Storage cuando el borrado no pasa por `delete-account`
+  (aceptado y documentado en la 039): script de detección.
+
+## NORMA DE PROYECTO — versión única por migración, y el orden lo da el NOMBRE
+
+**Cada fichero de `supabase/migrations/` debe tener una versión única, y todos los
+prefijos deben compartir longitud.**
+
+Origen (2026-07-31): había dos ficheros `014_*`. No era un detalle estético —
+`supabase db push` **fallaba** al llegar al segundo:
+`supabase_migrations.schema_migrations.version` es **clave primaria** y ambos
+producían la versión `014`. **Un despliegue limpio desde los ficheros era
+imposible**, y sólo se descubrió al ejecutarlo de verdad; el proyecto llevaba
+meses funcionando porque dev se construyó incrementalmente, registrando por
+timestamp (`20260608094644` / `20260624114937`), no por el prefijo del fichero.
+
+**El orden lo decide el nombre de fichero completo, byte a byte** — no la versión
+parseada, y no el número:
+
+- `fs.ReadDir` de Go: *"returns a list of directory entries sorted by filename"*.
+- El parser de la CLI, `^([0-9]+)_(.*)\.sql$`, **extrae** la versión; no ordena.
+
+Consecuencia contraintuitiva, y la razón de la regla de longitud uniforme: añadir
+un dígito a UN solo fichero **invierte** el orden. `0141_remove` frente a
+`014_dedup` comparte los tres primeros caracteres y luego enfrenta `_` (0x5F)
+contra `1` (0x31) — gana el dígito, así que `0141_remove` iría **antes**. Por eso
+se renombraron **las dos** a `0140_`/`0141_`: mismo ancho, orden preservado, y
+ambas siguen entre `013` y `015`.
+
+**Antes de añadir una migración**: comprobar que su versión no colisiona y que su
+nombre parsea. Barrido de una línea:
+
+```bash
+for f in supabase/migrations/*.sql; do basename "$f" | sed -E 's/^([0-9]+)_.*/\1/'; done | sort | uniq -d
+```
+
+Renombrar un fichero local **no afecta a un entorno ya migrado**: la base registra
+la versión con la que se aplicó, no el nombre actual del fichero. La regla de
+"nunca editar una migración aplicada" protege su **contenido**, no el nombre de un
+fichero que no puede aplicarse.
+
+## P2 — aparcado hasta tener feedback real
+Los INCOHERENTE restantes, RESIDUO y FRICCIÓN de `docs/FINAL_AUDIT_REPORT.md`.
+Incluye: `+5` de completitud por estar abierto a ofertas · `technicianType` crudo
+en varias pantallas · V2 UI migration (retirar `v2CompatAdapters`) ·
+notificaciones · `<AlertHost>` web · arnés de tests con Supabase CLI local.
+
+---
+
 ## Objetivo de negocio (el criterio contra el que se valida TODO)
 Esta es una plataforma de matching entre técnicos aeronáuticos EASA Part-66 y
 empresas (MRO, operadores, aerolíneas). El principio rector del matching:
@@ -252,8 +396,13 @@ alcance real de esta fase.
    - Tipos @deprecated: Technician, SafeTechnicianView, AvailabilityStatus,
      ContractType, LegacyVerificationStatus + su mapper
    - Rama legacy de requiredAircraftTypes/requiredLicenses en
-     offerMatchExplain.ts (T3 queda solo para habilitaciones needsReview,
-     etiquetado)
+     offerMatchExplain.ts ~~(T3 queda solo para habilitaciones needsReview,
+     etiquetado)~~ — **ANULADO el 2026-07-28**: T3 se elimina ENTERO. La
+     cláusula tachada era incoherente con dropear `aircraft_type_code`: una
+     fila `needsReview` tiene `aircraft_type_rating_id` NULL y, tras la 029,
+     tampoco código — no queda nada sobre lo que T3 pueda operar. Se retira
+     el tier completo y la columna `needs_review` con él. Ver "Decisión
+     2026-07-28" abajo.
    - aircraftTypeCode como campo activo (y su CHECK constraint dual) —
      NOTA (2026-07-22): la pieza de offer_required_aircraft_types.aircraft_type_code
      YA está resuelta (migración 022, Fase 3b pantalla 1 — ver sección
@@ -1292,6 +1441,881 @@ relacionado. Parado en el checkpoint, esperando esa decisión.
    ya borrada (TF0E8866C8), sin necesidad real de un log de auditoría para
    datos de una cuenta que ya no existe.
 
+### Corrección del inventario 5.1 y migración 028 (2026-07-28)
+Revisión externa (Codex/ChatGPT), verificada en vivo contra rotoaxismatch-dev.
+**Dos afirmaciones del inventario 5.1 eran falsas** — corregidas en
+`docs/PHASE5_INVENTORY.md` con el texto original tachado, no reescrito:
+
+1. **`aircraft_types` tiene DOS FKs entrantes, no una**: además de
+   `technician_habilitations.aircraft_type_code`, está
+   `technician_aircraft_experience.aircraft_type_code`. La 028 que se había
+   escrito sobre el inventario (retirando solo una) habría FALLADO.
+2. **El "hallazgo lateral" del ítem (a) era falso**: el índice único parcial
+   sobre `aircraft_type_rating_id` ya existía desde la 016
+   (`uq_technician_habilitations_rating`). La 027, escrita creyendo el
+   inventario, creó `uq_technician_habilitations_normalized` con definición
+   idéntica — **hoy hay un índice duplicado aplicado en producción**. Lo
+   retira la 028 (se conserva el de la 016).
+
+**Causa común, documentada como post-mortem de método en
+`docs/PHASE5_INVENTORY.md`**: consultas construidas desde la hipótesis en vez
+de desde la pregunta — `conrelid` (¿a qué apunta esta tabla?) donde tocaba
+`confrelid` (¿quién apunta a la que quiero borrar?), y `pg_constraint` donde
+un `CREATE UNIQUE INDEX` no aparece nunca. Reglas adoptadas para el resto de
+la misión: dirección entrante siempre antes de un DROP; cuatro catálogos
+(`pg_constraint` + `pg_depend` + `pg_proc` + `pg_trigger`, y `pg_indexes`
+aparte); el SQL ejecutado se pega literal en el inventario o la línea no
+cuenta como verificada; un resultado vacío obliga a revisar la consulta antes
+que la conclusión.
+
+**Estado de la 028: APLICADA** contra rotoaxismatch-dev el 2026-07-28, tras el
+checkpoint (`supabase/migrations/028_retire_aircraft_types_fks.sql`). La 028
+previa de Codex nunca estuvo en el repo ni se aplicó — comprobado contra
+`supabase_migrations.schema_migrations`, no contra los ficheros del repo
+(última aplicada antes de esto = 027). Retira las 2 FKs + el índice
+duplicado, con bloque de post-condiciones que revienta si queda alguna FK
+entrante.
+
+Verificación post-aplicación, ejecutada FUERA del propio bloque `DO` de la
+migración (un `RAISE NOTICE` de la migración no es evidencia independiente de
+sí misma):
+- FKs entrantes a `aircraft_types`: **0** (`confrelid`, dirección entrante).
+- Índices únicos parciales sobre `aircraft_type_rating_id` en
+  `technician_habilitations`: **1** — `uq_technician_habilitations_rating`
+  (016). `uq_technician_habilitations_normalized` (027) eliminado.
+- Datos intactos: `aircraft_types` 33, `technician_habilitations` 5,
+  `technician_aircraft_experience` 0. Resto de constraints de ambas tablas
+  intactas (FKs a `technician_profiles`/`license_categories`/
+  `aircraft_type_ratings`, CHECK dual, UNIQUE legacy, CHECK `value >= 0`).
+- `npm run ts` limpio; `npm run test:matching` **124 passed, 0 failed**;
+  `npm run validate:aircraft-ratings` PASS (606 filas, 0 warnings, 0 errors).
+
+Lo que la 028 deliberadamente NO hizo, y dónde va cada pieza: ver la cadena
+acordada abajo.
+
+### Decisiones de producto y secuencia acordadas (2026-07-28, checkpoint 028)
+
+**Cadena de retirada de `aircraft_types`, checkpoint en CADA migración:**
+`028` (FKs + índice duplicado) → **cambios de código 5.3** → `029` (DROP de
+`technician_habilitations.aircraft_type_code`) → `030` (DROP de la tabla
+`aircraft_types`, **con dump previo**).
+- La 029 no puede ir antes del cambio de código: 4 lectores de cliente vivos
+  (`supabaseMappers.ts:253` — en la carga de TODO técnico —,
+  `profile.tsx:249,288`, `scripts/backfillLegacyAircraftRatings.ts:71`).
+- Al caer el CHECK dual con la columna, su reemplazo es
+  `CHECK (aircraft_type_rating_id IS NOT NULL OR needs_review)`.
+  **Nunca `NOT NULL` a secas** — una fila `needs_review = true` conserva
+  `aircraft_type_rating_id` NULL a propósito (027).
+
+**`technician_aircraft_experience` → opción A (retirar), APROBADA**, en
+**sub-fase propia con checkpoint, DESPUÉS de la cadena de DROPs**. Motivo del
+orden: toca scoring, y el scoring no se cuela en una migración de esquema.
+
+**Principio de producto ya fijado para esa sub-fase — "la cualificación
+puntúa, la experiencia informa":** los años totales de experiencia son un dato
+**ÚNICAMENTE VISUAL, sin efecto en el scoring**, igual que los
+`experienceYears` por habilitación desde la Fase 3
+(`offerMatchExplain.ts:205-207` ya lo aplica a nivel de habilitación). El
+detalle — redistribución de los pesos que hoy ocupa el componente `experience`
+(10 pts con requisitos / 15 sin), qué pasa con "Minimum years of experience"
+del formulario de oferta, la línea de completitud de perfil
+`if (t.yearsExperience > 0) score += 10`, y de dónde sale el número visual —
+lo especifica el usuario al arrancar la sub-fase. No improvisarlo.
+
+**Norma de proyecto adoptada**: las cuatro reglas del post-mortem de método
+(`docs/PHASE5_INVENTORY.md`) rigen para todo el proyecto, no solo para esta
+misión. El índice duplicado se asume como fallo compartido: el inventario lo
+afirmó mal y la aprobación de la 027 no preguntó si ya existía.
+
+### Decisión 2026-07-28 — el catálogo viejo se va entero, sin compatibilidad
+
+Decisión del usuario, en desarrollo y sin producción: **todo lo del catálogo
+pre-Part-66 se retira sin caminos de compatibilidad**; se prefiere borrar datos
+a mano antes que arrastrar código legacy. Verificado: las 5 habilitaciones de
+`rotoaxismatch-dev` tienen `aircraft_type_rating_id`, cero filas huérfanas.
+
+**La 029 NO lleva bloque `IF EXISTS`/`RAISE` de guarda** (opción (c) que yo
+había recomendado). En su lugar:
+`DROP COLUMN aircraft_type_code` + `ALTER COLUMN aircraft_type_rating_id SET
+NOT NULL`. El propio `NOT NULL` falla nativamente si hubiera filas sin
+resolver — misma protección, cero código a medida, y un invariante permanente
+en vez de una comprobación de un solo uso. El CHECK dual
+`chk_technician_habilitations_target` cae con la columna y **NO se sustituye**
+por el CHECK con `needs_review`.
+
+**`needs_review` se dropea en la misma 029.** Existía solo para marcar filas
+legacy irresolubles, que ya no podrán existir. Revisado si había motivo para
+conservarla: no lo hay — no es un estado de verificación general de
+habilitaciones (eso vive en `verification_status` de perfiles/documentos), y
+tras el `NOT NULL` ninguna ruta puede volver a ponerla a true.
+
+**Se mantiene sin tocar** (es producto, no legacy): la rama amplia
+`evaluateLegacyBroadMatch` con sus fracciones 0.57/0.29 y su
+`BROAD_ONLY_CAP = 79`, y las bandas del CHECKPOINT 2.
+
+**Cadena final**: cambios de código 5.3 → **029** (drop columna + NOT NULL +
+drop `needs_review`) → **030** (drop tabla `aircraft_types`, con dump previo).
+Checkpoint en cada migración.
+
+#### 029 — APLICADA (2026-07-28)
+`029_drop_legacy_aircraft_type_code`. Verificación INDEPENDIENTE, fuera del
+bloque `DO` de la propia migración: `aircraft_type_code` **0 columnas** ·
+`needs_review` **0 columnas** · `aircraft_type_rating_id.attnotnull` **true** ·
+**5 filas, las 5 con rating** · CHECK dual `chk_technician_habilitations_target`
+**0** (cayó con la columna, no se sustituyó) · UNIQUE legacy **0** ·
+`uq_technician_habilitations_rating` **1** (ahora efectivo sobre toda la tabla).
+`npm run ts` limpio · `npm run test:matching` **114 passed, 0 failed**.
+
+**Atomicidad de `apply_migration`, comprobada empíricamente** (no supuesta):
+una sonda desechable que creaba una tabla y luego hacía `RAISE EXCEPTION` dejó
+`to_regclass` = NULL y cero filas en `schema_migrations` → el fichero va en
+UNA transacción, todo o nada. Dato útil para la 030 y para cualquier migración
+futura.
+
+**Incidente sin consecuencias, anotado por si se repite**: el primer intento de
+aplicar la 029 cerró el socket sin respuesta. Comprobado inmediatamente contra
+`schema_migrations` en vez de asumir: no se había aplicado nada (última seguía
+siendo la 028, ambas columnas en pie). El reintento, con la cabecera de
+comentarios abreviada y el MISMO DDL, funcionó. Sospecha: tamaño del payload de
+comentarios.
+
+**Norma derivada**: las cabeceras de migración se mantienen CORTAS y la
+narrativa vive en este mission doc, de forma que el `.sql` se envíe **idéntico
+a como está en el repo**, sin versión abreviada aparte. Así se elimina de raíz
+tanto el riesgo de payload como la deriva repo↔aplicado que hubo que anotar en
+la 028 y la 029. Aplicado ya en la 030.
+
+#### 030 — APLICADA (2026-07-28). Cadena cerrada.
+Verificación INDEPENDIENTE, fuera del bloque `DO`: `to_regclass('public.aircraft_types')`
+**NULL** · habilitaciones **5**, las 5 con rating · `aircraft_type_ratings`
+**606** filas, 606 activas · FKs residuales a `aircraft_types` **0** ·
+`technician_aircraft_experience` **0** filas (intacta) · `npm run ts` limpio ·
+`test:matching` **114/114** · `validate:aircraft-ratings` PASS (80/80 ids base).
+El `DROP` sin `CASCADE` pasó a la primera — nada dependía ya de la tabla.
+
+**Catálogo pre-Part-66 retirado por completo**: 028 (FKs) → código 5.3 →
+029 (columna + NOT NULL + needs_review) → 030 (tabla). El catálogo vivo es
+`aircraft_type_ratings` (606 endorsements, migración 020) y es el único.
+
+#### 030 — detalle de la migración
+`supabase/migrations/030_drop_aircraft_types.sql`. Último eslabón de la cadena.
+
+**Dump previo tomado antes de escribir la migración**:
+`supabase/dumps/aircraft_types_2026-07-28.sql` — 33 INSERT (verificado contra
+las 33 filas vivas) + `CREATE TABLE` + CHECK de `aircraft_category` + PK + las
+dos políticas RLS (`cat_at_read`, `cat_at_admin`). Restaura la tabla completa
+por sí solo. **No** recrea las FKs que apuntaban aquí (las retiró la 028, y
+`technician_habilitations.aircraft_type_code` ya no existe tras la 029): es un
+rescate de datos, no un rollback de la fase.
+
+**`DROP TABLE` sin `CASCADE`, a propósito.** El modo por defecto (RESTRICT)
+hace que Postgres se niegue si algo sigue dependiendo de la tabla y aborte la
+transacción — misma filosofía que el `SET NOT NULL` de la 029: protección
+nativa en vez de guarda a medida. Si alguna vez falla, la respuesta NO es
+añadir `CASCADE`, es averiguar qué depende todavía (consulta por dirección
+entrante) y retirarlo explícitamente en su propia migración.
+
+### Fase 5.4 — BLINDAJE, hecha (2026-07-28)
+
+`useCompanySession()`/`useTechnicianSession()`/`useAdminSession()` devuelven
+ahora `T | null`. Las constantes `EMPTY_TECH`/`EMPTY_COMPANY`/`EMPTY_ADMIN`
+—que rellenaban la sesión de cadenas vacías y **eran el bug**— están
+eliminadas. `SessionContext` también devuelve `null` cuando el perfil
+autenticado no tiene fila en `technician_profiles`/`company_members`, en vez de
+fabricar una sesión con ids vacíos.
+
+**El blindaje se demostró solo**: al cambiar el tipo, `tsc` marcó **42 errores
+en exactamente los 27 consumidores** — sin buscarlos a mano. Al sustituir la
+desestructuración por acceso opcional, afloraron **71** más, que son los puntos
+donde un id sin resolver llegaba a una query. Todos reparados: **0 errores**.
+
+Patrones aplicados, uniformes:
+- **Carga** (`const load = useCallback`): `if (!id) return;` al principio. El
+  `.finally(() => setLoading(false))` del efecto apaga el spinner, así que la
+  pantalla cae en su **estado vacío** — ni crash ni spinner infinito.
+  `useMapTechnicians` ya tenía este guard escrito a mano (una de las tres
+  pantallas donde el crash se parcheó reactivamente); ahora el tipo lo obliga
+  en vez de depender de que alguien se acuerde.
+- **Acciones** (enviar mensaje/oferta, aplicar, retirar, guardar perfil):
+  guard en el handler, la acción no se ejecuta sin sesión.
+- **Permisos** (`companyPermissionsV2.ts`): las 7 funciones aceptan
+  `CompanyMemberRole | undefined` y responden **fail-closed**. Esto es más
+  seguro que lo anterior, no solo más tipado: antes una sesión sin resolver
+  llegaba como `companyMemberRole: 'viewer'`, que es un **rol real**, y la UI
+  concedía permisos de viewer a una sesión inexistente.
+  `canManageCompanyMembers` es además un type guard (`role is 'admin'`), lo que
+  evita recomprobar el undefined para indexar tablas de etiquetas.
+
+Verificación: `npm run ts` **0 errores** · `npm run test:matching` **114/114** ·
+`npx expo export --platform web` **51 rutas** empaquetadas sin fallo · grep de
+centinelas (`technicianId: ''`, `EMPTY_*`…) sin ninguna ocurrencia en código,
+solo en comentarios que explican por qué se fueron.
+
+`useAdminSession()` se ha hecho nullable también, por coherencia: cero
+consumidores hoy, pero dejar un `profileId: ''` vivo tras una fase cuyo objetivo
+es justo eliminarlos habría sido incoherente.
+
+#### Nota consciente — `technician_aircraft_experience.aircraft_type_code`
+Al morir `aircraft_types`, esa columna queda como **texto libre sin referencia
+a nada**. Es correcto y está decidido, no es un resto olvidado:
+- Su FK cayó en la **028** (era la segunda de las dos que el inventario 5.1 se
+  había dejado); desde entonces la columna ya no valida contra ningún catálogo.
+- La tabla tiene **0 filas** y **ningún camino de escritura** en el código, así
+  que no hay ningún valor que pueda quedar huérfano ni ninguna ruta que pueda
+  escribir uno nuevo.
+- **La tabla entera muere en la sub-fase de experiencia** (opción A aprobada:
+  retirarla y rehacer el componente `experience` del score bajo el principio
+  "la cualificación puntúa, la experiencia informa"), posterior a esta cadena
+  de DROPs. La columna no sobrevive a esa sub-fase.
+No añadir a la 030 ningún intento de limpiar esa columna por separado: sería
+tocar la tabla de experiencia a medias, justo lo que se decidió no hacer dentro
+de una migración de esquema.
+
+#### Cambios de código 5.3 — HECHOS (2026-07-28)
+14 ficheros. `npm run ts` limpio; `npm run test:matching` **114 passed, 0
+failed** (eran 124: −11 tests de rutas borradas, +1 regresión nueva).
+
+Retirado: el tier **T3 `related_legacy`** completo; `resolveLegacyCodeToFamilyKeys()`
+y `ratingMatchesLegacyCode()` (`src/constants/aircraftTypeRatings.ts`, ambas
+sin consumidores tras lo anterior — verificado por grep, no supuesto); la rama
+de código legacy de `habilitationCoversFamilyKey()` en `offerMatchExplain.ts`
+**y** en `technicianRepositoryV2.ts`; `aircraftTypeCode` y `needsReview` de
+`TechnicianHabilitation`; su lectura en `supabaseMappers.ts` y
+`app/technician/profile.tsx`; la sección de solo lectura "Legacy"/"Needs
+review" y el tipo `LegacyHabilitationRow` de `HabilitationsEditor.tsx`;
+`scripts/backfillLegacyAircraftRatings.ts` + `src/utils/aircraftRatingBackfillPlan.ts`
++ su entrada `backfill:aircraft-ratings` de `package.json`; y la exención que
+`replaceHabilitations()` hacía para no borrar filas sin rating id.
+
+Números verificados tras el cambio (fixtures aisladas, no la suite):
+
+| Escenario | Total | Label |
+|---|---|---|
+| T1 exacto mandatory + perfil perfecto | **100** | Excellent match |
+| Mandatory no exacto (T2) + perfil perfecto | **59** | Partial match |
+| Cualificación cero + perfil perfecto | **39** | Weak match |
+| Broad-only perfecto (rama amplia) | **79** | Strong match |
+
+Escalera `applyScoreCeilings(100, …)`: ninguno 100 · broadOnly **79** ·
+mandatoryUnmet **59** · zeroQualification **39** · broad+mandatory 59 · los
+tres 39 (más restrictivo gana). Fronteras de `getMatchLabel`: 80 Excellent /
+79 Strong / 60 Strong / 59 Partial / 40 Partial / 39 Weak — todo intacto.
+
+Única diferencia de comportamiento, y es la buscada: una habilitación **sin**
+`aircraft_type_rating_id` frente a un requisito exacto pasaba por T3 y sacaba
+~75; ahora saca **39** (tope de cualificación cero). Una fila que no nombra
+ninguna aeronave deja de ser evidencia. Ninguna fila de `rotoaxismatch-dev`
+tiene esa forma, así que el cambio es teórico hoy y lo hace imposible mañana.
+
+**Norma refinada (2026-07-28) — las migraciones NO llevan línea de estado.**
+Ninguna migración escribe "Estado: aplicada / NO aplicada / CHECKPOINT" en su
+cabecera. El estado de una migración vive en DOS sitios, ambos autoritativos:
+`supabase_migrations.schema_migrations` (la verdad de la base) y este mission
+doc (la narrativa). Nunca en el fichero .sql.
+
+Motivo: la regla anterior era "nunca editar una migración aplicada, comentarios
+incluidos", y una línea de estado dentro del fichero la pone en conflicto
+consigo misma en cuanto la migración se aplica — o mientes en el repo o
+incumples la regla. Se elimina la tentación en vez de admitir excepciones. La
+cabecera de una migración describe **intención y razonamiento**, que no
+caducan; el estado sí caduca, así que no va ahí.
+
+Consecuencia práctica: la línea de estado que la 028 llegó a tener (editada una
+vez tras aplicarla, con permiso explícito) es la ÚLTIMA. Retirada de su
+cabecera al adoptar esta norma; su estado consta arriba en este documento y en
+`schema_migrations`. La regla original ("nunca editar una migración aplicada,
+comentarios incluidos") queda intacta y ya sin excepciones que gestionar.
+
+**`technician_aircraft_experience` — inventariada, pendiente de decisión**
+(`docs/PHASE5_INVENTORY.md` sección d-bis): 0 filas, 4 lecturas vivas, **cero
+caminos de escritura** en todo el repo. Feature a medio construir sobre el
+modelo pre-Part-66. Consecuencia real: el componente `experience` del match
+score (10/15 pts) es inalcanzable siempre que una oferta pida
+`minYearsExperience > 0`, y el `yearsExperience` que ven las empresas es
+siempre 0. Tres opciones planteadas; recomendación (A) retirarla y rehacer ese
+componente del score, en sub-fase propia con checkpoint — no dentro de la 028,
+porque toca scoring.
+
+### ⚠ HALLAZGO 2026-07-28 — PostgREST trunca a 1000 filas. Es un bug de correctitud, no de escalabilidad.
+
+Origen: pregunta del usuario al revisar el hallazgo de que `search()` filtra en
+JS. **Comprobado empíricamente**, no de memoria ni de documentación: tabla
+sonda de 2500 filas creada en `rotoaxismatch-dev`, consultada con la anon key
+contra el endpoint REST real, y retirada después.
+
+```
+Content-Range: 0-999/2500      → filas devueltas: 1000 (ids 1..1000)
+```
+
+**PostgREST corta en 1000 filas, en silencio.** Sin error, sin aviso: la
+respuesta simplemente llega recortada y el cliente no tiene forma de saberlo si
+no mira `Content-Range`. Nada en `src/` lo mira.
+
+**Consecuencia**: cualquier `.select()` sin `.limit()`/`.range()` que devuelva
+más de 1000 filas entrega un subconjunto arbitrario. Y si además se filtra en
+JS **después**, el filtro se aplica sobre un recorte, no sobre el conjunto real
+— resultados incorrectos que parecen correctos. Prioridad reclasificada: esto
+no es limpieza de escalabilidad, es un bug latente de correctitud.
+
+Sitios confirmados, por cercanía al límite:
+
+1. **`catalogRepository.fetchActiveAircraftTypeRatings()` — el más urgente.**
+   Sin `.limit()`, trae el catálogo entero: **606 filas activas hoy, el 61% del
+   tope de 1000**. Es el catálogo que esta misma misión hizo crecer de 80 a
+   606. Si supera 1000, se trunca en silencio: habría ratings que el técnico no
+   puede seleccionar en su perfil ni la empresa exigir en una oferta, sin
+   ningún error visible. Alimenta además la caché TTL compartida, así que el
+   recorte se propagaría a toda la app.
+2. **`technicianRepositoryV2.search()`** — `.select()` sin ningún filtro
+   server-side, y los 8 filtros aplicados en JS después. Con >1000 técnicos,
+   busca sobre un recorte arbitrario.
+3. **`technicianRepositoryV2.getPublicProfiles()`** — solo filtra
+   `verification_status` en servidor. Alimenta `getTechnicianMatchesForOffer()`,
+   o sea la lista rankeada de CADA oferta. Con >1000 técnicos verificados, el
+   ranking omite gente sin decirlo.
+
+**Tarea de backlog — `search()`: filtros a server-side.** Alcance concreto:
+los 8 predicados de `matchesSearchFilters()` en
+`src/repositories/v2/technicianRepositoryV2.ts` pasan de JS a la consulta.
+- Directos sobre columnas de `technician_public_view`: `technicianType`,
+  `country`, `city` → `.eq()`; `verificationStatuses` → `.in()`.
+- Sobre el JSONB `availability`: `availabilityStatuses` y `availableImmediately`
+  → operadores JSON de PostgREST (`availability->>status=in.(...)`,
+  `availability->>immediately=eq.true`).
+- Los dos difíciles, que son los que justifican tratar esto como tarea propia y
+  no como un rato: `licenseCodes` y `aircraftFamilyKeys` viven en tablas hijas
+  (`technician_licenses`, `technician_habilitations`) y hoy se resuelven en JS
+  con el índice de ratings cargado. Server-side requieren o bien exponer los
+  agregados en la vista, o un RPC dedicado que reciba los filtros. La segunda
+  probablemente sea la buena, porque `aircraftFamilyKeys` necesita resolver
+  familia desde `aircraft_type_ratings`, que es un join, no un contains.
+- Mismo tratamiento para `getPublicProfiles()`, que hoy solo filtra
+  `verification_status`.
+
+**Auditoría de `.select()` sin cota — HECHA (2026-07-28, Fase 5.6).**
+Resultado: **8 consultas** sin `.eq()`/`.in()`/`.range()` que las acote, todas
+del patrón `getAll()` y todas sobre tablas que crecen sin techo. Ninguna está
+rota hoy (volumen de desarrollo), todas lo estarán con volumen real:
+
+| Repositorio | Método | Tabla |
+|---|---|---|
+| `technicianRepositoryV2.ts:186` | `getAll()` | `technician_profiles` |
+| `companyRepositoryV2.ts:32` | `getAll()` | `companies` |
+| `offerRepository.ts:74` | `getAll()` | `offers` |
+| `offerRepository.ts:267` | (conteo/ids) | `offers` |
+| `offerRequestRepository.ts:15` | `getAll()` | `offer_requests` |
+| `offerApplicationRepository.ts:14` | `getAll()` | `offer_applications` |
+| `documentRepositoryV2.ts:10` | `getAll()` | `documents` |
+| `chatRepository.ts:55` | `getAll()` | `chat_rooms` |
+
+Alimentan sobre todo pantallas de admin (dashboard y listados). Tratamiento
+por la norma de completitud: paginación explícita o aserción. Como son
+listados navegables y no catálogos, la paginación con aviso es suficiente —
+no necesitan la aserción dura que sí exige el catálogo de ratings.
+**No se arreglan en la 5.6**: la 5.6 aplica solo la mitigación diferenciada
+acordada para los tres casos críticos. Esto queda como tarea de backlog con
+su alcance ya medido.
+
+**Mitigación DIFERENCIADA por caso (decisión del usuario, 2026-07-28). No
+aplicar la misma a los tres.**
+
+- **Catálogo (`fetchActiveAircraftTypeRatings`)**: un aviso NO basta — un
+  catálogo parcial es inservible, porque produce ratings que nadie puede
+  seleccionar. Necesita **paginación completa**: traer páginas hasta agotar,
+  no una ventana. Más una **aserción dura**: comparar lo traído contra un
+  `count=exact` y **fallar ruidosamente** si no coinciden, en vez de poblar la
+  caché con un catálogo incompleto. El fallo tiene que ocurrir **antes** de
+  escribir la caché TTL: si no, el recorte se propaga durante toda la vida útil
+  de la caché.
+- **`search()` y `getPublicProfiles()`**: aquí sí vale `.range()` +
+  `count=exact` + aviso como mitigación, pero es solo mitigación. El arreglo de
+  fondo es llevar los filtros al servidor (tarea de backlog con alcance, abajo).
+
+### NORMA DE PROYECTO — `tsc` verde NO cubre las consultas por string
+
+**Toda retirada de tabla o de columna lleva un grep por el nombre LITERAL,
+además de la comprobación de tipos.** `tsc` no ve dentro de
+`supabase.from('nombre_tabla')` ni de `.select('col_a, col_b')`: son strings.
+Una consulta a una tabla que ya no existe **compila, pasa los tests y revienta
+en runtime**.
+
+Origen (2026-07-28, sub-fase de experiencia): con `tsc` ya en 0 errores y los
+114 tests en verde, un grep por `technician_aircraft_experience` encontró que
+`app/technician/profile.tsx` **seguía consultando la tabla por nombre**. Habría
+crasheado la pantalla de perfil del técnico en cuanto se aplicara la 031. La
+red de tipos, que en la Fase 5.4 funcionó de maravilla para el blindaje de
+sesión, aquí no podía ver nada.
+
+Checklist para cualquier DROP de tabla/columna:
+1. `tsc` en 0 (tipos).
+2. **grep por el nombre literal de la tabla y de cada columna** sobre
+   `app/`, `src/`, `scripts/` (strings).
+3. Barrido entrante en los cuatro catálogos + `pg_indexes` (base de datos).
+Las tres son redes distintas y ninguna cubre lo que cubren las otras.
+
+### NORMA DE PROYECTO — completitud de las consultas
+
+**Todo `.select()` sobre una tabla que pueda crecer lleva paginación explícita
+o aserción de completitud.** Sin excepciones y sin juicio de volumen: *"en dev
+caben"* NO es criterio — el tope de 1000 de PostgREST no avisa, y el volumen de
+desarrollo no predice el de producción. Si una consulta puede devolver más
+filas de las que trae, o pagina hasta agotar, o compara contra `count=exact` y
+falla. Un tercer camino (traer una ventana y seguir como si fuera el total) es
+el bug que esta norma existe para impedir.
+
+### Sub-fase de experiencia — APLICADA (2026-07-28). 031 y 032 en verde.
+
+**Principio de producto**: la cualificación puntúa, la experiencia informa y
+filtra. El componente `experience` del score ya no existe.
+
+**Pesos nuevos**: `QUALIFICATION` 15/45/20/15/5 = **100** (los 10 liberados
+íntegros a habilitación, no repartidos con licencia: repartir habría reforzado
+la señal débil de "tener la licencia sin el rating"). `NO_REQUIREMENTS`
+30/30/15 = **75**, techo sin cambios.
+
+**Bandas medidas tras el cambio**: 100 Excellent · 59 Partial · 39 Weak ·
+79 Strong (broad-only) · 81 T2-preferred · 68 amplia-solo-categoría ·
+75 sin requisitos. Escalera 100/79/59/39 y fronteras de label intactas.
+
+**031** — `DROP TABLE technician_aircraft_experience` + `DROP TYPE
+experience_unit`. La corrección del enum vino del usuario: la versión previa
+lo daba por "tipo compartido", y era falso — verificado por dirección entrante
+(pg_attribute + pg_proc + pg_type.typbasetype) que su único uso era la columna
+`unit` de esa tabla. Dump previo:
+`supabase/dumps/technician_aircraft_experience_2026-07-28.sql` (estructura +
+enum + RLS; 0 filas, nunca las hubo).
+Verificación independiente: tabla `null`, tipo `0`, habilitaciones **5/5 con
+rating**, catálogo **606/606**.
+
+**032** — `technician_profiles.years_experience` + la vista.
+Verificación independiente: `is_nullable = YES`, `column_default = NULL`
+(sin DEFAULT, deliberado), CHECK de rango presente, la vista expone la
+columna, **5 gates `offer_accepted_between`** y la cláusula de la 024
+literalmente intacta. **Comprobación funcional, no vacua**: hay un perfil
+`deleted` real en la base — 5 activos visibles, **1 deleted excluido**.
+
+**Tropiezo anotado**: el primer intento de la 032 falló con *"cannot change
+name of view column"*. `CREATE OR REPLACE VIEW` solo permite AÑADIR columnas
+al final, nunca insertarlas en medio. Rollback atómico confirmado (nada
+aplicado) y `years_experience` movida al final del SELECT — el orden es
+irrelevante porque `PUBLIC_SELECT` selecciona por nombre, y un DROP+CREATE
+habría perdido los GRANT de la vista.
+
+Código: `npm run ts` **0** · `test:matching` **114/114** ·
+`validate:aircraft-ratings` PASS (606) · `expo export` **51 rutas**.
+
+### Fase 5.6 — HECHA (2026-07-28). Mitigación diferenciada del tope de 1000.
+
+**Catálogo (`fetchActiveAircraftTypeRatings`) — paginación completa + aserción
+dura.** Pagina de 500 en 500 hasta agotar (cota de seguridad de 100 páginas
+contra bucles infinitos por un bug del servidor, no como límite funcional),
+compara lo traído contra `count: 'exact'` y **lanza** si no coinciden. El throw
+ocurre ANTES de devolver, así que `createAircraftTypeRatingsCache` —que solo
+escribe estado en la promesa resuelta— nunca llega a poblarse con un catálogo
+parcial: o conserva el completo anterior o queda en `'error'`.
+
+Detalle que no es cosmético: se añadió `.order('id')` como desempate final. Sin
+un orden TOTAL, dos filas con la misma tupla de ordenación pueden repetirse o
+saltarse entre páginas — el fallo clásico de paginar por offset.
+
+Verificado contra la BD real, no solo compilado: **606 traídas = 606 de
+`count_exact`, 606 ids únicos**, y repetido con páginas de 50 para forzar 13
+vueltas — mismo total, sin duplicados ni saltos.
+
+**`search()` y `getPublicProfiles()` — `.range()` + `count: 'exact'` + aviso.**
+`warnIfTruncated()` emite un `console.warn` explícito cuando el total supera lo
+traído, nombrando la tarea de backlog. Aquí NO se lanza, a propósito: dejar la
+búsqueda inutilizable sería peor que devolver los primeros N avisando. Esa es
+exactamente la diferencia con el catálogo — un catálogo parcial es inservible,
+una búsqueda parcial sigue sirviendo. Es mitigación, no arreglo: el arreglo es
+llevar los 8 filtros al servidor.
+
+**Tercera red aplicada**: auditoría completa de `.select()` sin cota (tabla de
+8 hallazgos arriba), inventariada con alcance y explícitamente NO arreglada en
+esta sub-fase.
+
+### Fase 5.7 — hallazgos de validación (2026-07-28)
+
+**`Alert` de react-native-web es una función vacía** (`class Alert { static alert() {} }`).
+34 llamadas en 15 ficheros: 4 confirmaciones destructivas ROTAS y 30 mensajes
+de éxito/error TRAGADOS en web. Un fallo de red se veía igual que un éxito.
+Sustituido por `src/utils/platformAlert.ts` (`notify` / `confirmAction`).
+`confirmAction` devuelve promesa a propósito: el trabajo va DESPUÉS del await,
+no en un `onPress` que en web nunca se ejecuta. En Android, `cancelable` +
+`onDismiss` cierran el caso del botón atrás (antes: promesa colgada para
+siempre), con doble-resolución protegida.
+
+**Guards de la 5.4 revisados, los 12**: 9 son acciones de usuario y ahora
+hablan; 3 son guards de carga y siguen mudos a propósito (no los dispara el
+usuario, se reevalúan en cada render). Regla: *una acción que no puede
+completarse tiene que decirlo; un guard de carga no*.
+
+**Reactivación `withdrawn → pending` (migración 033, APLICADA)**. Retirarse no
+veta: era efecto colateral de H6, no decisión. Se reactiva la MISMA fila
+(UNIQUE intacto, historial conservado). `rejected` sigue terminal.
+- **La regla vive en DOS sitios** y hubo que alinearlos explícitamente: la
+  función de BD era genérica para las dos tablas, así que relajarla habilitaba
+  también reactivar ofertas directas. Ahora **ambos lados reciben el tipo de
+  relación**: reactivación SOLO en `offer_applications`, porque su UNIQUE es
+  TOTAL y reactivar es la única vía; `offer_requests` tiene único PARCIAL y su
+  camino es crear fila nueva — reactivar allí sería inalcanzable y chocaría con
+  `uq_offer_requests_one_active`.
+- La firma antigua de 2 argumentos se ELIMINA (`CREATE OR REPLACE` con distinta
+  aridad crea sobrecarga, no sustituye) para que no quede la regla vieja
+  accesible por otro camino.
+- `identity_revealed`/`documents_unlocked` no hay que tocarlos: el trigger ya
+  los pone a false en toda transición que no sea a `accepted`. Verificado
+  contra los datos.
+
+**Fallo silencioso al enviar oferta — causa real**: `/company/offers/[id]` YA
+gateaba bien (sustituye el botón por "View application"). El agujero estaba en
+**`/company/search.tsx`**, que solo miraba ofertas directas y no aplicaciones:
+mostraba "Send offer" a un técnico que ya había aplicado, el repositorio lo
+rechazaba y el Alert no-op ocultaba el motivo. Corregido — la tarjeta ahora
+considera **ambos caminos** y etiqueta según cuál.
+
+**Backlog añadido**: `application_reapplied` (con el hueco de notificaciones,
+se hace entero o no se hace) · `<AlertHost>` para web (provider en layout raíz
++ registro de módulo; Modal para confirmar y toast para `notify` — los dos
+caminos web funcionan hoy con `window.confirm`/`window.alert`, falta coherencia
+visual).
+
+#### ⚠ Backlog — pieza (iii): la regla CRUZADA no tiene respaldo en BD
+**Estaba aprobada y la aplacé por mi cuenta al cerrar la 5.7; el usuario lo
+aceptó pero dejó dicho que las decisiones de alcance se preguntan antes.**
+
+El riesgo real, a la luz del propio hallazgo de esa sub-fase:
+
+- Las reglas **intra-tabla** SÍ tienen respaldo en la base de datos:
+  `offer_applications_technician_id_offer_id_key` (UNIQUE total) y
+  `uq_offer_requests_one_active` (único parcial sobre estados activos).
+  Una escritura por cualquier vía las respeta.
+- La regla **CRUZADA** —no puede existir a la vez una aplicación activa y una
+  oferta directa activa para el mismo par (técnico, oferta)— vive
+  **exclusivamente en código de aplicación**: `evaluateDirectOfferConflict` /
+  `evaluateApplicationConflict`, invocadas desde los repositorios.
+
+Consecuencia: **cualquier escritura que no pase por los repositorios puede
+crear el duplicado**. Un RPC de admin, un script de mantenimiento, una
+corrección por SQL directo, o una pantalla futura que llame a Supabase sin
+pasar por el repositorio. Hoy no hay duplicados (verificado: 0 pares), pero eso
+lo garantiza la disciplina, no el motor.
+
+Alcance de la tarea: trigger `BEFORE INSERT` (y `BEFORE UPDATE` a estado
+activo) en ambas tablas que consulte la contraria, siguiendo el precedente que
+ya existe (`assert_offer_relation_transition` + `handle_offer_relation_status_transition`).
+Migración propia con checkpoint.
+
+#### NORMA DE PROYECTO — una regla en dos sitios: barrera o spec declarada
+Descubierto en la 5.7: `assertOfferRelationTransition` (TS) **no tiene ni un
+call site en producción** — solo tests. Quien enforcea es el trigger de BD. Es
+decir, el TS puede desviarse de la base de datos y **ningún test lo notaría**,
+porque los tests comprueban el espejo contra sí mismo.
+
+Cuando una regla viva en ambos lados, exactamente una de estas dos:
+1. **El TS se cablea de verdad** (los repositorios lo invocan antes de
+   escribir), y entonces es una barrera real y su test tiene sentido; o
+2. **Se marca explícitamente como spec-only**, con la advertencia cruzada en
+   ambos ficheros ("si cambias una, cambia la otra") — ya puesta en
+   `offerRelationStateMachine.ts` y en la migración 033.
+
+Lo que no vale es la tercera situación, que es la que teníamos: un espejo que
+parece una barrera, con tests que dan confianza sobre algo que no se ejecuta.
+
+**Propuesta pendiente de decisión — `validate:state-machine`.** Los tests
+actuales de transiciones ejercitan el espejo TS, así que no pueden detectar la
+deriva. Recomendación: NO moverlos a la BD (perderían el ser offline y rápidos),
+sino **añadir un script de validación en vivo** siguiendo el patrón que el
+proyecto ya tiene con `validate:aircraft-ratings` — offline para lo puro, en
+vivo para los invariantes de base de datos.
+
+La forma fuerte: exportar `ALLOWED_TRANSITIONS` como **única declaración**, y
+que el script recorra la matriz completa (2 tipos × 5 estados × 5 estados = 50
+combinaciones) llamando a `assert_offer_relation_transition` real y afirmando
+que la BD coincide con la declaración en las 50. Eso convierte "dos
+implementaciones que pueden divergir" en "una declaración + un enforcer, con
+una prueba de que coinciden", y la deriva se vuelve imposible de introducir sin
+que el script se ponga rojo.
+
+---
+
+# FASE 5 — COMPLETADA (2026-07-28)
+
+Validada por el usuario en **web, iOS y Android**, incluido el descarte con
+botón atrás en Android.
+
+**Migraciones aplicadas en esta fase**: 028 (FKs entrantes a `aircraft_types`
++ índice duplicado) · 029 (drop `aircraft_type_code` + NOT NULL + drop
+`needs_review`) · 030 (drop `aircraft_types`) · 031 (drop
+`technician_aircraft_experience` + enum `experience_unit`) · 032
+(`years_experience` + vista) · 033 (reactivación `withdrawn → pending`, solo
+aplicaciones).
+
+**Verificación final**: `npm run ts` 0 errores · `npm run test:matching`
+**120/120** · `npm run validate:aircraft-ratings` PASS (606) ·
+`npm run validate:state-machine` PASS (40/40) · `npx expo export --platform web`
+51 rutas.
+
+**El catálogo pre-Part-66 ha desaparecido por completo.** El único catálogo es
+`aircraft_type_ratings` (606 endorsements EASA).
+
+## `validate:state-machine` — el validador está validado
+
+Recorre las **40 combinaciones** (2 tipos × 5 estados × 5 estados, menos las de
+identidad) llamando a la función REAL de Postgres y comparándola con
+`ALLOWED_TRANSITIONS`, que pasa a ser la **única declaración**.
+
+Comprobado que detecta la deriva de verdad, no solo que pasa: inyectando una
+divergencia deliberada (permitir en TS la reactivación de ofertas directas), el
+script falló nombrando la combinación exacta, citando el mensaje de la propia
+BD y apuntando al fichero y la migración a alinear. Revertido después.
+
+Lleva además una guarda contra el falso verde: si la matriz declarada cambia de
+tamaño, falla en vez de reportar "0 desajustes" sobre una matriz vacía.
+
+## INVENTARIO — pares spec-TS / enforcer-BD con riesgo de deriva
+
+Solo inventario, sin implementar. Ordenado por riesgo.
+
+| # | Regla | Spec (TS) | Enforcer (BD) | Riesgo |
+|---|---|---|---|---|
+| 1 | **Gate de privacidad de identidad** | `privacyV2.ts` (`getTechnicianViewForCompany`) | `technician_public_view` + `offer_accepted_between()` | **MUY ALTO** |
+| 2 | **Permisos por rol de empresa** | `companyPermissionsV2.ts` (6 funciones) | `can_act_for_company()`, `my_company_role()`, + lista inline en chat | **ALTO** |
+| 3 | **Relación cruzada duplicada** | `evaluateDirectOfferConflict` / `evaluateApplicationConflict` | **NINGUNO** | **ALTO** |
+| 4 | Visibilidad de oferta al técnico | `isOfferOpenForTechnicians()` | política SELECT de `offers` (`status='published' AND visible`) | MEDIO |
+| 5 | Orden de fechas emisión/caducidad | `isValidDateOrder()` | **NINGUNO** (no hay CHECK) | MEDIO-BAJO |
+| 6 | Borrado de licencias con dependientes | `planLicenseRemoval()` | `fk_technician_habilitations_license` | BAJO |
+| 7 | Campos server-owned | los repos no los escriben | `force_offer_relation_defaults()` + migración 009 | BAJO |
+| 8 | Transiciones de estado | `ALLOWED_TRANSITIONS` | `assert_offer_relation_transition()` | **CUBIERTO** (validate:state-machine) |
+
+**#1 — COMPROBADO CAMPO POR CAMPO (2026-07-28). COINCIDEN, no hay fuga.**
+Y en el proceso **corrijo mi propia evaluación**: lo había clasificado como
+"MUY ALTO — filtra datos personales en silencio". **Eso era exagerado**, porque
+lo dije sin trazar de dónde salen los datos.
+
+Contraste de las 19 columnas de `technician_public_view` contra lo que
+`getSafeTechnicianPreview()` excluye:
+
+| Campo | SQL | TS (preview) | ¿Coincide? |
+|---|---|---|---|
+| `first_name` | GATED (`CASE WHEN offer_accepted_between`) | excluido | ✅ |
+| `last_name` | GATED | excluido | ✅ |
+| `email` | GATED | excluido | ✅ |
+| `phone` | GATED | excluido | ✅ |
+| `social_links` | GATED | excluido | ✅ |
+| `birth_date` | **no existe como columna** (solo `compute_age`) | excluido, expone `age` derivada | ✅ (SQL más estricto) |
+| documentos | no están en la vista | excluidos | ✅ |
+| `profile_completeness` | público | no modelado en `SafeTechnicianPreview` | asimetría menor, no es identidad |
+| las 13 restantes | públicas | incluidas | ✅ |
+
+**Los 5 campos de identidad coinciden exactamente.**
+
+**Por qué el riesgo es MENOR de lo que escribí**: RLS en `technician_profiles`
+(la tabla privada) solo permite SELECT a `is_admin()` o al propio técnico
+(`user_id = auth.uid()`). **Una empresa no puede leer la tabla privada en
+absoluto.** Por eso `getWithRelations()` para un usuario de empresa siempre cae
+al fallback `getPublicRow()` → la vista → el gate SQL. Es decir: **la base de
+datos es el enforcer en TODOS los caminos**, y el gate de TypeScript
+(`canRevealIdentity`) es una decisión de UI sobre datos que ya vienen filtrados.
+
+Consecuencia: una divergencia del TS **no puede filtrar identidad** — fallaría
+"hacia el lado cerrado" (una petición de más que devuelve nulls, o una empresa
+viendo menos de lo que le corresponde). Eso es un bug funcional, no una fuga.
+Riesgo real: **MEDIO**, no MUY ALTO. Reclasificado en el backlog.
+
+El validador sigue mereciendo la pena, pero como **guarda de regresión sobre la
+combinación RLS + vista** (que es lo que de verdad protege), no porque hoy haya
+dos implementaciones compitiendo.
+
+**#2 — coinciden HOY, verificado uno a uno.** `can_act_for_company()` es
+literalmente `role IN ('admin','recruiter')`, así que las tres funciones
+`canManageOffers`/`canSendDirectOffers`/`canReviewApplications` cuadran con las
+políticas de `offers`/`offer_requests`/`offer_applications`; y
+`canManageCompanySettings`/`canManageCompanyMembers` (solo admin) cuadran con
+`my_company_role(...) = 'admin'`. Coinciden **por disciplina de mantenimiento,
+no por construcción**. Matiz añadido: `canSendChatMessages` está expresada en
+RLS como **lista de roles inline** (`mem.role IN (...)`) en vez de vía
+`can_act_for_company()` — o sea, el mismo concepto tiene dos expresiones dentro
+de la propia base de datos. Cambiar el helper no arrastraría el chat.
+
+**#3** — ver la entrada de la pieza (iii) más arriba: las reglas intra-tabla
+tienen respaldo en BD, la cruzada no.
+
+**#5** — categoría distinta: no es divergencia entre dos implementaciones, es
+**una spec sin enforcer**. Nada en la base impide guardar `expires_at`
+anterior a `issued_at` por una vía que no sea el formulario.
+
+Patrón aplicable a #1 y #2: el mismo de `validate:state-machine` — una
+declaración única en TS y un script que la contrasta contra la BD en vivo. Para
+#1 sería comprobar, con un par (empresa, técnico) sin aceptación y otro con
+ella, que la vista devuelve exactamente los campos que el TS promete.
+
+### Backlog post-misión — CONSOLIDADO Y ORDENADO POR PRIORIDAD
+
+**P0 — riesgo de datos**
+1. **Tope de 1000 filas de PostgREST** (Fase 5.6 dejó la mitigación; falta el
+   fondo). El catálogo ya está protegido con paginación + aserción; pendientes
+   `search()` y `getPublicProfiles()` — hoy solo avisan.
+2. **Pieza (iii): trigger para la relación cruzada duplicada.** Cualquier
+   escritura fuera de los repositorios puede crear el duplicado. Es el único
+   invariante de relación SIN respaldo en base de datos.
+
+**P1 — coherencia estructural**
+3. `search()`: los 8 filtros a server-side (alcance detallado arriba; los
+   difíciles son `licenseCodes` y `aircraftFamilyKeys`, probablemente un RPC).
+4. **`validate:privacy-gate`** — guarda de regresión sobre la combinación
+   RLS + vista (bajado de P0 tras comprobar que hoy coinciden y que la BD es el
+   enforcer en todos los caminos). Mismo patrón que `validate:state-machine`:
+   declaración única en TS de qué campos son de identidad, y el script
+   comprueba contra la vista, con sesión de empresa CON y SIN aceptación, que
+   los 5 vienen nulos en el primer caso y poblados en el segundo.
+5. Verificar permisos TS↔RLS (#2 del inventario).
+6. **Unificar la expresión de roles del chat en la propia BD.**
+   `cm_msg_insert_company` lista los roles **inline**
+   (`mem.role IN ('admin','recruiter')`) en vez de llamar a
+   `can_act_for_company()`, que es exactamente esa misma condición. El mismo
+   concepto tiene **dos expresiones dentro de la base de datos**: cambiar el
+   helper NO arrastraría el chat, que se quedaría con la regla vieja en
+   silencio. Es la misma clase de divergencia que la 033 vino a cerrar entre TS
+   y BD, pero esta vez enteramente intra-BD.
+7. Auditoría de los 8 `getAll()` sin cota (tabla arriba).
+
+**P2 — producto y deuda conocida**
+7. **V2 UI migration — retirar `v2CompatAdapters`** (varias pantallas grandes,
+   tamaño comparable a la Fase 3b).
+8. Notificaciones, incluido `application_reapplied` (entero o nada).
+9. `<AlertHost>` para web: Modal para confirmar y toast para `notify`
+   (funcionan ya con `window.confirm`/`window.alert`; falta coherencia visual).
+10. Arnés de tests CLI local de Supabase (`supabase start`).
+
+### Deduplicaciones cerradas antes de la auditoría (2026-07-28)
+
+**Migración 034 — APLICADA.** `cm_msg_insert_company` delega en
+`can_act_for_company()` en vez de listar los roles inline.
+
+Equivalencia **probada, no argumentada**: la lista inline era **redundante**,
+porque el mismo `WHERE` del `EXISTS` ya llamaba a
+`can_act_for_company(cr.company_id)`, que es literalmente
+`role IN ('admin','recruiter')` para ese usuario en esa empresa. Quitarla no
+puede cambiar el resultado (admin/recruiter permitido antes y ahora; viewer y
+no-miembro denegados antes y ahora). El único efecto es que `mem` deja de estar
+filtrado por rol, y `mem` solo se usa para `sender_company_member_id = mem.id`
+— seguro porque `company_members` tiene UNIQUE (company_id, user_id) **y**
+UNIQUE (user_id), verificado en `pg_constraint`: un usuario tiene como máximo
+UNA fila de membresía. Post-condición: la política ya no contiene lista de
+roles, sigue llamando al helper (sin él sería MÁS permisiva) y conserva las
+cuatro condiciones restantes. Verificado tras aplicar.
+
+**Barrido de otras políticas RLS con conceptos inline** — un hallazgo más, NO
+corregido por estar fuera del alcance aprobado:
+- `user_consents: admin select` usa
+  `EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')`,
+  que es exactamente lo que hace el helper `is_admin()`. Equivalente hoy
+  (`profiles_select_own` permite a cada usuario leer su propia fila), pero es
+  la misma clase de duplicación. **Pendiente de decisión.**
+- Las otras 4 políticas que mencionan `company_member_role`
+  (`companies_update_own`, `cm_insert/update/delete_admin`) usan
+  `my_company_role(...) = 'admin'`: llaman al helper y comparan. No es
+  duplicación, es parametrización. Correctas.
+
+**`habilitationCoversFamilyKey` — implementación única.** Estaba duplicada
+literalmente (mismo cuerpo, 168 caracteres) en `offerMatchExplain.ts` y
+`technicianRepositoryV2.ts`. Extraída a `constants/aircraftTypeRatings.ts`, que
+es donde por contrato viven las funciones puras sobre el catálogo. Importan las
+dos. Importa que sean una sola: el filtro amplio del scorer y el de búsqueda
+del repositorio deben responder EXACTAMENTE lo mismo, o una empresa vería en la
+búsqueda técnicos que el matching luego puntúa a cero.
+
+**Migración 035 — APLICADA.** `user_consents: admin select` pasa a usar
+`is_admin()` en vez de `EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid()
+AND role = 'admin')`.
+
+**El motivo no es la duplicación, es un acoplamiento oculto entre políticas**
+(lo señaló el usuario): `is_admin()` es `SECURITY DEFINER` y evalúa `profiles`
+saltándose su RLS; la versión inline se ejecutaba con los permisos del
+llamante y por tanto **dependía de que existiera `profiles_select_own`**.
+Endurecer la RLS de `profiles` habría denegado admins aquí, **en silencio**, por
+un cambio en otra tabla sin relación aparente.
+
+Equivalencia, con precisión (a diferencia de la 034, aquí es CONDICIONAL y hay
+que decirlo tal cual): **equivalente hoy** —`profiles_select_own` existe, así
+que ambas formas responden igual en los tres casos posibles—, y **divergente
+mañana a propósito**: si se endurece la RLS de `profiles`, la nueva versión
+sigue reconociendo al admin y la vieja no. Eso es "más permisivo" solo en
+apariencia; en realidad es "deja de romperse por un cambio no relacionado".
+
+Barrido asociado: solo esa política consultaba `profiles` inline.
+`profiles_select_same_company` consulta `company_members`, pero para responder
+una pregunta distinta ("¿este perfil es miembro de mi empresa?"), no para
+reimplementar un helper — correcta, no se toca. Post-condición de la 035:
+**cero** políticas en todo el esquema consultan `profiles` inline. Verificado
+tras aplicar, junto con **cero** listas de roles inline (herencia de la 034).
+
+### NORMA DE PROYECTO — un detector no vale hasta que encuentra algo que sabes que está
+
+**Antes de fiarte del "no he encontrado nada" de cualquier herramienta de
+detección —`grep`, `ts-prune`, una consulta de catálogo, un script ad-hoc—,
+comprueba que SÍ encuentra un caso que sabes que existe.** Si no tienes un
+positivo conocido, fabrícalo: inyecta el defecto a propósito, confirma que la
+herramienta lo caza, y revierte.
+
+Origen (2026-07-28): el primer script de barrido de duplicados dijo "cero" y
+era **falso**. Su extractor se rompía con firmas multilínea que contienen un
+tipo objeto — en `h: { aircraftTypeRatingId?: string }` la llave abre y cierra
+dentro de la firma, así que daba el cuerpo por terminado ahí (29 caracteres,
+bajo el umbral, descartado). Solo se detectó porque el resultado contradecía un
+duplicado ya conocido. Sin ese conocimiento previo, se habría reportado "no hay
+duplicados" con una herramienta ciega.
+
+Es la MISMA regla que se aplicó a `validate:state-machine` inyectándole una
+deriva deliberada para comprobar que se ponía en rojo. Generalizada: un
+detector sin positivo de control no aporta evidencia, aporta una sensación.
+
+Complementa a la regla ya existente ("un resultado vacío obliga a verificar la
+consulta antes que la conclusión"): aquella dice *desconfía del vacío*, ésta
+dice *cómo desconfiar en concreto*.
+
+### PARA EL PROMPT DE AUDITORÍA — cómo probar el gate de privacidad
+
+El análisis estático dice que TS y SQL coinciden y que la BD es el enforcer.
+**Eso no sustituye a la prueba en vivo**: hay que ejercitarlo con **sesiones
+reales, desde los dos lados**.
+
+**Caso 1 — empresa SIN oferta aceptada con ese técnico.** No debe ver NINGÚN
+campo de identidad: ni en la UI (búsqueda, mapa, lista y detalle de
+aplicaciones, detalle de oferta con técnicos rankeados), **ni en la respuesta
+de red**.
+
+> ⚠ **Falso positivo a no reportar**: la respuesta de red **SÍ contendrá las
+> claves** `first_name`, `last_name`, `email`, `phone`, `social_links` — con
+> valor **`null`**. Es correcto y es el diseño: `PUBLIC_SELECT` las pide y la
+> vista las anula con `CASE WHEN`. Lo que hay que comprobar es que **el VALOR
+> es null**, no que la clave no aparezca. Si aparece un valor real sin
+> aceptación, ESO sí es la fuga.
+
+**Caso 2 — empresa CON oferta aceptada (por cualquiera de los dos caminos:
+oferta directa aceptada o aplicación aceptada).** Debe ver los 5 campos
+poblados, y además solo los documentos con `status = 'verified'`.
+
+**Caso 3 — el técnico sobre sí mismo.** Debe verse todo, sin depender de
+ninguna aceptación.
+
+**Caso 4 — cruzado.** Empresa A aceptada con el técnico; empresa B no. Con
+sesión de B, los 5 campos deben venir nulos. `offer_accepted_between(cid, tid)`
+está parametrizada por empresa, así que esto verifica que la aceptación no se
+filtra entre empresas.
+
+Comprobar también que **una empresa no puede leer `technician_profiles`
+directamente** (la tabla privada): RLS solo la permite a `is_admin()` y al
+propio técnico. Ese bloqueo es lo que hace que la BD sea el enforcer real en
+todos los caminos, así que si se cayera, el gate de TypeScript pasaría a ser la
+única barrera y el riesgo del inventario #1 subiría de golpe.
+
+**P3 — regulatorio y retención**
+11. Verificar `canHold()` contra el texto real de AMC 66.A.45 antes de
+    cablearlo a nada (duda B2 sin motor, sigue abierta).
+12. Retención RGPD más profunda en borrado de cuenta.
+
 ### Backlog post-misión (borrador — se consolida formalmente en la 5.5)
 - **V2 UI migration — retire v2CompatAdapters** (añadido 2026-07-27,
   origen: checkpoint Fase 5.1, decisión sobre el hallazgo `c`/`f` de
@@ -1321,3 +2345,126 @@ relacionado. Parado en el checkpoint, esperando esa decisión.
 - Verificar `canHold()` (Fase 4) contra el texto real de AMC 66.A.45 antes
   de cablearlo a ningún formulario/matching — la duda regulatoria abierta
   sobre B2 sin motor sigue sin resolver.
+
+---
+
+# TRIAJE POST-AUDITORÍA (2026-07-29)
+
+Sobre `docs/FINAL_AUDIT_REPORT.md`. Cuatro tandas acordadas con el usuario.
+
+## Tanda 1 — HECHA y verificada en vivo con sesiones reales
+
+- **B2 (parcial) — edad fabricada.** `publicRowToPrivateCompat` rellenaba
+  `birthDate: '1970-01-01'` y `getSafeTechnicianPreview` recalculaba desde ahí:
+  **todas** las empresas veían 56 años en todos los técnicos, descartando la
+  `age` real que la vista ya traía. Corregido llevando la edad derivada en
+  servidor (`TechnicianProfile.age`) y haciendo que `calculateAge()` devuelva
+  `undefined` en vez de inventar. Verificado en vivo: 27 y 29 años reales.
+  La RETIRADA de la edad va aparte (ver Tanda 2 / migración 040).
+- **I1 — family keys crudas en UI.** Las 4 pantallas mostraban
+  `Airbus Helicopters::Eurocopter AS 350`. Nuevo dueño único
+  `resolveFamilyKeyLabels()` en `aircraftTypeRatingViews.ts`. Contradecía la
+  decisión registrada con la 023 ("la key no se muestra nunca al usuario final").
+- **I3 — "Type ratings" sin motor.** `company/offers/[id].tsx` y
+  `AdminTechnicianCard` usaban `habilitationAircraftCodes()` (familia suelta)
+  bajo una etiqueta que promete célula+motor. Migrados a
+  `resolveTypeRatingLabels()`. En admin las etiquetas se resuelven en
+  `useAdminDashboard`, donde ya vive el catálogo — sin segunda carga.
+- **B5 (UI) — lápidas moderables.** La cuenta borrada aparecía como "Verified"
+  con botones activos. Ahora muestra badge "Deleted account", nota explicativa
+  y CERO acciones. Hizo falta añadir `'deleted'` a `UserStatus` (TS), que
+  faltaba pese a existir en el enum SQL y en los datos.
+
+## Migraciones aplicadas en este triaje
+
+- **037** — `admin_update_technician_verification` rechaza cuentas `deleted`.
+  Antes, "Set pending" sobre una lápida la dejaba en `pending_verification`, que
+  la 024 admite: el técnico borrado REAPARECÍA en búsqueda, mapa y ranking.
+  Verificado: misma firma (1 sola, sin sobrecarga), y prueba funcional con
+  sesión de admin simulada — `deleted` bloqueado, `rejected→suspended→verified`
+  sigue permitido.
+- **038** — las dos políticas de admin sobre `storage.objects` usan
+  `is_admin()`. La post-condición de la 035 ("cero políticas consultan
+  `profiles` inline") se había verificado sólo sobre el esquema `public`;
+  `storage` quedó fuera. Rehecha en TODOS los esquemas, con positivo de control.
+- **039** — la lápida se produce por trigger (`on_auth_user_deleted`,
+  **AFTER DELETE** sobre `auth.users`), sea cual sea la vía de borrado.
+
+### 039 — por qué AFTER y no BEFORE
+La primera versión usaba BEFORE + una bandera transaccional
+(`app.deleting_account`) para que `guard_company_last_admin` no abortara el
+borrado del único admin. El usuario la rechazó: es una dependencia oculta y un
+segundo modo del guard — el patrón que esta misión lleva eliminando. Con AFTER,
+la condición es un HECHO verificable ("el usuario de auth ya no existe").
+
+**Orden comprobado empíricamente antes de aplicar**, no por documentación:
+sonda en transacción con rollback que crea un usuario desechable como único
+admin, instala un AFTER DELETE y borra. Resultado:
+`auth_row_presente_en_trigger=false`, `guard_ve_auth_user=AUSENTE -> deja
+pasar`, `delete_company_members=OK sin bloqueo`. Rollback verificado.
+
+**Reparto (no duplicación)**: el trigger es el único dueño de la anonimización
+EN BD; `delete-account` (v4 desplegada, `verify_jwt` conservado) se queda con
+autenticar al llamante, guard de último admin, Storage y `deleteUser()`. Cero
+`.update(`/`.delete()` restantes en la función.
+
+**Fuera del trigger a propósito**: el guard de último admin (regla de producto,
+no invariante) y los ficheros de Storage (SQL no puede llamar a esa API). Un
+borrado por el panel deja objetos huérfanos en el bucket: **aceptado y
+documentado**; el script de detección va al backlog.
+
+`validate:auth-hooks` (nuevo) comprueba que los DOS triggers sobre `auth.users`
+siguen instalados — viven en un esquema que no controlamos y un upgrade de Auth
+los borraría en silencio, rompiendo altas y borrados a la vez.
+
+## ⚠ Etiqueta corregida — `user_consents` NO es un audit trail inmutable
+La migración 015 lo afirma y es falso: `user_consents_user_id_fkey` es
+`ON DELETE CASCADE`, así que borrar la cuenta DESTRUYE el consentimiento. Es
+clase 4 de la taxonomía (etiqueta mentirosa). Como no se editan migraciones
+aplicadas, la corrección vive en un `COMMENT ON TABLE` (039) y aquí. Qué hacer
+al respecto se decide con la política de retención RGPD (junto a ofertas
+archivadas y perfiles eliminados), no antes.
+
+## 040 — la edad fuera del contrato público (APLICADA 2026-07-29)
+
+Decisión del usuario: la edad es característica protegida en normativa laboral
+europea; mostrarla al empleador durante el cribado es riesgo de discriminación
+y es incoherente con anonimizar el nombre justo para reducir sesgo. No aporta
+al cribado — licencias, type ratings y años de experiencia cubren lo relevante.
+Se retira DEL TODO, no se gatea tras la aceptación.
+
+Argumento que cerró la decisión: `app/privacy-policy.tsx:46` ya prometía que la
+fecha de nacimiento se usa *"for age verification; not shared"*. Era **falso**.
+Ahora es cierto.
+
+**Orden expand-contract respetado**: el código dejó de leer `age` ANTES de la
+migración (`PUBLIC_SELECT`, ambos mappers, `SafeTechnicianPreview`,
+`TechnicianProfile.age`, `calculateAge()` eliminada, badge de UI retirado, más
+los docstrings que habrían quedado mintiendo). Aplicar la migración primero
+habría roto toda consulta a la vista.
+
+**`DROP + CREATE`, no `CREATE OR REPLACE`**: éste sólo permite AÑADIR columnas
+al final, nunca quitarlas (la 032 chocó con la misma restricción por el otro
+lado). El DROP pierde los GRANT, así que se recrean explícitamente y la
+post-condición los verifica — es justo el motivo por el que la 032 evitó el DROP.
+
+**`compute_age()` retirada**: barrido por dirección ENTRANTE en siete catálogos
+(`pg_rewrite`, `pg_proc.prosrc`, `pg_constraint`, `pg_attrdef`, `pg_indexes`,
+`pg_trigger`, `pg_depend`) confirmó que su único consumidor era esta vista.
+`DROP` sin `CASCADE`.
+
+**Verificación INDEPENDIENTE, fuera del bloque de la migración**: columna `age`
+**0** · `compute_age` **0** · GRANT SELECT recreados para `anon,authenticated,
+service_role` · gates `offer_accepted_between` **5** · cláusula de la 024
+intacta · `years_experience` y `profile_completeness` conservadas · 18 columnas
+(antes 19).
+
+**Gate EJERCITADO tras recrear la vista** (no sólo inspeccionado), con sesión de
+empresa simulada: sin aceptación los 4 campos de identidad vienen `NULL`; con
+aceptación vienen poblados; la lápida sigue invisible (0 filas). Confirmado
+además en vivo desde la app: el `select=` ya no pide `age` y ninguna fila la
+trae.
+
+`tsc` 0 · `test:matching` 120/120 · `test:url-validation` PASS ·
+`validate:aircraft-ratings` PASS (606) · `validate:state-machine` PASS ·
+`validate:auth-hooks` PASS.

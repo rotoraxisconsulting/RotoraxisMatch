@@ -63,7 +63,8 @@ function messagePreview(message: ChatMessage | null): string {
 
 export default function TechnicianChatsScreen() {
   const router = useRouter();
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
@@ -72,6 +73,11 @@ export default function TechnicianChatsScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!technicianId) return;
+
     const [rooms, unreadRoomIds] = await Promise.all([
       chatRepository.getRoomsForTechnician(technicianId),
       activityRepository.getUnreadChatRoomIds('technician', technicianId),

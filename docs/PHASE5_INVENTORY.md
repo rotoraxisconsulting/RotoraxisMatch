@@ -43,7 +43,38 @@ escribiéndose para manejar el caso general (una base con más historial real
 podría tener filas solo-código) — este resultado dice "hoy no hay trabajo que
 hacer aquí", no "el código de migración es innecesario".
 
-**Hallazgo lateral (severidad baja, no bloquea nada)**: la única constraint
+### ⛔ CORRECCIÓN (2026-07-28) — el "hallazgo lateral" de abajo era FALSO
+
+Buscando la causa del fallo de la sección (d) encontré que **este hallazgo
+lateral también es incorrecto, por la misma razón**, y que ya tiene
+consecuencia aplicada en producción.
+
+El índice único parcial que este apartado pedía "valorar añadir" **ya existía
+desde la migración 016** (`016_part66_ratings_habilitations.sql:213`):
+
+```sql
+CREATE UNIQUE INDEX uq_technician_habilitations_rating
+  ON technician_habilitations (technician_id, license_code, aircraft_type_rating_id)
+  WHERE aircraft_type_rating_id IS NOT NULL;
+```
+
+La migración 027, escrita sobre este inventario, creó
+`uq_technician_habilitations_normalized` con **columnas y predicado idénticos**
+(`027_...sql:86`). Verificado en `pg_indexes`: los dos índices existen hoy en
+`rotoaxismatch-dev`, duplicados byte a byte. No es un bug de datos (la
+unicidad se aplica igual), pero es doble coste de escritura y una fuente futura
+de confusión. Lo retira la 028.
+
+**Por qué falló**: la verificación consultó `pg_constraint`, y un índice creado
+con `CREATE UNIQUE INDEX` **no aparece nunca en `pg_constraint`** — solo en
+`pg_indexes`/`pg_index`. La consulta no devolvió el índice de la 016, y la
+ausencia se leyó como inexistencia. Mismo patrón que la sección (d): un
+catálogo, una dirección, resultado tomado como completo.
+
+Texto original, conservado como estaba (su premisa "nada a nivel de BD lo
+impide" es la parte falsa):
+
+> **Hallazgo lateral (severidad baja, no bloquea nada)**: la única constraint
 `UNIQUE` de `technician_habilitations`
 (`technician_habilitations_technician_id_license_code_aircraf_key`) cubre
 `(technician_id, license_code, aircraft_type_code)` — nunca incluye
@@ -184,12 +215,133 @@ reales:
    cuando se borre `aircraftTypes.ts`. Este es el ítem 1 de la sub-fase 5.3
    del plan.
 
-`aircraft_types` la tabla: FK viva desde
-`technician_habilitations.aircraft_type_code` (`technician_habilitations_aircraft_type_code_fkey`)
-— confirmado en `pg_constraint`. Es el ÚNICO motivo por el que la tabla no se
-puede borrar todavía. Con (a) confirmando 0 filas legacy hoy, el DROP de la FK
-+ columna + tabla es mecánicamente seguro en `rotoaxismatch-dev` — pero sigue
-yendo en la migración 028 de la sub-fase 5.3, con checkpoint, no antes.
+### ⛔ CORRECCIÓN (2026-07-28) — este apartado decía UNA FK y son DOS
+
+**El texto original de esta sección era incorrecto y la migración 028 escrita
+sobre él habría fallado al ejecutarse.** Lo detectó una revisión externa
+(Codex/ChatGPT) y lo verifiqué yo contra `rotoaxismatch-dev` en vivo. Texto
+original, tachado, conservado para que se vea el error:
+
+> ~~`aircraft_types` la tabla: FK viva desde
+> `technician_habilitations.aircraft_type_code`
+> (`technician_habilitations_aircraft_type_code_fkey`) — confirmado en
+> `pg_constraint`. Es el ÚNICO motivo por el que la tabla no se puede borrar
+> todavía.~~
+
+**Lo real.** Consulta ejecutada (`confrelid`, no `conrelid` — ver "por qué
+falló" abajo):
+
+```sql
+SELECT c.conname, con_rel.relname AS table_name, pg_get_constraintdef(c.oid)
+FROM pg_constraint c
+JOIN pg_class con_rel ON con_rel.oid = c.conrelid
+WHERE c.confrelid = 'public.aircraft_types'::regclass;
+```
+
+```
+technician_habilitations_aircraft_type_code_fkey
+  → technician_habilitations.aircraft_type_code       FK aircraft_types(code)
+technician_aircraft_experience_aircraft_type_code_fkey
+  → technician_aircraft_experience.aircraft_type_code FK aircraft_types(code)
+```
+
+**Son DOS referencias entrantes, no una.** `technician_aircraft_experience`
+tiene **0 filas** (verificado), así que retirar su FK es igual de seguro que la
+otra — pero tenía que estar contemplado, y no lo estaba.
+
+Barrido completo de dependencias entrantes sobre `aircraft_types`, ya con la
+dirección correcta (para no repetir el fallo): vistas vía `pg_depend`/`pg_rewrite`
+→ **0**; funciones con el nombre en `prosrc` → **0**; triggers → **0**. Las dos
+FKs de arriba son la lista completa.
+
+**Por qué falló el inventario original.** Ver el apartado de método al final de
+este documento ("Post-mortem"). Resumen: la consulta original enumeró las
+constraints *de las tablas que estaba estudiando* (`conrelid`), que responde
+"¿a qué apunta esta tabla?", cuando la pregunta que importaba para un DROP era
+la inversa, "¿quién apunta a `aircraft_types`?" (`confrelid`).
+
+**Estado real de la tabla.** Con las dos FKs retiradas, `aircraft_types` queda
+huérfana a nivel de BD y sin lectores en `src/` (los 3 consumidores de
+`constants/aircraftTypes.ts` de arriba son de la copia TS, no de la tabla). El
+`DROP TABLE` en sí NO va en la 028 — ver la cabecera de
+`supabase/migrations/028_retire_aircraft_types_fks.sql` para el porqué del
+troceado.
+
+---
+
+## d-bis. `technician_aircraft_experience` — inventario y propuesta
+
+Añadido 2026-07-28 a raíz de la corrección de (d): la tabla no estaba
+inventariada por sí misma, solo apareció como el segundo extremo de la FK que
+faltaba. Todo lo de abajo verificado en vivo o por grep, nada asumido.
+
+**Qué es en BD.** `id, technician_id, aircraft_type_code (FK → aircraft_types,
+NOT NULL), value double precision NOT NULL, unit enum NOT NULL, created_at`.
+UNIQUE `(technician_id, aircraft_type_code)`, índice por `technician_id`, RLS
+completa: `tae_select_own`, `tae_select_company`, `tae_insert_own`,
+`tae_delete_own`, `tae_all_admin` (001) **+ `tae_update_own`, que no existió
+hasta la 025** (2026-07-24) — es decir, durante toda su vida hasta hace 4 días
+una fila, una vez insertada, no se podía editar.
+
+**Filas: 0.** Cero desde siempre, en todos los perfiles.
+
+**Consumidores — el dato que importa: se LEE en 4 sitios y no se ESCRIBE en
+ninguno.** Grep exhaustivo sobre `app/`, `src/`, `scripts/`:
+
+| Sitio | Qué hace |
+|---|---|
+| `src/repositories/v2/supabaseMappers.ts:254` | la carga en **cada** `TechnicianWithRelations` (todo el producto pasa por aquí) |
+| `app/technician/profile.tsx:251-254,311-321` | deriva el `yearsExperience` que se muestra en el perfil |
+| `src/utils/offerMatchExplain.ts:542-545` | **componente `experience` del match score** |
+| `src/utils/v2CompatAdapters.ts:126,185,236` | `computeYearsExperience()` → el `yearsExperience` que ven las empresas en búsqueda/mapa/tarjetas |
+| `src/repositories/v2/technicianRepositoryV2.ts:194` | `getAircraftExperience()` — **0 call sites**, muerto |
+
+Cero `INSERT`/`UPSERT`/`UPDATE` en todo el repo. No hay pantalla, formulario ni
+script que permita a un técnico declarar experiencia por tipo de aeronave.
+
+**Consecuencias reales de que esté vacía (no teóricas):**
+
+1. `totalYears` en `offerMatchExplain` es **siempre 0**. El componente
+   `experience` del score (10 pts con requisitos, 15 sin ellos) solo se otorga
+   cuando la oferta pide `minYearsExperience === 0`. Cualquier oferta que pida
+   1 año o más deja esos puntos permanentemente inalcanzables **para todos los
+   técnicos por igual** — no falsea el ranking relativo, pero comprime la
+   escala y hace que el filtro de experiencia de la empresa no discrimine nada.
+2. `yearsExperience` mostrado a las empresas es **siempre 0**.
+3. La línea `if (t.yearsExperience > 0) score += 10` de
+   `profile.tsx:93` (completitud de perfil) es inalcanzable: 10 puntos que
+   ningún técnico puede conseguir, sin ninguna UI que le diga cómo.
+4. Fase 4 ya documentó su límite estructural (`offerMatchExplain.ts:353-355`,
+   test `Case 5d` en `scripts/testMatching.ts:368`): tiene `aircraftTypeCode`
+   pero **ningún vínculo a `aircraft_type_ratings`**, así que por diseño no
+   puede satisfacer un requisito de familia. Es del modelo pre-Part-66.
+
+**Diagnóstico: sí, es una feature a medio construir** — mitad de lectura
+construida (con peso en el scoring), mitad de escritura nunca construida,
+sobre el modelo de datos anterior a Part-66. Y sí tiene consumidores, al
+contrario de lo que sugiere "0 filas": por eso NO es un `DROP TABLE` mecánico.
+
+**Propuesta — 3 opciones, no borro nada:**
+
+- **(A) Retirarla entera, y con ella el componente `experience` del score.**
+  Requiere código antes que SQL: quitar las 4 lecturas, redistribuir los 10/15
+  pts del peso `experience` entre los otros componentes (o reducir el máximo),
+  y decidir qué pasa con `minYearsExperience` en el formulario de oferta —
+  la empresa seguiría pidiendo años que nada mide. Es la más limpia y la que
+  menos deuda deja, pero toca el scoring, que es producto.
+- **(B) Reconstruirla sobre Part-66**: sustituir `aircraft_type_code` por
+  `aircraft_type_rating_id` y darle UI de escritura. Ojo: `technician_habilitations`
+  **ya tiene `experience_years`** por habilitación (016) — es decir, esta tabla
+  sería en gran parte redundante con lo que ya existe. La opción real aquí es
+  más bien *"borrarla y alimentar el score desde `habilitations.experience_years`"*.
+- **(C) Dejarla congelada** y documentarla como inerte. Es el estado de hoy;
+  cuesta 0 pero mantiene vivos los 4 puntos muertos de arriba.
+
+**Mi recomendación: (A), pero en su propia sub-fase con checkpoint, no dentro
+de la 028** — cambia el scoring, y el scoring es la única cosa de esta misión
+que el CLAUDE.md marca como principio de negocio. La 028 solo le retira la FK
+(reversible, no prejuzga nada); la tabla y sus 0 filas quedan intactas
+esperando tu decisión entre A/B/C.
 
 ---
 
@@ -207,6 +359,40 @@ correctamente).
 ---
 
 ## f. Availability legacy (`status` vs `immediately`) ⚠ REQUIERE DECISIÓN
+
+### ⛔ CORRECCIÓN (2026-07-29) — la dirección estaba AL REVÉS, y encima había un bug
+
+**Todo el apartado de abajo describe la derivación en el sentido contrario al
+real.** Lo detectó la auditoría de cierre (hallazgos B1/I2 de
+`docs/FINAL_AUDIT_REPORT.md`) y se comprobó contra los datos, no contra el
+código:
+
+```sql
+SELECT anonymous_code, (availability ? 'status') AS tiene_status
+FROM technician_profiles;
+-- tiene_status = false en las 7 filas
+```
+
+**`status` NUNCA se persistió.** Lo guardado siempre fue `immediately` (+ el
+difunto `available_from`); `status` se derivaba EN MEMORIA al leer, en
+`v2CompatAdapters.deriveAvailabilityStatus()`. Es decir: `immediately` era la
+fuente de verdad y `status` la proyección, exactamente lo contrario de lo que
+dice el texto conservado abajo.
+
+**Y no era sólo una etiqueta mal puesta.** El formulario del técnico guardaba
+`immediately = (status === 'available')`, así que elegir **"Open to offers" sin
+fecha** se escribía como `immediately=false, available_from=null` y al recargar
+se volvía a derivar como **"Unavailable"**. El técnico veía un estado que no
+había elegido. Y como ninguna fila tenía fecha, el filtro "Open to offers" del
+lado empresa **no casaba con nadie jamás**.
+
+**Resuelto (2026-07-29, migración 041)**: la disponibilidad pasa a DOS estados
+sin fecha, `immediately` ES el modelo y `status` es sólo su etiqueta de UI, 1:1
+y **sin pérdida** en ambos sentidos. Con eso, la pregunta que este apartado
+planteaba —"¿colapsamos a 2 estados perdiendo la distinción?"— queda respondida:
+la distinción que se temía perder **no existía en los datos**.
+
+Texto original conservado, con su premisa invertida:
 
 **Mismo patrón que (c): `AvailabilityStatus`/`.availability.status` está
 marcado `@deprecated` ("V2 usa `immediately: boolean`") pero es la ÚNICA forma
@@ -340,6 +526,70 @@ más. Sin urgencia por ninguno de los dos lados.
 
 ---
 
+## Post-mortem de método (2026-07-28) — por qué este inventario falló dos veces
+
+Dos errores, misma causa. Merece la pena escribirlo porque el sesgo es
+reutilizable y volvería a aparecer en la 5.4/5.5.
+
+**Los dos fallos:**
+1. (d) FK a `aircraft_types`: se listó 1, había 2.
+2. (a) índice único: se dijo "no existe", existía desde la 016 — y la 027 lo
+   duplicó en producción por creerlo.
+
+**La causa común no es "se me olvidó mirar".** Las dos verificaciones SÍ
+consultaron el catálogo de Postgres. El fallo es que cada una eligió **un
+catálogo y una dirección**, y trató un resultado vacío/corto como respuesta
+completa:
+
+- En (d), la consulta enumeró constraints por `conrelid` — las constraints
+  *que salen de* las tablas bajo estudio (`technician_habilitations`,
+  `offer_required_aircraft_types`), que eran las tablas en las que yo ya estaba
+  pensando. Eso responde "¿a qué apunta esta tabla?". La pregunta de un DROP es
+  la contraria: "¿quién apunta a la tabla que quiero borrar?", que es
+  `confrelid`. `technician_aircraft_experience` nunca entró en el `WHERE`
+  porque no estaba en mi lista mental de tablas del dominio Part-66 — y ese es
+  exactamente el tipo de tabla que un barrido por dirección correcta encuentra
+  y uno por lista curada no.
+- En (a), la consulta miró `pg_constraint`, donde un `CREATE UNIQUE INDEX`
+  **no aparece por definición**. Buscar un índice en la tabla de constraints y
+  concluir que no hay índice.
+
+**El nombre del sesgo, sin adornos: confirmación por consulta filtrada.**
+Construí la consulta desde la hipótesis ("la FK que bloquea es la de
+habilitations", "falta un índice único") en vez de desde la pregunta ("qué
+depende de esto"). Una consulta así solo puede confirmar; estructuralmente no
+tiene forma de contradecirte. Y el documento agravó el problema: registró la
+conclusión ("confirmado en `pg_constraint`") **sin registrar el SQL**, así que
+nadie —yo incluido— podía auditarla después. Una verificación cuyo SQL no está
+escrito no es una verificación, es una afirmación con adorno de rigor.
+
+**Reglas que adopto para el resto de la misión** (aplicadas ya en la corrección
+de (d), que por eso incluye también el barrido de vistas/funciones/triggers):
+
+1. **Antes de cualquier `DROP`, la consulta va en dirección entrante**
+   (`confrelid`, `pg_depend`), nunca por lista de tablas que yo elija. La lista
+   curada es justo el punto ciego.
+2. **Un `DROP` se verifica contra los cuatro catálogos**, no uno:
+   `pg_constraint` (FKs entrantes) + `pg_depend`/`pg_rewrite` (vistas) +
+   `pg_proc.prosrc` (funciones/RPC) + `pg_trigger`. Y `pg_indexes` aparte de
+   `pg_constraint` siempre que la pregunta sea sobre unicidad.
+3. **El SQL ejecutado se pega literal en el inventario**, junto al resultado.
+   Sin el SQL, la línea no cuenta como verificada.
+4. **Resultado vacío ⇒ verificar la consulta antes que la conclusión.** Un `[]`
+   confirma lo que esperaba: es el caso donde más barato es equivocarse y menos
+   se nota.
+
+**Alcance del daño ya revisado:** re-verifiqué en vivo con dirección entrante
+los ítems (a), (b) y (d) — las tres afirmaciones de BD del inventario. (b)
+(`offer_required_aircraft_types` sin FK legacy, 3 filas ya family keys) se
+sostiene: la migración 022 la retiró y no hay FK entrante a `aircraft_types`
+desde ahí, cosa que la consulta correcta de (d) confirma por construcción. Los
+ítems (c), (e), (f), (g), (h) son de grep sobre código, no de catálogo SQL, y
+no les aplica este sesgo — pero sí les aplica la regla 4, y (h) ya falló por
+esa vía una vez (el conteo "33 docs" que resultaron ser 40).
+
+---
+
 ## Resumen — qué decidir antes de 5.2
 
 1. **(c) y (f) — el hallazgo grande**: ¿migramos `app/technician/profile.tsx`,
@@ -360,3 +610,26 @@ más. Sin urgencia por ninguno de los dos lados.
 
 Para aquí, según protocolo. Necesito tu OK (y las respuestas de arriba) antes
 de escribir una sola línea de la migración 027.
+
+---
+
+## Addendum 2026-07-28 — qué decidir ahora, tras las correcciones
+
+El punto 4 de arriba ("a, b, d... no necesitan decisión") **ya no es cierto**:
+(a) y (d) estaban mal, ver las dos correcciones ⛔. Lo que queda abierto:
+
+5. **`technician_aircraft_experience` (d-bis)**: ¿(A) retirarla y rehacer el
+   componente `experience` del score, (B) reconstruirla sobre
+   `aircraft_type_rating_id` — probablemente redundante con
+   `habilitations.experience_years`, o (C) congelarla documentada?
+   Recomiendo (A) en sub-fase propia con checkpoint. La 028 no la toca salvo
+   por su FK.
+6. **`DROP TABLE aircraft_types` (33 filas)**: choca con la regla de CLAUDE.md
+   "nunca borres datos en una migración, desactiva". Fuera de la 028 a
+   propósito; decide si la mata una 030 o si se queda inerte sin FKs.
+7. **Columna `technician_habilitations.aircraft_type_code`**: su DROP está
+   fuera de la 028 porque **hoy la leen 4 sitios de cliente vivos**
+   (`supabaseMappers.ts:253` — en la carga de todo técnico —,
+   `profile.tsx:249,288`, `scripts/backfillLegacyAircraftRatings.ts:71`).
+   Borrarla antes de migrar ese código rompe la app en runtime. Va en la 029,
+   después del cambio de código de la 5.3.

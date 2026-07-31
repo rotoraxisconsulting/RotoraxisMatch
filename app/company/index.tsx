@@ -95,14 +95,19 @@ function verificationTone(status: string): 'success' | 'warning' | 'error' | 'mu
   return 'muted';
 }
 
-function roleLabel(role: string): string {
+// Fase 5.4 — acepta undefined (sesión de empresa aún sin resolver) y
+// devuelve un guion en vez de reventar al llamar charAt sobre undefined.
+function roleLabel(role: string | undefined): string {
+  if (!role) return '—';
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
 export default function CompanyDashboard() {
   const router = useRouter();
   const { profile, session, loading: authLoading } = useAuth();
-  const { companyId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberRole = companySession?.companyMemberRole;
   const { sessionLoading } = useSession();
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
@@ -374,7 +379,10 @@ function CompanyProfilePanel({
   memberName: string;
   teamMembers: number;
   canViewTeam: boolean;
-  companyMemberRole: string;
+  // Fase 5.4 — undefined mientras la sesión de empresa no está resuelta.
+  // Solo se usa como etiqueta; el panel ya se renderiza únicamente cuando
+  // hay `supabaseCompany`, así que en la práctica siempre llega con valor.
+  companyMemberRole: string | undefined;
   onProfilePress: () => void;
   onSettingsPress: () => void;
 }) {

@@ -20,6 +20,7 @@ import {
 } from './admin/AdminUI';
 import type { AdminTone } from './admin/AdminUI';
 import { spacing } from '../theme';
+import { notify, confirmAction } from '../utils/platformAlert';
 
 interface Props {
   document: TechnicianDocument;
@@ -115,7 +116,7 @@ export function AdminDocumentCard({
 
   async function handleConfirmReject() {
     if (!rejectReason.trim()) {
-      Alert.alert('Reason required', 'Please explain why this document is rejected.');
+      notify('Reason required', 'Please explain why this document is rejected.');
       return;
     }
     setLoadingStatus('rejected');
@@ -136,7 +137,7 @@ export function AdminDocumentCard({
     setViewLoading(false);
     if (error || !url) {
       win?.close();
-      Alert.alert('Error', error ?? 'Could not generate download link.');
+      notify('Error', error ?? 'Could not generate download link.');
       return;
     }
     openDocumentUrl(url, win);

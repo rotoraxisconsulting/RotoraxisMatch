@@ -32,7 +32,7 @@ import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { CompanyProfileView } from '../../../src/types/company';
 import { OfferApplication } from '../../../src/types/offerRequest';
 import { ContractTypeCode } from '../../../src/types/catalog';
-import { resolveAircraftCategoryForFamilyKeys, ApproximateAircraftCategory } from '../../../src/constants/aircraftTypeRatingViews';
+import { resolveAircraftCategoryForFamilyKeys, resolveFamilyKeyLabels, ApproximateAircraftCategory } from '../../../src/constants/aircraftTypeRatingViews';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 
 function formatPublishedDate(iso: string): string {
@@ -90,7 +90,8 @@ const AIRCRAFT_CAT_BADGE: Record<string, { label: string; tone: 'info' | 'warnin
 
 export default function BrowseOffersScreen() {
   const router = useRouter();
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const { ratings, state: catalogState } = useAircraftTypeRatingsCatalog();
@@ -107,6 +108,11 @@ export default function BrowseOffersScreen() {
   const [searchText, setSearchText] = useState('');
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!technicianId) return;
+
     const [offerMatches, companies, apps, unreadIds] = await Promise.all([
       getOfferMatchesForTechnician(technicianId),
       companyRepositoryV2.getAll(),
@@ -305,7 +311,7 @@ export default function BrowseOffersScreen() {
                     {offer.requiredLicenses.slice(0, 3).map((l, i) => (
                       <TechnicianChip key={i} label={l} />
                     ))}
-                    {offer.requiredAircraftTypes.slice(0, 3).map((a, i) => (
+                    {resolveFamilyKeyLabels(ratings, offer.requiredAircraftTypes).slice(0, 3).map((a, i) => (
                       <TechnicianChip key={`a${i}`} label={a} />
                     ))}
                     {(offer.requiredLicenses.length + offer.requiredAircraftTypes.length) > 6 && (

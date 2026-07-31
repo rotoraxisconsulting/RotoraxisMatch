@@ -11,21 +11,28 @@ import { Button } from '../../src/components/Button';
 import { colors, spacing } from '../../src/theme';
 import { useAuth } from '../../src/auth/AuthContext';
 
+// Lo que se verifica en esta etapa es la IDENTIDAD, no las cualificaciones
+// aeronáuticas. El copy anterior prometía "verify your credentials and
+// profile", que era imposible: hasta que un admin aprueba la cuenta el técnico
+// no puede completar el perfil ni subir un solo documento, así que no hay
+// credenciales que revisar. Corregido 2026-07-29 (hallazgo F2 de la auditoría).
 const STEPS = [
   {
     icon: '📋',
-    title: 'Profile submitted',
-    description: 'Your account has been registered.',
+    title: 'Account created',
+    description: 'Your registration was received.',
   },
   {
     icon: '🔍',
-    title: 'Under review',
-    description: 'Our team will verify your credentials and profile.',
+    title: 'Identity check',
+    description:
+      'Our team is confirming who you are. Nothing about your aviation qualifications is assessed at this stage.',
   },
   {
-    icon: '✉',
-    title: 'Email notification',
-    description: 'You will be notified at your registered email once approved.',
+    icon: '✅',
+    title: 'Once approved',
+    description:
+      "You'll be able to complete your profile, add your Part-66 licences and type ratings, upload documents for verification, and appear in company searches.",
   },
 ];
 
@@ -51,7 +58,7 @@ export default function PendingVerificationScreen() {
           <Text style={styles.icon}>⏳</Text>
         </View>
 
-        <Text style={styles.title}>Account pending verification</Text>
+        <Text style={styles.title}>Verifying your identity</Text>
 
         {email ? (
           <Text style={styles.emailNote}>
@@ -61,8 +68,10 @@ export default function PendingVerificationScreen() {
         ) : null}
 
         <Text style={styles.body}>
-          Your account has been submitted and is awaiting review by our team.
-          This process typically takes 1–2 business days.
+          We're confirming you're a real person before opening the platform.
+          This usually takes 1–2 business days.{'\n\n'}
+          We are not reviewing your licences or type ratings yet — that happens
+          later, from the documents you'll upload.
         </Text>
 
         {/* Steps */}

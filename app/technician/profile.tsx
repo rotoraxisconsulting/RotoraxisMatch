@@ -27,10 +27,12 @@ import {
 import { useAuth } from '../../src/auth/AuthContext';
 import { supabase } from '../../src/lib/supabase';
 import { Technician, AvailabilityStatus } from '../../src/types';
+import { SocialLinks } from '../../src/types/technician';
+import { isValidUrl, normalizeUrl } from '../../src/utils/urlValidation';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
-import { HabilitationsEditor, HabilitationRow as HabRow, LegacyHabilitationRow as LegacyHabRow } from '../../src/components/technician/HabilitationsEditor';
+import { HabilitationsEditor, HabilitationRow as HabRow } from '../../src/components/technician/HabilitationsEditor';
 import { DateField } from '../../src/components/DateField';
 import { isValidDateOrder } from '../../src/utils/validityDates';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
@@ -55,8 +57,10 @@ const DATE_FIELD_PALETTE = {
 
 type AvailabilityContract = Technician['availability']['contractTypes'][number];
 
+// Dos estados, sin fecha (2026-07-29). El tercero ('available') y el campo
+// "Available from" desaparecieron: elegir "Open to offers" sin fecha se
+// guardaba como no disponible y volvía como "Unavailable" al recargar.
 const AVAILABILITY_OPTIONS: { value: AvailabilityStatus; label: string }[] = [
-  { value: 'available', label: 'Available' },
   { value: 'open_to_offers', label: 'Open to offers' },
   { value: 'unavailable', label: 'Unavailable' },
 ];
@@ -71,14 +75,35 @@ type SupaTechRow = {
   location_city_id: string;
   availability: {
     immediately?: boolean;
-    available_from?: string | null;
     contract_types?: string[];
   } | null;
+  years_experience: number | null;
   verification_status: string;
   profile_completeness: number;
+  social_links: SocialLinks | null;
 };
 
-function computeProfileCompleteness(t: Technician): number {
+// Las tres claves que la UI ofrece hoy sobre technician_profiles.social_links.
+// El tipo SocialLinks admite mas por index signature: si alguna vez llega una
+// clave desconocida desde la BD, se conserva al guardar (ver handleSave) en
+// vez de borrarse por no tener campo en pantalla.
+const SOCIAL_FIELDS: { key: keyof SocialLinks & string; label: string; placeholder: string }[] = [
+  { key: 'linkedin', label: 'LinkedIn', placeholder: 'linkedin.com/in/your-profile' },
+  { key: 'instagram', label: 'Instagram', placeholder: 'instagram.com/your-handle' },
+  { key: 'website', label: 'Personal website', placeholder: 'your-portfolio.com' },
+];
+
+// `yearsDeclared` en vez de `t.yearsExperience > 0`: declarar 0 anios ES
+// completar el perfil. Penalizar a un junior por ser honesto contradiria el
+// principio de la mision (la ausencia de dato no penaliza, pero el dato
+// declarado tampoco debe castigar por su valor).
+//
+// `socialDeclared` (2026-07-29): TRUE con AL MENOS UN enlace declarado — no
+// uno por red. Los 10 puntos que quedaron huerfanos al retirar specialties
+// vuelven aqui, asi que la escala vuelve a topar en 100 de verdad. Que baste
+// con uno es deliberado: el objetivo es "hay una via de contacto profesional
+// verificable", no obligar a tener las tres.
+function computeProfileCompleteness(t: Technician, yearsDeclared: boolean, socialDeclared: boolean): number {
   let score = 0;
   if (t.fullName?.trim()) score += 10;
   if (t.email?.trim()) score += 10;
@@ -88,9 +113,18 @@ function computeProfileCompleteness(t: Technician): number {
   if (t.baseAirport?.trim()) score += 5;
   if (t.licenseCategories.length > 0) score += 20;
   if (t.aircraftTypes.length > 0) score += 15;
-  if (t.specialties.length > 0) score += 10;
+  // 2026-07-29: aqui habia `if (t.specialties.length > 0) score += 10;`, una
+  // rama muerta (specialties no tenia almacenamiento y siempre llegaba []),
+  // que dejaba el maximo real de este score en 90. Esos 10 puntos son ahora
+  // los enlaces sociales, que SI tienen columna y camino de escritura.
+  if (socialDeclared) score += 10;
+  // NOTA (2026-07-29): con dos estados esto significa "+5 por estar abierto a
+  // ofertas". Es discutible que la completitud del PERFIL dependa de si ahora
+  // mismo buscas trabajo — pero cambiarlo mueve el % de todos los perfiles, y
+  // eso es una decisión de producto propia, no un arrastre de esta tanda.
+  // Se deja como estaba y queda señalado.
   if (t.availability.status !== 'unavailable') score += 5;
-  if (t.yearsExperience > 0) score += 10;
+  if (yearsDeclared) score += 10;
   return Math.min(score, 100);
 }
 
@@ -102,9 +136,8 @@ function supaRowToForm(
 ): Technician {
   const avail = row.availability ?? {};
   const immediately = avail.immediately ?? false;
-  const availableFrom: string | undefined = avail.available_from ?? undefined;
   const contractTypes = (avail.contract_types ?? []) as AvailabilityContract[];
-  const status: AvailabilityStatus = immediately ? 'available' : availableFrom ? 'open_to_offers' : 'unavailable';
+  const status: AvailabilityStatus = immediately ? 'open_to_offers' : 'unavailable';
 
   const location = resolveLocationSnapshot({ locationCityId: row.location_city_id });
 
@@ -123,7 +156,7 @@ function supaRowToForm(
     licenseCategories: licenses,
     aircraftTypes,
     specialties: [],
-    availability: { immediately, status, availableFrom, contractTypes },
+    availability: { immediately, status, contractTypes },
     verificationStatus: row.verification_status as Technician['verificationStatus'],
     profileCompleteness: row.profile_completeness,
     yearsExperience,
@@ -154,10 +187,6 @@ function FieldLabel({ children }: { children: string }) {
   return <Text style={styles.fieldLabel}>{children}</Text>;
 }
 
-function EmptyValue() {
-  return <Text style={styles.emptyValue}>Not specified</Text>;
-}
-
 export default function TechnicianProfileScreen() {
   const router = useRouter();
   const { profile, loading: authLoading } = useAuth();
@@ -180,8 +209,29 @@ export default function TechnicianProfileScreen() {
   // rows — never as a flat aircraft-type list saved against a "default"
   // license. See technicianRepositoryV2.replaceHabilitations().
   const [habilitations, setHabilitations] = useState<HabRow[]>([]);
-  const [legacyHabilitations, setLegacyHabilitations] = useState<LegacyHabRow[]>([]);
   const [habDirty, setHabDirty] = useState(false);
+  // Anios declarados como TEXTO: '' = no declarado (NULL en BD), distinto de
+  // '0' = declarado sin experiencia. Estado propio y no `form.yearsExperience`
+  // justamente porque el tipo V1 es `number` y no sabe expresar "no declarado".
+  //
+  // OJO: al vivir FUERA de `form`, no pasa por updateField() y por tanto NO
+  // marca el formulario como sucio por si solo. Se edita siempre a traves de
+  // updateYearsInput() de abajo, nunca con setYearsInput directamente — ese
+  // fue justo el bug de la primera version (el boton "Save changes" no se
+  // activaba al cambiar los anios).
+  const [yearsInput, setYearsInput] = useState('');
+  // Enlaces sociales, EN CRUDO tal y como los teclea el tecnico (sin
+  // normalizar): normalizar en cada pulsacion pelearia con el cursor. La
+  // normalizacion pasa una sola vez, al guardar.
+  //
+  // Vive FUERA de `form` por lo mismo que yearsInput: el tipo V1 `Technician`
+  // no tiene socialLinks. Y por lo mismo, editalo SIEMPRE con
+  // updateSocialLink() — setSocialInputs a pelo no marcaria el formulario
+  // como sucio y el boton "Save changes" se quedaria apagado.
+  const [socialInputs, setSocialInputs] = useState<Record<string, string>>({});
+  // Claves que ya venian en la BD y para las que esta pantalla no tiene campo.
+  // Se reescriben tal cual al guardar; nunca se pierden por no ser visibles.
+  const [unknownSocialKeys, setUnknownSocialKeys] = useState<SocialLinks>({});
   // Keyed by license code, only for codes currently in form.licenseCategories
   // — kept in sync by toggleLicense() so a removed license never leaves a
   // stale entry behind.
@@ -224,7 +274,7 @@ export default function TechnicianProfileScreen() {
       const { data: techRow, error: techErr } = await supabase
         .from('technician_profiles')
         .select(
-          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, verification_status, profile_completeness',
+          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, years_experience, verification_status, profile_completeness, social_links',
         )
         .eq('user_id', profile.id)
         .maybeSingle();
@@ -239,18 +289,14 @@ export default function TechnicianProfileScreen() {
 
       setTechId(techRow.id);
 
-      const [licResult, habResult, expResult] = await Promise.all([
+      const [licResult, habResult] = await Promise.all([
         supabase
           .from('technician_licenses')
           .select('license_code, issued_at, expires_at')
           .eq('technician_id', techRow.id),
         supabase
           .from('technician_habilitations')
-          .select('id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, issued_at, expires_at, is_current, needs_review')
-          .eq('technician_id', techRow.id),
-        supabase
-          .from('technician_aircraft_experience')
-          .select('value, unit')
+          .select('id, license_code, aircraft_type_rating_id, experience_years, issued_at, expires_at, is_current')
           .eq('technician_id', techRow.id),
       ]);
 
@@ -265,14 +311,16 @@ export default function TechnicianProfileScreen() {
       const habRows = (habResult.data ?? []) as {
         id: string;
         license_code: string;
-        aircraft_type_code: string | null;
         aircraft_type_rating_id: string | null;
         experience_years: number | null;
         issued_at: string | null;
         expires_at: string | null;
         is_current: boolean;
-        needs_review: boolean;
       }[];
+      // The rating-id filter stays until migration 029 makes the column NOT
+      // NULL — after that it can never exclude anything. It is not a legacy
+      // path: a row with no rating id names no aircraft and has nothing to
+      // render.
       const normalizedHabs: HabRow[] = habRows
         .filter((r) => r.aircraft_type_rating_id)
         .map((r) => ({
@@ -284,11 +332,7 @@ export default function TechnicianProfileScreen() {
           expiresAt: r.expires_at ?? undefined,
           isCurrent: r.is_current,
         }));
-      const legacyHabs: LegacyHabRow[] = habRows
-        .filter((r) => !r.aircraft_type_rating_id && r.aircraft_type_code)
-        .map((r) => ({ id: r.id, licenseCode: r.license_code, aircraftTypeCode: r.aircraft_type_code as string, needsReview: r.needs_review }));
       setHabilitations(normalizedHabs);
-      setLegacyHabilitations(legacyHabs);
       setHabDirty(false);
 
       // Resolve every referenced rating id in one batched call — includes
@@ -301,24 +345,33 @@ export default function TechnicianProfileScreen() {
 
       // Derived only for the V1-shaped completeness score / summary card —
       // never used as the source of truth for saving.
-      const aircraftTypes = [...new Set([
-        ...legacyHabs.map((h) => h.aircraftTypeCode),
-        ...normalizedHabs
+      setYearsInput(techRow.years_experience == null ? '' : String(techRow.years_experience));
+
+      // social_links: se reparte en los tres campos conocidos y un cajon con
+      // el resto, para poder devolverlo intacto al guardar.
+      const storedSocial = (techRow.social_links ?? {}) as SocialLinks;
+      const knownKeys = SOCIAL_FIELDS.map((f) => f.key);
+      const loadedInputs: Record<string, string> = {};
+      knownKeys.forEach((k) => {
+        loadedInputs[k] = storedSocial[k] ?? '';
+      });
+      setSocialInputs(loadedInputs);
+      setUnknownSocialKeys(
+        Object.fromEntries(Object.entries(storedSocial).filter(([k]) => !knownKeys.includes(k))),
+      );
+
+      const aircraftTypes = [...new Set(
+        normalizedHabs
           .map((h) => resolvedIndex.get(h.aircraftTypeRatingId)?.aircraftFamily)
           .filter((v): v is string => Boolean(v)),
-      ])];
+      )];
 
-      const expRows = (expResult.data ?? []) as { value: number; unit: string }[];
-      const yearsExperience =
-        expRows.length > 0
-          ? Math.max(
-              ...expRows.map((r) =>
-                r.unit === 'years' ? r.value : Math.round(r.value / 2000),
-              ),
-            )
-          : 0;
-
-      setForm(supaRowToForm(techRow as SupaTechRow, licenses, aircraftTypes, yearsExperience));
+      // Los anios ya no se derivan de technician_aircraft_experience (tabla
+      // retirada, migracion 031): salen del campo declarado del perfil, que
+      // se carga arriba en yearsInput. El 0 que se pasa aqui solo alimenta el
+      // tipo V1 `Technician`, que exige un number y no sabe expresar "no
+      // declarado"; la fuente de verdad para mostrar y guardar es yearsInput.
+      setForm(supaRowToForm(techRow as SupaTechRow, licenses, aircraftTypes, techRow.years_experience ?? 0));
     } catch (err: any) {
       setProfileError(err?.message ?? 'Failed to load profile. Please try again.');
     } finally {
@@ -338,6 +391,20 @@ export default function TechnicianProfileScreen() {
 
   function updateField<K extends keyof Technician>(key: K, value: Technician[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setIsDirty(true);
+  }
+
+  // Unico punto de edicion de yearsInput desde la UI: mantiene el flag de
+  // sucio en linea con el resto de campos del formulario.
+  function updateYearsInput(value: string) {
+    setYearsInput(value.replace(/[^0-9]/g, ''));
+    setIsDirty(true);
+  }
+
+  // Unico punto de edicion de socialInputs desde la UI (ver el comentario del
+  // estado): mantiene el flag de sucio en linea con el resto del formulario.
+  function updateSocialLink(key: string, value: string) {
+    setSocialInputs((prev) => ({ ...prev, [key]: value }));
     setIsDirty(true);
   }
 
@@ -441,6 +508,26 @@ export default function TechnicianProfileScreen() {
       return;
     }
 
+    // Enlaces sociales: se valida ANTES de tocar la BD, igual que las fechas.
+    // Un enlace vacio es valido (campo opcional) y simplemente no se guarda.
+    const socialErrors = SOCIAL_FIELDS.filter((f) => !isValidUrl(socialInputs[f.key] ?? '')).map(
+      (f) => `${f.label}: enter a valid link (e.g. ${f.placeholder}).`,
+    );
+    if (socialErrors.length > 0) {
+      setProfileError(socialErrors.join(' '));
+      return;
+    }
+
+    // Se persiste la forma normalizada y SIN claves vacias; las claves que no
+    // tienen campo en esta pantalla se devuelven intactas. Objeto vacio -> NULL,
+    // para no dejar `{}` en la columna.
+    const socialToSave: SocialLinks = { ...unknownSocialKeys };
+    SOCIAL_FIELDS.forEach((f) => {
+      const normalized = normalizeUrl(socialInputs[f.key] ?? '');
+      if (normalized !== '') socialToSave[f.key] = normalized;
+    });
+    const socialDeclared = Object.keys(socialToSave).length > 0;
+
     const selectedLocation = resolveLocationSnapshot(form);
     const locationCityId = selectedLocation?.locationCityId ?? form.locationCityId;
 
@@ -448,11 +535,9 @@ export default function TechnicianProfileScreen() {
     const firstName = nameParts[0] ?? '';
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : firstName;
 
-    const immediately = form.availability.status === 'available';
-    const availableFrom =
-      form.availability.status === 'open_to_offers'
-        ? (form.availability.availableFrom ?? null)
-        : null;
+    // El booleano ES el modelo; `status` es sólo su etiqueta de UI y nunca
+    // se persiste.
+    const immediately = form.availability.status === 'open_to_offers';
 
     // Never filter habilitations by which licenses are still selected —
     // technician_habilitations references technician_licenses via a
@@ -461,20 +546,29 @@ export default function TechnicianProfileScreen() {
     // removeUnreferencedLicenses); silently dropping the habilitation
     // instead would destroy real technician data just to force the license
     // removal through.
-    const derivedAircraftTypes = [...new Set([
-      ...legacyHabilitations.map((h) => h.aircraftTypeCode),
-      ...habilitations
+    const derivedAircraftTypes = [...new Set(
+      habilitations
         .map((h) => ratingsById.get(h.aircraftTypeRatingId)?.aircraftFamily)
         .filter((v): v is string => Boolean(v)),
-    ])];
-    const newCompleteness = computeProfileCompleteness({ ...form, aircraftTypes: derivedAircraftTypes });
+    )];
+    const trimmedYears = yearsInput.trim();
+    const yearsToSave = trimmedYears === '' ? null : Math.max(0, Math.min(70, parseInt(trimmedYears, 10) || 0));
+    const newCompleteness = computeProfileCompleteness(
+      { ...form, aircraftTypes: derivedAircraftTypes },
+      yearsToSave !== null,
+      socialDeclared,
+    );
 
     setSaving(true);
     setProfileError(null);
     setLicenseRemovalWarning(null);
     try {
-      // Update main profile row
-      const { error: updateErr } = await supabase
+      // Update main profile row.
+      // `.select('id')` no es decorativo: sin él, si tp_update_own no dejara
+      // pasar la fila (p. ej. la cuenta deja de estar `active` mientras el
+      // formulario está abierto), PostgREST devolvería 0 filas y CERO error,
+      // y la pantalla diría "Profile saved" sin haber guardado nada.
+      const { data: updatedRows, error: updateErr } = await supabase
         .from('technician_profiles')
         .update({
           first_name: firstName,
@@ -484,14 +578,19 @@ export default function TechnicianProfileScreen() {
           ...(locationCityId ? { location_city_id: locationCityId } : {}),
           availability: {
             immediately,
-            available_from: availableFrom,
             contract_types: form.availability.contractTypes,
           },
+          years_experience: yearsToSave,
           profile_completeness: newCompleteness,
+          social_links: socialDeclared ? socialToSave : null,
         })
-        .eq('id', techId);
+        .eq('id', techId)
+        .select('id');
 
       if (updateErr) throw updateErr;
+      if (!updatedRows || updatedRows.length === 0) {
+        throw new Error('Could not save your profile — your session may have expired. Sign in again and retry.');
+      }
 
       // 1) Upsert held licenses in place FIRST — never delete+reinsert (see
       // technicianRepositoryV2.upsertLicenses). Ensures any brand-new
@@ -663,7 +762,7 @@ export default function TechnicianProfileScreen() {
               </View>
               <View style={styles.profileMetaItem}>
                 <Text style={styles.profileMetaLabel}>Experience</Text>
-                <Text style={styles.profileMetaValue}>{form.yearsExperience} yr</Text>
+                <Text style={styles.profileMetaValue}>{yearsInput.trim() === '' ? 'Not specified' : `${yearsInput.trim()} yr`}</Text>
               </View>
               <View style={styles.profileMetaItem}>
                 <Text style={styles.profileMetaLabel}>Status</Text>
@@ -732,10 +831,54 @@ export default function TechnicianProfileScreen() {
               placeholderTextColor={techUi.textMuted}
               keyboardType="phone-pad"
             />
+            <View style={styles.fieldGap} />
+            <FieldLabel>Total years of experience</FieldLabel>
+            <TextInput
+              style={styles.input}
+              value={yearsInput}
+              onChangeText={updateYearsInput}
+              placeholder="Optional — leave empty if you prefer not to say"
+              placeholderTextColor={techUi.textMuted}
+              keyboardType="number-pad"
+              maxLength={2}
+            />
+            <Text style={styles.privacyNote}>
+              Companies can filter by minimum years of experience. Leaving this empty never
+              excludes you from a search — your profile is shown as "not specified".
+            </Text>
           </TechnicianCard>
           <Text style={styles.privacyNote}>
             Your identity is private by default and is only shared with accepted company contacts.
           </Text>
+
+          <SectionTitle
+            title="Professional links"
+            subtitle="Optional. Private until a company accepts."
+          />
+          <TechnicianCard style={styles.sectionCard}>
+            {/* El aviso va ARRIBA, antes del primer campo: el tecnico tiene que
+                saber quien vera esto ANTES de escribirlo, no despues. */}
+            <Text style={styles.privacyNote}>
+              These links stay private. A company can only see them after it accepts your
+              application, or after you accept a direct offer from it.
+            </Text>
+            {SOCIAL_FIELDS.map((field, index) => (
+              <View key={field.key}>
+                {index > 0 && <View style={styles.fieldGap} />}
+                <FieldLabel>{field.label}</FieldLabel>
+                <TextInput
+                  style={styles.input}
+                  value={socialInputs[field.key] ?? ''}
+                  onChangeText={(v) => updateSocialLink(field.key, v)}
+                  placeholder={field.placeholder}
+                  placeholderTextColor={techUi.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                />
+              </View>
+            ))}
+          </TechnicianCard>
 
           <SectionTitle title="Location" />
           <TechnicianCard style={styles.sectionCard}>
@@ -807,14 +950,6 @@ export default function TechnicianProfileScreen() {
               })}
             </View>
 
-            <View style={styles.fieldGap} />
-            <FieldLabel>Available from</FieldLabel>
-            <DateField
-              value={form.availability.availableFrom}
-              onChange={(v) => updateAvailability({ availableFrom: v })}
-              placeholder="Not set"
-              palette={DATE_FIELD_PALETTE}
-            />
           </TechnicianCard>
 
           <SectionTitle title="Licenses" subtitle="Select all EASA Part-66 categories you hold." />
@@ -866,7 +1001,6 @@ export default function TechnicianProfileScreen() {
           <HabilitationsEditor
             value={habilitations}
             onChange={onChangeHabilitations}
-            legacyValue={legacyHabilitations}
             licenseCategories={form.licenseCategories}
             ratingsById={ratingsById}
             onRatingResolved={(r) => setRatingsById((prev) => new Map(prev).set(r.id, r))}
@@ -938,19 +1072,14 @@ export default function TechnicianProfileScreen() {
             </TechnicianCard>
           )}
 
-          <SectionTitle title="Specialties" />
-          <TechnicianCard style={styles.sectionCard}>
-            <View style={styles.tagRow}>
-              {form.specialties.length > 0
-                ? form.specialties.map((s) => (
-                    <TechnicianBadge key={s} label={s} tone="cyan" small />
-                  ))
-                : <EmptyValue />}
-            </View>
-          </TechnicianCard>
-          <Text style={styles.privacyNote}>
-            Specialties are managed through verification.
-          </Text>
+          {/* La seccion "Specialties" se retiro el 2026-07-29: no existe ni
+              columna ni tabla de specialties en el esquema public, ni ningun
+              camino de escritura (admin incluido). El array salia hardcodeado
+              como [] en supaRowToForm y en v2CompatAdapters, asi que la
+              seccion solo podia renderizar "Not specified" para siempre, bajo
+              un texto que prometia que la verificacion lo rellenaba. El campo
+              Technician.specialties sigue en el bloque V1-compat de
+              types/technician.ts (lo exige el tipo, no la UI). */}
 
           <Button
             label={saving ? 'Saving...' : 'Save Changes'}
@@ -1192,17 +1321,6 @@ const styles = StyleSheet.create({
   textarea: {
     minHeight: 88,
     paddingTop: spacing.sm,
-  },
-  tagRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  emptyValue: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-    color: techUi.textMuted,
   },
   saveBtn: {
     marginTop: spacing.lg,

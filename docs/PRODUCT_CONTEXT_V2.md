@@ -46,7 +46,7 @@ A1, A2, A3, A4, B1.1, B1.2, B1.3, B1.4, B2, B2L, B3, L, C
 ### Before acceptance
 Company sees:
 - anonymousCode (alias)
-- age (derived from birthDate — birthDate itself is not exposed)
+- ~~age~~ — RETIRADA del contrato público (retirada 2026-07-29, migración 040 — característica protegida, riesgo de discriminación en el cribado). Ni la edad ni birthDate salen hacia una empresa.
 - country, city, baseAirport
 - technicianType
 - licenses, habilitations

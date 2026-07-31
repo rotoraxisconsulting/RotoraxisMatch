@@ -16,7 +16,6 @@ import {
   Availability,
   Technician,
   SafeTechnicianView,
-  TechnicianAircraftExperience,
   TechnicianWithRelations,
   TechnicianProfile,
 } from '../types/technician';
@@ -30,29 +29,27 @@ import { AircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { TechnicianHabilitation } from '../types/technician';
 import { AircraftTypeRatingCatalog } from '../types/catalog';
 
-// A habilitation may now be rating-only (aircraftTypeCode undefined). For
-// V1-shaped flat lists we fall back to the rating's aircraft family so
-// legacy screens still see *some* aircraft label instead of `undefined`.
-// ratingIndex is loaded by the caller (via catalogRepository /
-// useAircraftTypeRatingsCatalog) — this stays a pure function, never a
-// Supabase call of its own.
+// V1-shaped flat aircraft list for the compat screens: the rating's
+// aircraft family, which since Fase 5.3 (2026-07-28) is the only source
+// there is — the bare legacy aircraftTypeCode this used to prefer went with
+// the aircraft_types catalog. ratingIndex is loaded by the caller (via
+// catalogRepository / useAircraftTypeRatingsCatalog) — this stays a pure
+// function, never a Supabase call of its own.
 export function habilitationAircraftCodes(habilitations: TechnicianHabilitation[], ratingIndex: AircraftRatingIndex): string[] {
   const codes = new Set<string>();
   for (const h of habilitations) {
-    if (h.aircraftTypeCode) codes.add(h.aircraftTypeCode);
-    else if (h.aircraftTypeRatingId) {
-      const rating = ratingIndex.get(h.aircraftTypeRatingId);
-      if (rating) codes.add(rating.aircraftFamily);
-    }
+    if (!h.aircraftTypeRatingId) continue;
+    const rating = ratingIndex.get(h.aircraftTypeRatingId);
+    if (rating) codes.add(rating.aircraftFamily);
   }
   return [...codes];
 }
 
 // Fase 3b screens 3-4 — "Type ratings" labels (renamed from "Aircraft"),
-// showing each EXACT rating's catalog displayName instead of the family/
-// legacy-code strings habilitationAircraftCodes() above returns. Legacy
-// habilitations (aircraftTypeCode only, no rating id) have no exact rating
-// to show and are skipped — same as TypeRatingRequirementsEditor/
+// showing each EXACT rating's catalog displayName instead of the family
+// strings habilitationAircraftCodes() above returns. A row with no rating
+// id has no exact rating to show and is skipped — same as
+// TypeRatingRequirementsEditor/
 // HabilitationsEditor. Shared by search.tsx and the map (native + web) so
 // both render the same labels from the same rule, never two independent
 // copies.
@@ -88,28 +85,23 @@ export function resolveTechnicianProductTypes(
 // ---------------------------------------------------------------------------
 
 /**
- * Derive V1 AvailabilityStatus from a V2 Availability object.
- * V2 uses `immediately: boolean`; V1 screens read `availability.status`.
- * During the migration, an explicit `status` may already exist on locally
- * edited profiles. Prefer it so "open_to_offers" can stand without a date.
+ * Etiqueta legible del booleano persistido. 1:1 y SIN pérdida en los dos
+ * sentidos desde que la disponibilidad es binaria (2026-07-29): lo único que
+ * se guarda es `immediately`, y `status` existe para que UI y filtros no
+ * tengan que hablar en booleanos.
+ *
+ * Ya NO consulta un `status` preexistente: durante la etapa de 3 estados eso
+ * era lo que permitía que un "Open to offers" sin fecha sobreviviera en
+ * memoria y muriera al recargar. Con dos estados no hay nada que preferir.
  */
 export function deriveAvailabilityStatus(avail: Availability): AvailabilityStatus {
-  if (
-    avail.status === 'available' ||
-    avail.status === 'open_to_offers' ||
-    avail.status === 'unavailable'
-  ) {
-    return avail.status;
-  }
-  if (avail.immediately) return 'available';
-  if (avail.availableFrom) return 'open_to_offers';
-  return 'unavailable';
+  return avail.immediately ? 'open_to_offers' : 'unavailable';
 }
 
 /**
- * Merge V2 availability with the V1 `status` field so both APIs work on the
- * same object. Existing screens read `availability.status`; new code reads
- * `availability.immediately`.
+ * Adjunta la etiqueta `status` al objeto de disponibilidad para que las
+ * pantallas y los filtros la lean. Nunca se persiste: el PATCH del perfil
+ * escribe sólo `immediately` y `contract_types`.
  */
 export function withAvailabilityStatus(avail: Availability): Availability {
   return { ...avail, status: deriveAvailabilityStatus(avail) };
@@ -120,15 +112,19 @@ export function withAvailabilityStatus(avail: Availability): Availability {
 // ---------------------------------------------------------------------------
 
 /**
- * Compute a single yearsExperience number from a V2 aircraft-experience array.
- * Uses the maximum across all entries (hours converted at 2000 h/year).
+ * Sub-fase de experiencia (2026-07-28): antes derivaba los años del array
+ * technician_aircraft_experience (tabla retirada, migracion 031). Ahora es
+ * simplemente el campo declarado del perfil.
+ *
+ * El tipo V1 exige `number`, pero el V2 distingue undefined (no declarado)
+ * de 0 (declarado sin experiencia). Colapsar a 0 aqui es una PERDIDA de
+ * informacion aceptada solo para la capa de compatibilidad V1: ninguna
+ * decision real (ni el filtro duro ni el scoring) pasa por esta funcion.
+ * Las pantallas V2 deben leer yearsExperience directamente y mostrar
+ * "not specified" cuando sea undefined.
  */
-export function computeYearsExperience(experience: TechnicianAircraftExperience[]): number {
-  if (!experience.length) return 0;
-  return Math.max(
-    0,
-    ...experience.map((e) => (e.unit === 'years' ? e.value : Math.round(e.value / 2000))),
-  );
+export function computeYearsExperience(yearsExperience: number | undefined): number {
+  return yearsExperience ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +178,7 @@ export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview, ratingIn
     availability: withAvailabilityStatus(preview.availability),
     verificationStatus: preview.verificationStatus,
     profileCompleteness: 0,
-    yearsExperience: computeYearsExperience(preview.aircraftExperience),
+    yearsExperience: computeYearsExperience(preview.yearsExperience),
     // matchingScore intentionally omitted — no offer context in general search
   };
 }
@@ -233,7 +229,7 @@ export function v2TechnicianToV1(tech: TechnicianWithRelations, ratingIndex: Air
     availability: withAvailabilityStatus(tech.availability),
     verificationStatus: tech.verificationStatus,
     profileCompleteness: tech.profileCompleteness,
-    yearsExperience: computeYearsExperience(tech.aircraftExperience),
+    yearsExperience: computeYearsExperience(tech.yearsExperience),
   };
 }
 
@@ -254,7 +250,11 @@ export function v2CompanyToV1(c: CompanyProfile | CompanyProfileView): Company {
     locationCityId: location.locationCityId,
     country: location.country,
     city: location.city,
-    website: '',
+    // Ya no es el '' hardcodeado que inventario la auditoria de campos
+    // fantasma: desde la migracion 036 hay columna real detras. El ?? '' que
+    // queda es solo la traduccion de "no declarada" al tipo V1, que exige
+    // string.
+    website: c.website ?? '',
     companyType: c.companyType, // CompanyTypeCode ⊂ CompanyType union
     verificationStatus: c.verificationStatus,
     contactEmail: c.email,

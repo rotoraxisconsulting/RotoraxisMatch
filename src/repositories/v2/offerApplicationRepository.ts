@@ -95,6 +95,26 @@ export const offerApplicationRepository = {
     const conflict = evaluateApplicationConflict(activeRequest, existingApplication);
     if (conflict) throw new Error(conflict);
 
+    // Re-aplicar tras una retirada REACTIVA la fila existente en vez de
+    // insertar otra: UNIQUE(technician_id, offer_id) no lo permitiria, y
+    // ademas conserva el historial (created_at original, updated_at = fecha
+    // de la re-aplicacion). El cover_note SI se reemplaza — el tecnico
+    // escribe uno nuevo al volver a aplicar.
+    //
+    // identity_revealed/documents_unlocked los resetea el trigger de BD
+    // (handle_offer_relation_status_transition pone ambos a false en toda
+    // transicion que no sea a 'accepted'), asi que no se tocan aqui.
+    if (existingApplication?.status === 'withdrawn') {
+      const { data: reactivated, error: reactivateError } = await supabase
+        .from('offer_applications')
+        .update({ status: 'pending', cover_note: data.coverNote ?? null })
+        .eq('id', existingApplication.id)
+        .select(SELECT_FIELDS)
+        .single();
+      throwIfError(reactivateError);
+      return mapOfferApplicationRow(reactivated as any);
+    }
+
     const { data: inserted, error } = await supabase
       .from('offer_applications')
       .insert({

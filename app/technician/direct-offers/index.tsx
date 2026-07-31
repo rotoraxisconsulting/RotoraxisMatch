@@ -81,7 +81,8 @@ function formatDate(iso: string): string {
 
 export default function DirectOffersListScreen() {
   const router = useRouter();
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
@@ -93,6 +94,11 @@ export default function DirectOffersListScreen() {
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!technicianId) return;
+
     const [requests, techWithRelations] = await Promise.all([
       offerRequestRepository.getForTechnician(technicianId),
       technicianRepositoryV2.getWithRelations(technicianId),

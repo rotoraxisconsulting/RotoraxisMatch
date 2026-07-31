@@ -4,30 +4,48 @@ import { CompanyMemberRole } from '../types/enums';
 // These helpers are frontend-only UI guards. RLS policies in docs/RLS_PLAN_V2.md
 // will enforce the same rules server-side once Supabase is connected.
 
-export function canManageCompanyMembers(role: CompanyMemberRole): boolean {
+// Fase 5.4 (2026-07-28): todos aceptan `CompanyMemberRole | undefined`.
+// `undefined` = la sesión de empresa todavía no está resuelta (o el perfil no
+// tiene fila en company_members). Se responde SIEMPRE que no: fail-closed.
+//
+// Es deliberado que absorban el undefined aquí en vez de obligar a 10
+// pantallas a repetir el mismo `role ? canX(role) : false`. Y es más seguro
+// que lo anterior: antes, una sesión sin resolver llegaba como
+// `companyMemberRole: 'viewer'` (el EMPTY_COMPANY que la 5.4 elimina), que
+// es un rol REAL — la UI concedía permisos de viewer a una sesión inexistente.
+// Ahora no concede ninguno hasta que hay rol de verdad.
+
+// Type guard, no `boolean` a secas: tras comprobarlo, TypeScript sabe que el
+// rol es exactamente 'admin'. Evita que las pantallas que ya han verificado
+// el permiso tengan que volver a comprobar el undefined para indexar tablas
+// de etiquetas (CompanyTeamManagement).
+export function canManageCompanyMembers(role: CompanyMemberRole | undefined): role is 'admin' {
   return role === 'admin';
 }
 
-export function canManageCompanySettings(role: CompanyMemberRole): boolean {
+export function canManageCompanySettings(role: CompanyMemberRole | undefined): boolean {
   return role === 'admin';
 }
 
-export function canManageOffers(role: CompanyMemberRole): boolean {
+export function canManageOffers(role: CompanyMemberRole | undefined): boolean {
   return role === 'admin' || role === 'recruiter';
 }
 
-export function canSendDirectOffers(role: CompanyMemberRole): boolean {
+export function canSendDirectOffers(role: CompanyMemberRole | undefined): boolean {
   return role === 'admin' || role === 'recruiter';
 }
 
-export function canReviewApplications(role: CompanyMemberRole): boolean {
+export function canReviewApplications(role: CompanyMemberRole | undefined): boolean {
   return role === 'admin' || role === 'recruiter';
 }
 
-export function canSendChatMessages(role: CompanyMemberRole): boolean {
+export function canSendChatMessages(role: CompanyMemberRole | undefined): boolean {
   return role === 'admin' || role === 'recruiter';
 }
 
-export function isCompanyViewer(role: CompanyMemberRole): boolean {
+// Una sesión sin resolver NO es "un viewer": devuelve false, igual que los
+// demás. Sirve para mostrar avisos de solo-lectura, y no hay nada que avisar
+// mientras no se sabe quién eres.
+export function isCompanyViewer(role: CompanyMemberRole | undefined): boolean {
   return role === 'viewer';
 }

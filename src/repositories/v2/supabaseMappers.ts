@@ -6,7 +6,6 @@ import { CompanyMemberRole, DocumentStatus, OfferRequestStatus, OfferStatus, Ver
 import { ContractTypeCode, LicenseCode, TechnicianTypeCode } from '../../types/catalog';
 import {
   Availability,
-  TechnicianAircraftExperience,
   TechnicianHabilitation,
   TechnicianLicense,
   TechnicianProfile,
@@ -32,20 +31,42 @@ export function throwIfError(error: { message?: string } | null | undefined): vo
   if (error) throw new Error(error.message ?? 'Supabase request failed.');
 }
 
+/**
+ * Comprueba que una mutación afectó de verdad a alguna fila.
+ *
+ * `error === null` NO es prueba de que la escritura ocurrió: si RLS no deja
+ * pasar la fila, PostgREST devuelve 0 filas y CERO error, y la UI informa de
+ * un éxito que no existió. Es la clase 1 de la taxonomía de la auditoría y ya
+ * mordió una vez de verdad (borrar una oferta "funcionaba" y la oferta
+ * reaparecía en la lista — migración 026).
+ *
+ * Uso: añade `.select('id')` a la mutación y pásale el `data` resultante.
+ * Sin ese `.select()` no hay nada que contar y este helper no sirve.
+ *
+ * El mensaje debe describir la ACCIÓN del usuario, no la fila: quien lo lee
+ * está en una pantalla, no en una tabla.
+ */
+export function throwIfNoRows(
+  data: unknown[] | null | undefined,
+  message: string,
+): void {
+  if (!data || data.length === 0) throw new Error(message);
+}
+
+// Disponibilidad binaria (2026-07-29). `available_from` ya no se lee ni se
+// escribe: la migración 041 lo retira de las filas existentes. No se deja un
+// fallback "por si acaso" — sería justo el campo fantasma que esa migración
+// existe para eliminar.
 export function mapAvailability(value: unknown): Availability {
   const source = (value && typeof value === 'object' ? value : {}) as {
     immediately?: boolean;
-    available_from?: string | null;
-    availableFrom?: string | null;
     contract_types?: string[];
     contractTypes?: string[];
   };
   const immediately = Boolean(source.immediately);
-  const availableFrom = source.available_from ?? source.availableFrom ?? undefined;
   return {
     immediately,
-    status: immediately ? 'available' : availableFrom ? 'open_to_offers' : 'unavailable',
-    availableFrom: availableFrom ?? undefined,
+    status: immediately ? 'open_to_offers' : 'unavailable',
     contractTypes: (source.contract_types ?? source.contractTypes ?? []) as Availability['contractTypes'],
   };
 }
@@ -60,6 +81,7 @@ export function mapCompanyRow(row: DbRow): CompanyProfileView {
     phone: row.phone ?? undefined,
     email: row.email,
     companyType: row.company_type,
+    website: row.website ?? undefined,
     verificationStatus: row.verification_status as VerificationStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -237,25 +259,21 @@ export function mapChatMessageRow(row: DbRow): ChatMessage {
 export async function loadTechnicianRelations(technicianIds: string[]): Promise<Record<string, {
   licenses: TechnicianLicense[];
   habilitations: TechnicianHabilitation[];
-  aircraftExperience: TechnicianAircraftExperience[];
 }>> {
   const uniqueIds = [...new Set(technicianIds)].filter(Boolean);
   const map: Record<string, {
     licenses: TechnicianLicense[];
     habilitations: TechnicianHabilitation[];
-    aircraftExperience: TechnicianAircraftExperience[];
   }> = {};
-  for (const id of uniqueIds) map[id] = { licenses: [], habilitations: [], aircraftExperience: [] };
+  for (const id of uniqueIds) map[id] = { licenses: [], habilitations: [] };
   if (uniqueIds.length === 0) return map;
 
-  const [licensesRes, habsRes, expRes] = await Promise.all([
+  const [licensesRes, habsRes] = await Promise.all([
     supabase.from('technician_licenses').select('id, technician_id, license_code, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
-    supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at, needs_review').in('technician_id', uniqueIds),
-    supabase.from('technician_aircraft_experience').select('id, technician_id, aircraft_type_code, value, unit, created_at').in('technician_id', uniqueIds),
+    supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
   ]);
   throwIfError(licensesRes.error);
   throwIfError(habsRes.error);
-  throwIfError(expRes.error);
 
   for (const row of (licensesRes.data ?? []) as DbRow[]) {
     map[row.technician_id]?.licenses.push({
@@ -272,23 +290,11 @@ export async function loadTechnicianRelations(technicianIds: string[]): Promise<
       id: row.id,
       technicianId: row.technician_id,
       licenseCode: row.license_code,
-      aircraftTypeCode: row.aircraft_type_code ?? undefined,
       aircraftTypeRatingId: row.aircraft_type_rating_id ?? undefined,
       experienceYears: row.experience_years ?? undefined,
       isCurrent: row.is_current ?? undefined,
       issuedAt: row.issued_at ?? undefined,
       expiresAt: row.expires_at ?? undefined,
-      createdAt: row.created_at,
-      needsReview: row.needs_review ?? false,
-    });
-  }
-  for (const row of (expRes.data ?? []) as DbRow[]) {
-    map[row.technician_id]?.aircraftExperience.push({
-      id: row.id,
-      technicianId: row.technician_id,
-      aircraftTypeCode: row.aircraft_type_code,
-      value: row.value ?? 0,
-      unit: row.unit,
       createdAt: row.created_at,
     });
   }
@@ -308,6 +314,7 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
     technicianType: row.technician_type,
     locationCityId: row.location_city_id,
     availability: mapAvailability(row.availability),
+    yearsExperience: row.years_experience ?? undefined,
     verificationStatus: row.verification_status as VerificationStatus,
     profileCompleteness: row.profile_completeness ?? 0,
     socialLinks: row.social_links ?? undefined,
@@ -315,7 +322,6 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
     updatedAt: row.updated_at,
     licenses: relations?.licenses ?? [],
     habilitations: relations?.habilitations ?? [],
-    aircraftExperience: relations?.aircraftExperience ?? [],
   };
 }
 
@@ -324,7 +330,6 @@ export function mapPublicTechnicianRow(row: DbRow, relations?: Awaited<ReturnTyp
   return {
     id: row.id,
     anonymousCode: row.anonymous_code,
-    age: row.age ?? 0,
     technicianType: row.technician_type,
     locationCityId: row.location_city_id,
     country: row.country ?? location?.country ?? '',
@@ -334,7 +339,7 @@ export function mapPublicTechnicianRow(row: DbRow, relations?: Awaited<ReturnTyp
     longitude: row.longitude ?? location?.longitude,
     licenses: (relations?.licenses ?? []).map((license) => license.licenseCode),
     habilitations: relations?.habilitations ?? [],
-    aircraftExperience: relations?.aircraftExperience ?? [],
+    yearsExperience: row.years_experience ?? undefined,
     availability: mapAvailability(row.availability),
     verificationStatus: row.verification_status as VerificationStatus,
   };
@@ -379,10 +384,16 @@ export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnT
     lastName: row.last_name ?? '',
     email: row.email ?? '',
     phone: row.phone ?? undefined,
-    birthDate: '1970-01-01',
+    // `technician_public_view` NO expone `birth_date` NI `age` (migración 040:
+    // la edad se retiró del contrato público por ser característica protegida).
+    // Aquí va cadena vacía, NUNCA una fecha inventada: el placeholder
+    // '1970-01-01' que había antes producía "56 años" para TODOS los técnicos
+    // que veía una empresa.
+    birthDate: '',
     technicianType: row.technician_type,
     locationCityId: row.location_city_id,
     availability: mapAvailability(row.availability),
+    yearsExperience: row.years_experience ?? undefined,
     verificationStatus: row.verification_status as VerificationStatus,
     profileCompleteness: row.profile_completeness ?? 0,
     socialLinks: row.social_links ?? undefined,
@@ -390,6 +401,5 @@ export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnT
     updatedAt: row.updated_at ?? now,
     licenses: relations?.licenses ?? [],
     habilitations: relations?.habilitations ?? [],
-    aircraftExperience: relations?.aircraftExperience ?? [],
   };
 }

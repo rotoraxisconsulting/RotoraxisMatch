@@ -33,6 +33,7 @@ import { OfferStatus } from '../../../src/types/enums';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 interface FormState {
   title: string;
@@ -142,7 +143,7 @@ export default function EditOfferScreen() {
       });
       router.back();
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not save offer.');
+      notify('Error', e?.message ?? 'Could not save offer.');
     } finally {
       setSaving(false);
     }

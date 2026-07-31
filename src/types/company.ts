@@ -50,6 +50,17 @@ export interface CompanyProfile {
   phone?: string;
   email: string;
   companyType: CompanyTypeCode;
+  /**
+   * Web pública de la empresa (migración 036). `undefined` = no declarada;
+   * en Postgres es NULL, nunca ''. Se persiste ya normalizada, con esquema
+   * explícito (src/utils/urlValidation.ts).
+   *
+   * SIN gate de privacidad, a diferencia de TechnicianProfile.socialLinks:
+   * la empresa no es anónima en este producto. Cualquier usuario activo la
+   * lee vía la política companies_select_all; sólo el admin de la propia
+   * empresa la escribe (companies_update_own).
+   */
+  website?: string;
   /** ADMIN-ONLY in Supabase — company cannot write this field; set via admin-only RLS policy */
   verificationStatus: VerificationStatus;
   createdAt: string;

@@ -245,7 +245,7 @@ import { Document } from './document';
 export interface SafeTechnicianPreview {
   id: string;
   anonymousCode: string;
-  age: number;                          // derived from birthDate
+  // age: RETIRADA (retirada 2026-07-29, migración 040 — característica protegida, riesgo de discriminación en el cribado)
   technicianType: TechnicianTypeCode;
   locationCityId: string;               // required — derived from persisted TechnicianProfile.locationCityId
   country: string;

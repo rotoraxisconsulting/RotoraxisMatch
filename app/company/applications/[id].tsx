@@ -28,6 +28,7 @@ import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '..
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
+import { ExternalLink } from '../../../src/components/ExternalLink';
 import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import {
   CompanyBadge,
@@ -56,6 +57,7 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { MatchScore } from '../../../src/types/matching';
 import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 const TECH_TYPE_LABELS: Record<string, string> = {
   mechanic: 'Mechanic',
@@ -99,7 +101,9 @@ export default function ApplicationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberRole = companySession?.companyMemberRole;
 
   const [app, setApp] = useState<OfferApplication | null>(null);
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
@@ -116,6 +120,11 @@ export default function ApplicationDetailScreen() {
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!companyId) return;
+
     if (!id) return;
     const application = await offerApplicationRepository.getById(id);
     if (!application) return;
@@ -180,7 +189,7 @@ export default function ApplicationDetailScreen() {
     setViewingDocId(null);
     if (error || !url) {
       win?.close();
-      Alert.alert('Error', error ?? 'Could not generate download link.');
+      notify('Error', error ?? 'Could not generate download link.');
       return;
     }
     openDocumentUrl(url, win);
@@ -353,6 +362,12 @@ export default function ApplicationDetailScreen() {
                     <Text style={styles.profileName}>{unlockedView.firstName} {unlockedView.lastName}</Text>
                     <Text style={styles.profileSub}>{unlockedView.email}</Text>
                     {unlockedView.phone ? <Text style={styles.profileSub}>{unlockedView.phone}</Text> : null}
+                    {/* Enlaces profesionales del tecnico. Van DENTRO de la rama
+                        `unlocked`, junto al email y el telefono: son campo
+                        privado y comparten exactamente su gate. */}
+                    {Object.entries(unlockedView.socialLinks ?? {}).map(([key, url]) =>
+                      url ? <ExternalLink key={key} url={url} color={companyUi.accent} /> : null,
+                    )}
                   </>
                 ) : (
                   <>
@@ -384,8 +399,7 @@ export default function ApplicationDetailScreen() {
             <BreakdownRow label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} />
             <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} />
             <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} />
-            <BreakdownRow label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} />
-            <BreakdownRow label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} />
+            <BreakdownRow label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} />
             <MatchExplanation score={score} hideBreakdown />
           </CompanyCard>

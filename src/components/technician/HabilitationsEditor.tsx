@@ -5,7 +5,7 @@ import { TechnicianCard, TechnicianChip, TechnicianBadge, techUi } from './Techn
 import { AircraftTypeRatingPicker } from '../AircraftTypeRatingPicker';
 import { DateField } from '../DateField';
 import type { DateFieldPalette } from '../DateField.types';
-import { AircraftRatingIndex, getAircraftTypeRatingLabel, getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../constants/aircraftTypeRatings';
 import { getCompatibleProductType, isUnusualCombination } from '../../utils/licenseCategoryProductType';
 import { AircraftTypeRatingCatalog, LicenseCode } from '../../types/catalog';
 
@@ -23,30 +23,23 @@ export interface HabilitationRow {
   isCurrent?: boolean;
 }
 
-export interface LegacyHabilitationRow {
-  id: string;
-  licenseCode: string;
-  aircraftTypeCode: string;
-  // Set by scripts/backfillLegacyAircraftRatings.ts (migration 027) when
-  // aircraftTypeCode resolved to zero or multiple catalog ratings and was
-  // left unmigrated on purpose — never guessed to a single winner. A row
-  // can also simply not have gone through that script yet, so `false` here
-  // means "not flagged", not "confirmed fine".
-  needsReview: boolean;
-}
+// Fase 5.3 (2026-07-28): LegacyHabilitationRow and the read-only "Legacy" /
+// "Needs review" section that rendered it are GONE, together with the
+// pre-Part-66 aircraft_types catalog they described. Every habilitation is
+// now an editable HabilitationRow with a real catalog rating — there is no
+// second, unerasable kind of row anymore.
 
 interface Props {
   value: HabilitationRow[];
   onChange: (next: HabilitationRow[]) => void;
-  legacyValue: LegacyHabilitationRow[];
   // Only license categories currently held — gates "Add habilitation" the
   // same way it always has (a habilitation must be issued under a category
   // the technician actually holds).
   licenseCategories: string[];
-  // Resolves labels for every rating referenced by `value`/`legacyValue`,
-  // including inactive ones — owned by the parent (profile.tsx also needs
-  // it at save time for validation messages and the completeness score),
-  // passed down read-only.
+  // Resolves labels for every rating referenced by `value`, including
+  // inactive ones — owned by the parent (profile.tsx also needs it at save
+  // time for validation messages and the completeness score), passed down
+  // read-only.
   ratingsById: AircraftRatingIndex;
   // Called the moment the picker resolves a NEW rating (before "Add" is
   // even pressed) so the parent's own index stays in sync — mirrors the
@@ -54,27 +47,6 @@ interface Props {
   onRatingResolved: (rating: AircraftTypeRatingCatalog) => void;
   onRequestCatalog: () => void;
   dateFieldPalette: DateFieldPalette;
-}
-
-// Fase 5.3 — replaces the deleted constants/aircraftTypes.ts's lookup
-// (33-code legacy catalog) now that it's gone. Resolves the raw legacy
-// code against the REAL 606-endorsement catalog via
-// resolveLegacyCodeToFamilyKeys() (same inclusive, never-guess-a-winner
-// rule the broad/approximate filter and T3 matching already use) — shows
-// every family it could mean, joined, rather than picking one. Falls back
-// to the raw code verbatim when nothing resolves (no catalog rating lists
-// it as an alias), same as the old function's `?? code` fallback.
-function legacyAircraftTypeLabel(code: string, ratingIndex: AircraftRatingIndex): string {
-  const familyKeys = resolveLegacyCodeToFamilyKeys(code, ratingIndex);
-  if (familyKeys.size === 0) return code;
-
-  const familyByKey = new Map<string, string>();
-  for (const rating of ratingIndex.values()) {
-    familyByKey.set(getAircraftFamilyKey(rating), rating.aircraftFamily);
-  }
-  return [...familyKeys]
-    .map((key) => (familyByKey.has(key) ? `${familyByKey.get(key)} family` : key))
-    .join(' / ');
 }
 
 // Fase 3b screen 2 — the technician-side counterpart to
@@ -106,7 +78,6 @@ function legacyAircraftTypeLabel(code: string, ratingIndex: AircraftRatingIndex)
 export function HabilitationsEditor({
   value,
   onChange,
-  legacyValue,
   licenseCategories,
   ratingsById,
   onRatingResolved,
@@ -152,7 +123,7 @@ export function HabilitationsEditor({
       <Text style={styles.title}>Habilitations</Text>
       <Text style={styles.subtitle}>Each rating is linked to the Part-66 category it was issued under — never guessed.</Text>
 
-      {value.length === 0 && legacyValue.length === 0 ? <Text style={styles.emptyValue}>Not specified</Text> : null}
+      {value.length === 0 ? <Text style={styles.emptyValue}>Not specified</Text> : null}
 
       {value.map((h, index) => {
         const rating = ratingsById.get(h.aircraftTypeRatingId);
@@ -204,19 +175,6 @@ export function HabilitationsEditor({
           </View>
         );
       })}
-
-      {legacyValue.map((h) => (
-        <View key={h.id} style={styles.habRow}>
-          <View style={styles.habInfo}>
-            <Text style={styles.habLicense}>{h.licenseCode}</Text>
-            <Text style={styles.habRating}>{legacyAircraftTypeLabel(h.aircraftTypeCode, ratingsById)} — general, engine not specified</Text>
-            <View style={styles.chipRow}>
-              <TechnicianBadge label="Legacy" tone="muted" small />
-              {h.needsReview ? <TechnicianBadge label="Needs review — code not resolved to a catalog rating" tone="warning" small /> : null}
-            </View>
-          </View>
-        </View>
-      ))}
 
       <View style={styles.fieldGap} />
       <Text style={styles.fieldLabel}>Add habilitation — category</Text>
@@ -278,15 +236,6 @@ const styles = StyleSheet.create({
   fieldGap: { height: spacing.sm },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   emptyValue: { fontSize: 13, lineHeight: 18, fontWeight: '500', color: techUi.textMuted },
-  habRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: techUi.borderSoft,
-  },
   habItem: {
     gap: spacing.xs,
     paddingVertical: spacing.xs,

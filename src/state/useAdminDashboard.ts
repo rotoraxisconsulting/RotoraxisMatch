@@ -12,7 +12,7 @@ import {
 } from '../types';
 import { OfferWithRequirements } from '../types/offer';
 import { OfferRequest, OfferApplication } from '../types/offerRequest';
-import { OfferStatus } from '../types/enums';
+import { OfferStatus, UserStatus } from '../types/enums';
 import { supabase } from '../lib/supabase';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
 import { documentRepositoryV2 } from '../repositories/v2/documentRepositoryV2';
@@ -26,6 +26,7 @@ import {
   v2CompanyToV1,
   v2DocumentToV1,
   v2OfferRequestToMatchRequest,
+  resolveTypeRatingLabels,
 } from '../utils/v2CompatAdapters';
 
 
@@ -52,6 +53,10 @@ export interface AdminMetrics {
 interface UseAdminDashboardReturn {
   technicians: Technician[];
   technicianDetailsMap: Record<string, TechnicianWithRelations>;
+  /** displayName completo (célula + motor) por técnico, resuelto con el catálogo ya cargado. */
+  typeRatingLabelsMap: Record<string, string[]>;
+  /** `profiles.status` por technician_profiles.id — distingue cuenta viva de lápida (`deleted`). */
+  accountStatusMap: Record<string, UserStatus>;
   companies: Company[];
   companyProfileMap: Record<string, CompanyProfileView>;
   companyMemberCounts: Record<string, number>;
@@ -76,6 +81,8 @@ interface UseAdminDashboardReturn {
 export function useAdminDashboard(): UseAdminDashboardReturn {
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [technicianDetails, setTechnicianDetails] = useState<TechnicianWithRelations[]>([]);
+  const [typeRatingLabels, setTypeRatingLabels] = useState<Record<string, string[]>>({});
+  const [accountStatusMap, setAccountStatusMap] = useState<Record<string, UserStatus>>({});
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyProfiles, setCompanyProfiles] = useState<CompanyProfileView[]>([]);
   const [companyMemberCounts, setCompanyMemberCounts] = useState<Record<string, number>>({});
@@ -90,7 +97,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   const load = useCallback(async () => {
     setLoading(true);
 
-    const [profiles, v2Docs, v2Requests, v2Offers, v2Applications, companiesRes, membersRes, ratings] =
+    const [profiles, v2Docs, v2Requests, v2Offers, v2Applications, companiesRes, membersRes, ratings, accountsRes] =
       await Promise.all([
         technicianRepositoryV2.getAll(),
         documentRepositoryV2.getAll(),
@@ -100,7 +107,7 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
         supabase
           .from('companies')
           .select(`
-            id, name, location_city_id, phone, email, company_type,
+            id, name, location_city_id, phone, email, company_type, website,
             verification_status, created_at, updated_at,
             location_airports ( country_name, city, iata, icao, latitude, longitude )
           `)
@@ -109,6 +116,11 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
           .from('company_members')
           .select('id, company_id, user_id, role, created_at'),
         catalogRepository.getAircraftTypeRatings(),
+        // Estado de CUENTA (profiles.status), que no viaja en technician_profiles.
+        // Sin esto el panel no puede distinguir un técnico vivo de una LÁPIDA
+        // (cuenta borrada: PII anonimizada, status='deleted', sin usuario de
+        // auth). Legible por `profiles_select_admin` (is_admin()).
+        supabase.from('profiles').select('id, status'),
       ]);
     const ratingIndex = buildAircraftRatingIndex(ratings);
 
@@ -121,6 +133,29 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     );
     setTechnicianDetails(technicianDetailsResult);
     setTechnicians(technicianDetailsResult.map((t) => v2TechnicianToV1(t, ratingIndex)));
+
+    // Etiquetas "Type ratings" con displayName COMPLETO (célula + motor),
+    // resueltas aquí porque es donde ya vive el ratingIndex — la tarjeta no
+    // carga una segunda copia del catálogo (ver comentario en
+    // AdminTechnicianCard). `Technician.aircraftTypes` (V1-compat) sigue
+    // llevando la familia suelta y se usa para el buscador, no para mostrar.
+    const labels: Record<string, string[]> = {};
+    for (const t of technicianDetailsResult) {
+      labels[t.id] = resolveTypeRatingLabels(t.habilitations, ratingIndex);
+    }
+    setTypeRatingLabels(labels);
+
+    // profiles.status por technician_profiles.id (la tarjeta trabaja con el id
+    // del perfil de técnico, no con el user_id).
+    const statusByUserId = new Map<string, string>(
+      (accountsRes.data ?? []).map((row: { id: string; status: string }) => [row.id, row.status]),
+    );
+    const accountStatus: Record<string, UserStatus> = {};
+    for (const t of technicianDetailsResult) {
+      const s = statusByUserId.get(t.userId);
+      if (s) accountStatus[t.id] = s as UserStatus;
+    }
+    setAccountStatusMap(accountStatus);
 
     // Map Supabase companies rows → CompanyProfileView (camelCase + resolved location)
     const companyProfilesResult: CompanyProfileView[] = (companiesRes.data ?? []).map((row) => {
@@ -246,6 +281,8 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
   return {
     technicians,
     technicianDetailsMap,
+    typeRatingLabelsMap: typeRatingLabels,
+    accountStatusMap,
     companies,
     companyProfileMap,
     companyMemberCounts,

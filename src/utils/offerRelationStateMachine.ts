@@ -3,19 +3,68 @@ import { ActivityType } from '../types/activity';
 
 export type OfferRelationKind = 'direct_offer' | 'application';
 
+// `withdrawn` NO esta aqui desde 2026-07-28: es reversible, ver abajo.
 const TERMINAL_STATUSES = new Set<OfferRequestStatus>([
   'accepted',
   'rejected',
   'expired',
-  'withdrawn',
 ]);
 
-const ALLOWED_TRANSITIONS: Record<OfferRequestStatus, OfferRequestStatus[]> = {
-  pending: ['accepted', 'rejected', 'expired', 'withdrawn'],
-  accepted: [],
-  rejected: [],
-  expired: [],
-  withdrawn: [],
+// withdrawn -> pending (2026-07-28): retirarse NO es lo mismo que ser
+// rechazado, y que un tecnico que se echa atras quede vetado de por vida de
+// esa oferta era un efecto colateral de la regla H6 (una aplicacion por
+// oferta), no una decision de producto. En las plataformas de empleo
+// retirarse no te veta.
+//
+// Se REACTIVA LA MISMA FILA, nunca se inserta una nueva: asi
+// UNIQUE(technician_id, offer_id) sigue intacto y el historial (created_at,
+// la fila original) se conserva.
+//
+// `rejected` sigue siendo terminal, a proposito: la asimetria es deliberada
+// — la empresa dijo que no, y el tecnico no puede insistir.
+//
+// ── POR QUE LA TABLA DEPENDE DEL TIPO DE RELACION ────────────────────
+// La reactivacion se permite SOLO en 'application', nunca en
+// 'direct_offer', y no es una omision:
+//
+//   - offer_applications tiene UNIQUE(technician_id, offer_id) TOTAL, asi
+//     que insertar una segunda fila es imposible: reactivar es la UNICA
+//     forma de volver a aplicar.
+//   - offer_requests tiene un unico PARCIAL (uq_offer_requests_one_active,
+//     solo sobre estados activos), asi que tras retirar una oferta directa
+//     la empresa simplemente crea una fila NUEVA — camino que ya existe y
+//     ya funciona. Reactivar ahi no haria falta, y ademas seria peligroso:
+//     reactivar una retirada mientras existe otra activa para el mismo par
+//     chocaria con ese indice parcial con un error crudo de Postgres.
+//
+// Esta funcion tiene su ESPEJO EXACTO en la base de datos
+// (assert_offer_relation_transition, migracion 033), que es quien enforcea
+// de verdad — esta version de TypeScript no tiene call sites en produccion,
+// es especificacion y cobertura de tests. Si cambias una, cambia la otra:
+// una regla con dos implementaciones que divergen es el bug que la 033
+// vino a cerrar.
+// EXPORTADA a propósito: es la ÚNICA DECLARACIÓN de la regla. El enforcer
+// real es `assert_offer_relation_transition` en Postgres (migración 033), y
+// `scripts/validateOfferStateMachine.ts` recorre esta tabla entera contra esa
+// función en vivo para probar que coinciden. Sin ese script, esto sería un
+// espejo que puede desviarse sin que ningún test lo note — ver la norma
+// "una regla en dos sitios: barrera o spec declarada" en
+// docs/MISSION_PART66.md.
+export const ALLOWED_TRANSITIONS: Record<OfferRelationKind, Record<OfferRequestStatus, OfferRequestStatus[]>> = {
+  application: {
+    pending: ['accepted', 'rejected', 'expired', 'withdrawn'],
+    accepted: [],
+    rejected: [],
+    expired: [],
+    withdrawn: ['pending'],
+  },
+  direct_offer: {
+    pending: ['accepted', 'rejected', 'expired', 'withdrawn'],
+    accepted: [],
+    rejected: [],
+    expired: [],
+    withdrawn: [],
+  },
 };
 
 export function isActiveOfferRelationStatus(status: OfferRequestStatus): boolean {
@@ -25,12 +74,17 @@ export function isActiveOfferRelationStatus(status: OfferRequestStatus): boolean
 export function assertOfferRelationTransition(
   from: OfferRequestStatus,
   to: OfferRequestStatus,
+  kind: OfferRelationKind,
 ): void {
   if (from === to) return;
-  const allowed = ALLOWED_TRANSITIONS[from] ?? [];
+  const allowed = ALLOWED_TRANSITIONS[kind][from] ?? [];
   if (!allowed.includes(to)) {
     const terminalHint = TERMINAL_STATUSES.has(from) ? ' Terminal records cannot be changed.' : '';
-    throw new Error(`Invalid status transition from ${from} to ${to}.${terminalHint}`);
+    const reactivationHint =
+      from === 'withdrawn' && kind === 'direct_offer'
+        ? ' A withdrawn direct offer is not reactivated — send a new one instead.'
+        : '';
+    throw new Error(`Invalid status transition from ${from} to ${to} (${kind}).${terminalHint}${reactivationHint}`);
   }
 }
 
@@ -109,7 +163,14 @@ export function evaluateApplicationConflict(
     if (isActiveOfferRelationStatus(existingApplication.status)) {
       return 'You already have an active application for this offer.';
     }
-    return 'You already applied to this offer previously — re-applying is not available once an application has been withdrawn or decided.';
+    // withdrawn es el UNICO estado desde el que se puede volver: no bloquea,
+    // reactiva la fila existente (ver ALLOWED_TRANSITIONS y
+    // offerApplicationRepository.create). El orden importa — la comprobacion
+    // de oferta directa activa de arriba se ejecuta ANTES, asi que si la
+    // empresa mando una oferta directa despues de la retirada, reactivar
+    // sigue bloqueado.
+    if (existingApplication.status === 'withdrawn') return null;
+    return 'You already applied to this offer previously — re-applying is not available once an application has been decided.';
   }
 
   return null;

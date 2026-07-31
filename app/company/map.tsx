@@ -11,10 +11,12 @@ import { useCompanySession } from '../../src/state/SessionContext';
 import { MapFilters, MapFilterValue } from '../../src/types/filters';
 import { MapOfferMatchOption } from '../../src/types/mapOffers';
 import { colors } from '../../src/theme';
+import { notify } from '../../src/utils/platformAlert';
 
 export default function MapScreen() {
   const router = useRouter();
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
   const [filters, setFilters] = useState<MapFilters>({});
   const [offerMatchesByTechnician, setOfferMatchesByTechnician] = useState<Record<string, MapOfferMatchOption[]>>({});
   const [loadingOfferMatches, setLoadingOfferMatches] = useState(false);
@@ -29,7 +31,10 @@ export default function MapScreen() {
     let active = true;
 
     async function loadOfferMatches() {
-      if (technicians.length === 0) {
+      // Guard de CARGA, mudo a proposito: no lo dispara el usuario, se
+      // reevalua en cada render y avisar aqui seria ruido. Solo las ACCIONES
+      // de usuario tienen que hablar cuando no pueden completarse.
+      if (!companyId || technicians.length === 0) {
         setOfferMatchesByTechnician({});
         setLoadingOfferMatches(false);
         return;
@@ -79,6 +84,10 @@ export default function MapScreen() {
   }, [technicians, companyId]);
 
   async function handleSendOfferFromMap(technicianId: string, offerId: string) {
+    if (!companyId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     await offerRequestRepository.create({
       companyId,
       technicianId,

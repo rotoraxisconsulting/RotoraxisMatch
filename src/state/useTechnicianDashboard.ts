@@ -26,7 +26,8 @@ interface TechnicianDashboardState {
 }
 
 export function useTechnicianDashboard(): TechnicianDashboardState {
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const [technician, setTechnician] = useState<Technician | null>(null);
   const [requests, setRequests] = useState<MatchRequest[]>([]);
   const [documents, setDocuments] = useState<TechnicianDocument[]>([]);
@@ -34,6 +35,17 @@ export function useTechnicianDashboard(): TechnicianDashboardState {
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
+    // Fase 5.4 — sesión de técnico sin resolver: nada que cargar, y ninguna
+    // query con un id vacío.
+    if (!technicianId) {
+      setTechnician(null);
+      setRequests([]);
+      setDocuments([]);
+      setCompanyMap({});
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const [withRelations, v2Requests, v2Docs, companies, ratings] = await Promise.all([
       technicianRepositoryV2.getWithRelations(technicianId),

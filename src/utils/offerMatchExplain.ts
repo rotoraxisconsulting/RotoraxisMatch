@@ -19,7 +19,7 @@
 //     MANDATORY_UNMET_CAP (stays in the "Partial" label range at most);
 //   - a qualification-requiring offer where the technician's habilitation
 //     score is zero caps the total further, at ZERO_QUALIFICATION_CAP
-//     (stays "Weak" — verified/availability/experience/location alone can
+//     (stays "Weak" — verified/availability/location alone can
 //     never manufacture a "Partial" result out of zero real qualification).
 //
 // ratingIndex: the caller loads the aircraft_type_ratings catalog (via
@@ -32,31 +32,47 @@ import { OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer
 import { TechnicianHabilitation, TechnicianLicense, TechnicianWithRelations } from '../types/technician';
 import { MatchScore, MatchLabel, MatchLevel, VigenciaNotice } from '../types/matching';
 import { resolveLocationSnapshot } from '../constants/locationCities';
-import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, getAircraftFamilyKey, habilitationCoversFamilyKey } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
 
 // Qualification (habilitation + license) dominates the score whenever the
 // offer actually specifies one — the whole point of this rebalance. When an
 // offer specifies NO qualification requirement at all, there is nothing to
-// award those 55 points for; NO_REQUIREMENTS_WEIGHTS redistributes the
-// remaining signals (verified/availability/experience/location) onto a
-// scale that tops out at 75 — "Strong match" at best, deliberately never
-// reaching "Excellent" (>=80) from profile quality alone, since nothing
-// here confirms the technician actually fits THIS offer's requirements.
-const QUALIFICATION_WEIGHTS = { verified: 15, habilitation: 35, license: 20, availability: 15, experience: 10, location: 5 } as const;
+// award those 65 points for; NO_REQUIREMENTS_WEIGHTS redistributes the
+// remaining signals (verified/availability/location) onto a scale that tops
+// out at 75 — "Strong match" at best, deliberately never reaching
+// "Excellent" (>=80) from profile quality alone, since nothing here
+// confirms the technician actually fits THIS offer's requirements.
+//
+// ── Sub-fase de experiencia (2026-07-28) ──────────────────────────────
+// El componente `experience` YA NO EXISTE. Principio de producto fijado por
+// el usuario: **la cualificación puntúa, la experiencia informa y filtra**.
+// Los años de experiencia son un dato visual y un FILTRO DURO server-side
+// (offer.minYearsExperience contra technician_profiles.years_experience),
+// nunca puntos.
+//
+// Los 10 puntos que liberaba van ÍNTEGROS a habilitación (35 → 45), no
+// repartidos con licencia: el bloque de cualificación queda en 65 de
+// cualquier forma, pero repartir habría reforzado la señal DÉBIL (tener la
+// licencia sin el rating). Concentrarlos afila justo la discriminación que
+// esta misión persigue.
+const QUALIFICATION_WEIGHTS = { verified: 15, habilitation: 45, license: 20, contractFit: 15, location: 5 } as const;
 // habilitation/license are always 0 here (never awarded, never penalized —
 // see the no-requirements branch below) — kept as explicit fields rather
 // than omitted so `weights` stays a single consistent shape instead of a
 // union, which is both simpler to read and avoids TypeScript narrowing
 // gymnastics at every access site.
-const NO_REQUIREMENTS_WEIGHTS = { verified: 25, habilitation: 0, license: 0, availability: 25, experience: 15, location: 10 } as const;
+//
+// Suma 75, NO 100, y es deliberado: es el techo de la rama sin requisitos.
+// Los 15 que liberaba `experience` se reparten DENTRO de ese techo
+// (25/25/10 → 30/30/15), así que el máximo de esta rama no cambia.
+const NO_REQUIREMENTS_WEIGHTS = { verified: 30, habilitation: 0, license: 0, contractFit: 30, location: 15 } as const;
 
 export interface MatchScoreWeights {
   verified: number;
   habilitation: number;
   license: number;
-  availability: number;
-  experience: number;
+  contractFit: number;
   location: number;
 }
 
@@ -73,10 +89,26 @@ export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWe
 }
 
 // Within the habilitation budget: T1 (exact) gets the full amount; T2
-// (same family, different engine) and T3 (legacy code match, no engine on
-// record) get progressively smaller fractions — still real, still surfaced
-// as a clarification, never silently equal to an exact match.
-const HABILITATION_TIER_FRACTIONS = { exact: 1, related_family: 0.57, related_legacy: 0.29, not_met: 0 } as const;
+// (same family, different engine) gets a smaller fraction — still real,
+// still surfaced as a clarification, never silently equal to an exact
+// match.
+//
+// Fase 5.3 (2026-07-28): T3 ('related_legacy' — a bare legacy
+// aircraft_type_code resolving to the required family) is GONE with the
+// pre-Part-66 aircraft_types catalog. It had exactly one input, that
+// column, and migration 029 removes it; a habilitation now names an
+// aircraft through the rating catalog or not at all.
+const HABILITATION_TIER_FRACTIONS = { exact: 1, related_family: 0.57, not_met: 0 } as const;
+
+// The broad/approximate requirement branch (evaluateLegacyBroadMatch) keeps
+// its own two fractions, unchanged and deliberately equal to the numbers T2
+// and the old T3 used: 0.57 when a real habilitation row confirms the
+// required family, 0.29 when only the license category is confirmed. This
+// branch is PRODUCT (the approximate offer filter, Fase 3b), not legacy —
+// it survives the aircraft_types retirement untouched, which is why these
+// live in their own map instead of borrowing a tier fraction that no longer
+// has a matching tier.
+const BROAD_TIER_FRACTIONS = { legacy_aircraft_confirmed: 0.57, legacy_category_only: 0.29 } as const;
 
 // Fase 3 — vigencia: a SLIGHT cut, applied on top of whichever tier fraction
 // already applies, whenever the row that produced the winning match is
@@ -124,7 +156,7 @@ export function applyScoreCeilings(
   return capped;
 }
 
-type HabilitationTier = 'exact' | 'related_family' | 'related_legacy' | 'not_met';
+type HabilitationTier = 'exact' | 'related_family' | 'not_met';
 
 interface RequirementOutcome {
   tier: HabilitationTier;
@@ -139,7 +171,7 @@ function toYearMonth(iso: string): string {
 }
 
 // Fase 3 — vigencia. Checked against whichever row actually produced the
-// match (T1/T2/T3), plus the technician's own TechnicianLicense row for the
+// match (T1/T2), plus the technician's own TechnicianLicense row for the
 // same category (licenses have no isCurrent — only issued/expiresAt).
 //
 // Precedence (fixed by design, not incidental): an expired date ALWAYS wins
@@ -241,38 +273,20 @@ function evaluateHabilitationRequirement(
     };
   }
 
-  // T3 — related_legacy: same license, legacy aircraft_type_code that
-  // resolves (inclusively — see resolveLegacyCodeToFamilyKeys) to the SAME
-  // FAMILY as the required rating, but no specific engine on record — a
-  // weaker, approximate signal than T2. Family-based since migration 022
-  // (2026-07-22): a code no longer has to be a literal alias of THIS EXACT
-  // rating row (same engine too) — that was stricter than the "weaker than
-  // T2, family-level" signal this tier was always meant to be.
-  const requiredFamilyKey = rating ? getAircraftFamilyKey(rating) : undefined;
-  const legacyRow = requiredFamilyKey
-    ? sameLicenseRows.find(
-        (h) => h.aircraftTypeCode && resolveLegacyCodeToFamilyKeys(h.aircraftTypeCode, ratingIndex).has(requiredFamilyKey),
-      )
-    : undefined;
-  if (legacyRow) {
-    const vigencia = evaluateVigencia(legacyRow, license, req.licenseCode, `general habilitation in ${legacyRow.aircraftTypeCode}`, today);
-    // Fase 5.3 — label only, no score change: migration 027's needs_review
-    // flag (set by scripts/backfillLegacyAircraftRatings.ts when this exact
-    // code resolved to zero or multiple ratings) is surfaced explicitly
-    // when true, instead of the clarification reading identically whether
-    // the row has been checked or not.
-    const reviewNote = legacyRow.needsReview
-      ? ' Flagged for review — no catalog rating could be confirmed automatically for this code.'
-      : '';
-    return {
-      tier: 'related_legacy',
-      clarificationText: `Approximate match without engine data: general habilitation in ${legacyRow.aircraftTypeCode} under ${req.licenseCode}.${reviewNote}`,
-      vigenciaDegraded: vigencia.degraded,
-      vigenciaNotice: vigencia.notice,
-    };
-  }
+  // T3 used to sit here: a bare legacy aircraft_type_code resolving to the
+  // required family, scored at 0.29 of the habilitation budget. Removed in
+  // Fase 5.3 (2026-07-28) together with the pre-Part-66 aircraft_types
+  // catalog — its only possible input was that column, which migration 029
+  // drops. Nothing replaces it: a habilitation row either resolves to a
+  // catalog rating (T1/T2) or contributes no aircraft evidence at all.
+  //
+  // NOTE for anyone reading the original Fase 5 plan: its step 3 said "T3
+  // stays, only for needsReview habilitations, labeled". That step is VOID
+  // — a needsReview row had a NULL rating id AND (after 029) no code, so
+  // there would be nothing left for T3 to match on. The needs_review column
+  // goes with it. See docs/MISSION_PART66.md.
 
-  // T4 — not_met.
+  // T3 — not_met (was T4 before the old T3 was removed above).
   return { tier: 'not_met' };
 }
 
@@ -291,8 +305,8 @@ function evaluateHabilitationRequirement(
 //   - 'legacy_category_only': the offer asked for a license category with
 //     NO aircraft requirement at all — nothing here confirms the
 //     technician has ANY relevant aircraft experience, only that they
-//     hold the license. Weaker evidence, scored at the T3 fraction
-//     (related_legacy, 0.29), with its own clarification saying so.
+//     hold the license. Weaker evidence, scored at 0.29
+//     (BROAD_TIER_FRACTIONS), with its own clarification saying so.
 //   - 'not_met': no evidence at all.
 interface BroadOutcome {
   tier: 'legacy_aircraft_confirmed' | 'legacy_category_only' | 'not_met';
@@ -321,24 +335,17 @@ function evaluateLegacyBroadMatch(
   const needsAircraft = offer.requiredAircraftTypes.length > 0;
   const APPROXIMATE_NOTE = 'Approximate requirement — engine not specified.';
 
-  // A habilitation covers a required family key either via its resolved
-  // rating (exact family match) or, for rows that only ever recorded a
-  // bare legacy code, via inclusive code->family resolution (see
-  // resolveLegacyCodeToFamilyKeys — a code that aliases several families
-  // counts for all of them, never a guessed single one).
-  function habilitationCoversFamilyKey(h: TechnicianHabilitation, familyKey: string): boolean {
-    if (h.aircraftTypeRatingId) {
-      const rating = ratingIndex.get(h.aircraftTypeRatingId);
-      if (rating && getAircraftFamilyKey(rating) === familyKey) return true;
-    }
-    if (h.aircraftTypeCode && resolveLegacyCodeToFamilyKeys(h.aircraftTypeCode, ratingIndex).has(familyKey)) return true;
-    return false;
-  }
+  // habilitationCoversFamilyKey se importa de constants/aircraftTypeRatings:
+  // implementacion UNICA compartida con technicianRepositoryV2 (antes estaba
+  // duplicada literalmente en ambos). Aqui se envuelve solo para no repetir
+  // ratingIndex en cada llamada.
+  const coversFamily = (h: TechnicianHabilitation, familyKey: string) =>
+    habilitationCoversFamilyKey(h, familyKey, ratingIndex);
 
   if (needsLicense && needsAircraft) {
     const row = technician.habilitations.find((h) => {
       if (!offer.requiredLicenses.includes(h.licenseCode)) return false;
-      return offer.requiredAircraftTypes.some((key) => habilitationCoversFamilyKey(h, key));
+      return offer.requiredAircraftTypes.some((key) => coversFamily(h, key));
     });
     return row
       ? {
@@ -350,16 +357,12 @@ function evaluateLegacyBroadMatch(
   }
 
   if (needsAircraft) {
-    // technician.aircraftExperience (TechnicianAircraftExperience) only
-    // ever carries a bare legacy aircraft_type_code with no rating link at
-    // all — unlike a habilitation row, there is nothing here to resolve a
-    // family from without guessing, so it can no longer contribute
-    // evidence for a family-keyed requirement (migration 022, 2026-07-22;
-    // documented in docs/MISSION_PART66.md). Only technician_habilitations
-    // rows (which carry either a rating id or a legacy code this file can
-    // inclusively resolve) satisfy this branch now.
+    // Solo las filas de technician_habilitations satisfacen esta rama. La
+    // otra fuente que hubo (technician_aircraft_experience) se retiro con su
+    // tabla en la migracion 031: no tenia vinculo con el catalogo de ratings,
+    // asi que nunca pudo resolver una familia sin adivinar.
     const covers = technician.habilitations.some((h) =>
-      offer.requiredAircraftTypes.some((key) => habilitationCoversFamilyKey(h, key)),
+      offer.requiredAircraftTypes.some((key) => coversFamily(h, key)),
     );
     return covers
       ? { tier: 'legacy_aircraft_confirmed', matchText: 'Required aircraft present in profile', clarificationText: APPROXIMATE_NOTE }
@@ -387,7 +390,7 @@ function evaluateLegacyBroadMatch(
   return { tier: 'not_met' };
 }
 
-const TIER_RANK: Record<HabilitationTier, number> = { not_met: 0, related_legacy: 1, related_family: 2, exact: 3 };
+const TIER_RANK: Record<HabilitationTier, number> = { not_met: 0, related_family: 1, exact: 2 };
 
 function upgradeTier(current: HabilitationTier, next: HabilitationTier): HabilitationTier {
   return TIER_RANK[next] > TIER_RANK[current] ? next : current;
@@ -414,8 +417,7 @@ export function calculateOfferTechnicianMatch(
   let verified = 0;
   let habilitation = 0;
   let license = 0;
-  let availability = 0;
-  let experience = 0;
+  let contractFit = 0;
   let location = 0;
 
   const matches: string[] = [];
@@ -443,7 +445,7 @@ export function calculateOfferTechnicianMatch(
     // vigencia degradation can be scoped correctly: only the row(s) that
     // actually produced the WINNING tier should shave points off the
     // score, even though every degraded row's notice is still surfaced —
-    // same "always show, only the best one scores" pattern T2/T3
+    // same "always show, only the best one scores" pattern T2
     // clarifications already follow.
     const evaluations = offer.requiredHabilitations.map((req) => ({
       req,
@@ -461,7 +463,7 @@ export function calculateOfferTechnicianMatch(
 
     for (const { req, outcome } of evaluations) {
       if (outcome.tier === 'exact' && outcome.matchText) matches.push(outcome.matchText);
-      if ((outcome.tier === 'related_family' || outcome.tier === 'related_legacy') && outcome.clarificationText) {
+      if (outcome.tier === 'related_family' && outcome.clarificationText) {
         clarifications.push(outcome.clarificationText);
       }
       if (outcome.vigenciaNotice) vigenciaNotices.push(outcome.vigenciaNotice);
@@ -505,13 +507,13 @@ export function calculateOfferTechnicianMatch(
       // Never full/exact credit (Fase 5.3 fix) — a broad match is real
       // evidence but never a confirmed exact rating. 'legacy_aircraft_
       // confirmed' (a real technician_habilitations row for the required
-      // family) scores at the same fraction as T2; 'legacy_category_only'
-      // (license held, no aircraft ever asked for or confirmed) is weaker,
-      // same fraction as T3. See applyScoreCeilings() for the label
-      // ceiling this also imposes (never "Excellent").
-      const fraction = broad.tier === 'legacy_aircraft_confirmed'
-        ? HABILITATION_TIER_FRACTIONS.related_family
-        : HABILITATION_TIER_FRACTIONS.related_legacy;
+      // family) scores at 0.57, the same fraction as T2;
+      // 'legacy_category_only' (license held, no aircraft ever asked for or
+      // confirmed) is weaker at 0.29. See applyScoreCeilings() for the
+      // label ceiling this also imposes (never "Excellent"). Both numbers
+      // unchanged by the aircraft_types retirement — see
+      // BROAD_TIER_FRACTIONS.
+      const fraction = BROAD_TIER_FRACTIONS[broad.tier];
       habilitation = Math.round(weights.habilitation * fraction);
       license = weights.license;
     } else {
@@ -536,13 +538,29 @@ export function calculateOfferTechnicianMatch(
     matches.push('The offer does not require a specific license or aircraft');
   }
 
+  // ── Contract fit (antes, mal llamada "Availability") ─────────────────
+  // Esta fila NUNCA midió disponibilidad: mide si el técnico acepta el TIPO
+  // DE CONTRATO de la oferta. El nombre viejo mentía, y encima la
+  // disponibilidad real (immediately) no entra en el score en absoluto — es
+  // filtro y etiqueta, no puntos: un estado binario no debe mover un ranking.
+  //
+  // REGLA DEL CONJUNTO VACÍO: no declarar tipos de contrato significa
+  // "abierto a cualquiera", así que puntúa COMPLETO. Sólo saca cero quien SÍ
+  // declaró y ninguno coincide. Sin esto, renombrar la fila la habría hecho
+  // honesta pero habría dejado 15 puntos inalcanzables para quien no rellena
+  // un campo OPCIONAL — exactamente lo que se decidió no hacer con los años
+  // de experiencia ("la ausencia de dato nunca penaliza").
   const techContractTypes = technician.availability.contractTypes as string[];
-  if (techContractTypes.includes(offer.contractType)) availability = weights.availability;
+  const openToAnyContract = techContractTypes.length === 0;
+  if (openToAnyContract || techContractTypes.includes(offer.contractType)) {
+    contractFit = weights.contractFit;
+  }
 
-  const totalYears = technician.aircraftExperience.reduce((sum, e) => {
-    return sum + (e.unit === 'years' ? e.value : e.value / 2000);
-  }, 0);
-  if (totalYears >= offer.minYearsExperience) experience = weights.experience;
+  // offer.minYearsExperience NO puntúa aquí: es un FILTRO DURO server-side
+  // (technicianRepositoryV2.search/getPublicProfiles → .or(years_experience
+  // .is.null, .gte.N)). Un técnico que no cumple el mínimo declarado no llega
+  // a este scorer; el que no ha declarado años llega y no se le penaliza.
+  // "La cualificación puntúa, la experiencia informa."
 
   const technicianLocation = resolveLocationSnapshot(technician);
   const offerLocation = resolveLocationSnapshot({
@@ -560,7 +578,7 @@ export function calculateOfferTechnicianMatch(
     location = weights.location;
   }
 
-  const rawTotal = verified + habilitation + license + availability + experience + location;
+  const rawTotal = verified + habilitation + license + contractFit + location;
 
   // Every score ceiling is applied in one place — see applyScoreCeilings()
   // and the ladder documented above it. Most restrictive always wins,
@@ -576,7 +594,7 @@ export function calculateOfferTechnicianMatch(
     technicianId: technician.id,
     total,
     label: getMatchLabel(total),
-    breakdown: { verified, habilitation, license, availability, experience, location },
+    breakdown: { verified, habilitation, license, contractFit, location },
     level,
     matches,
     clarifications,

@@ -1,7 +1,7 @@
 // Standalone tests — no Supabase/DB connection required. Exercises the pure
 // functions in src/utils/offerMatchExplain.ts, src/constants/aircraftTypeRatings.ts,
-// src/repositories/v2/aircraftTypeRatingsCache.ts and
-// src/utils/aircraftRatingBackfillPlan.ts against small in-memory fixtures.
+// and src/repositories/v2/aircraftTypeRatingsCache.ts against small
+// in-memory fixtures.
 //
 // Deliberately does NOT import or duplicate the real 80-row aircraft_type_ratings
 // catalog — that catalog lives exclusively in Supabase now (see
@@ -14,7 +14,7 @@
 // Run via: npm run test:matching  (compiles with tsc to a scratch dir, then
 // runs the plain JS output with node — see package.json).
 import assert from 'node:assert/strict';
-import { calculateOfferTechnicianMatch, getMatchLabel, applyScoreCeilings } from '../src/utils/offerMatchExplain';
+import { calculateOfferTechnicianMatch, getMatchLabel, applyScoreCeilings, getMatchScoreWeights } from '../src/utils/offerMatchExplain';
 import { OfferWithRequirements, OfferRequiredHabilitation } from '../src/types/offer';
 import { TechnicianWithRelations, TechnicianHabilitation, TechnicianLicense } from '../src/types/technician';
 import { AircraftTypeRatingCatalog } from '../src/types/catalog';
@@ -27,15 +27,9 @@ import {
   AircraftTypeRatingRow,
 } from '../src/constants/aircraftTypeRatings';
 import { createAircraftTypeRatingsCache } from '../src/repositories/v2/aircraftTypeRatingsCache';
-import {
-  planLegacyAircraftRatingBackfill,
-  summarizeBackfillPlan,
-  LegacyHabilitationRow,
-  ExistingNormalizedHabilitation,
-} from '../src/utils/aircraftRatingBackfillPlan';
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
 import { getFamilies, getByProductType, searchRatings, resolveAircraftCategoryForFamilyKeys } from '../src/constants/aircraftTypeRatingViews';
-import { getAircraftFamilyKey, resolveLegacyCodeToFamilyKeys } from '../src/constants/aircraftTypeRatings';
+import { getAircraftFamilyKey } from '../src/constants/aircraftTypeRatings';
 import { getCompatibleProductType, isUnusualCombination } from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
 import {
@@ -110,7 +104,6 @@ function makeHab(licenseCode: string, extra: Partial<TechnicianHabilitation> = {
     technicianId: 'tech-test',
     licenseCode: licenseCode as any,
     createdAt: '2026-01-01T00:00:00.000Z',
-    needsReview: false,
     ...extra,
   };
 }
@@ -137,7 +130,6 @@ function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): Techn
     updatedAt: '2026-01-01T00:00:00.000Z',
     licenses: [],
     habilitations: [],
-    aircraftExperience: [],
     ...overrides,
   };
 }
@@ -330,7 +322,7 @@ async function main() {
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       // A320 habilitation exists, but only under B2 — never under B1.1.
-      habilitations: [makeHab('B2', { aircraftTypeCode: 'A320' })],
+      habilitations: [makeHab('B2', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.notEqual(result.level, 'legacy', 'must not report a full legacy match from two unrelated rows');
@@ -351,33 +343,35 @@ async function main() {
     assert.equal(result.level, 'legacy', 'a V2500-variant A320-family rating must satisfy an A320-family broad requirement');
   });
 
-  await test('Matching — Case 5c: broad aircraft requirement resolves a technician\'s bare legacy code inclusively', () => {
-    // 'A318' is only ever an alias of fx-a320-cfm56 in the fixture catalog,
-    // never of fx-a320-v2500 — resolveLegacyCodeToFamilyKeys must still land
-    // on the shared family, not require a literal alias match against one
-    // specific rating.
+  await test('Matching — Case 5c: a habilitation with no rating id contributes nothing to a broad aircraft requirement', () => {
+    // Fase 5.3 (2026-07-28): this case used to assert the opposite — that a
+    // bare legacy aircraftTypeCode resolved inclusively to the family and
+    // satisfied the requirement. That path is gone with the aircraft_types
+    // catalog. A row without a rating id now names no aircraft at all, so
+    // the requirement is simply unmet. Kept (rather than deleted) as the
+    // explicit regression guard against re-introducing code-based
+    // resolution through some other door.
     const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
-      habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318' })],
+      habilitations: [makeHab('B1.1')],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.equal(result.level, 'legacy');
+    assert.notEqual(result.level, 'legacy', 'a rating-less habilitation cannot satisfy an aircraft requirement');
+    assert.equal(result.breakdown.habilitation, 0);
   });
 
-  await test('Matching — Case 5d: aircraftExperience alone can no longer satisfy a broad aircraft requirement', () => {
-    // TechnicianAircraftExperience has no rating link at all — since
-    // requiredAircraftTypes moved to family keys (migration 022) there is
-    // nothing to resolve it against without guessing, so it stops
-    // contributing to this tier (documented limitation, see
-    // docs/MISSION_PART66.md).
+  await test('Matching — Case 5d: sin habilitaciones no hay forma de satisfacer un requisito de aeronave', () => {
+    // Este caso probaba que technician_aircraft_experience no podia satisfacer
+    // un requisito de familia. Esa tabla ya no existe (migracion 031), asi que
+    // la unica fuente posible son las habilitaciones. Se conserva como guarda
+    // de regresion: sin habilitaciones, un requisito de aeronave NUNCA se da
+    // por satisfecho por ninguna otra via.
     const offer = makeOffer({ requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const technician = makeTechnician({
-      habilitations: [],
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
-    });
+    const technician = makeTechnician({ habilitations: [] });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.notEqual(result.level, 'legacy', 'aircraftExperience has no rating link — it cannot resolve to a family');
+    assert.notEqual(result.level, 'legacy', 'sin habilitaciones no puede resolverse ninguna familia');
+    assert.equal(result.breakdown.habilitation, 0);
   });
 
   await test('Matching — Case 6: preferred requirement mismatch stays related, never excluded', () => {
@@ -439,14 +433,14 @@ async function main() {
   // ── Fase 2 — scoring redesign (qualification dominates, mandatory acts
   //    as a ceiling, absent data stays neutral) ─────────────────────────
 
-  await test('Fase 2 — T1 (exact rating) awards the full habilitation weight (35)', () => {
+  await test('Fase 2 — T1 (exact rating) awards the full habilitation weight (45)', () => {
     const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.equal(result.breakdown.habilitation, 35, 'T1 must award the full habilitation weight');
+    assert.equal(result.breakdown.habilitation, 45, 'T1 must award the full habilitation weight');
     assert.equal(result.level, 'exact');
   });
 
@@ -458,40 +452,28 @@ async function main() {
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.ok(
-      result.breakdown.habilitation > 0 && result.breakdown.habilitation < 35,
-      `T2 must award a partial habilitation weight strictly between 0 and 35, got ${result.breakdown.habilitation}`,
+      result.breakdown.habilitation > 0 && result.breakdown.habilitation < 45,
+      `T2 must award a partial habilitation weight strictly between 0 and 45, got ${result.breakdown.habilitation}`,
     );
     assert.ok(result.clarifications.some((c) => c.includes('Same family, different engine')));
   });
 
-  await test('Fase 2 — T3 (legacy code match, no engine on record) scores below T2', () => {
-    const offerT2 = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
-    const techT2 = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })] });
-    const resultT2 = calculateOfferTechnicianMatch(offerT2, techT2, RATING_INDEX);
-
-    const offerT3 = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
-    const techT3 = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318' })] });
-    const resultT3 = calculateOfferTechnicianMatch(offerT3, techT3, RATING_INDEX);
-
-    assert.ok(resultT3.breakdown.habilitation > 0, 'T3 must still award some credit, never treated as no-match');
-    assert.ok(
-      resultT3.breakdown.habilitation < resultT2.breakdown.habilitation,
-      `T3 (${resultT3.breakdown.habilitation}) must score below T2 (${resultT2.breakdown.habilitation})`,
-    );
-    assert.ok(resultT3.clarifications.some((c) => c.includes('Approximate match without engine data')));
-  });
-
-  await test('T3 is family-based since migration 022: a legacy code alias of a DIFFERENT rating in the same family still counts', () => {
-    // 'A318' is only ever an alias of fx-a320-cfm56 in the fixture catalog.
-    // The offer requires fx-a320-v2500 (same family, different engine) —
-    // under the old "literal alias of THIS exact rating" rule this would
-    // have fallen through to T4/not_met; family-based resolution correctly
-    // places it at T3 (weaker than T2, no engine on record).
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-v2500', 'preferred')] });
-    const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318' })] });
+  await test('Fase 5.3 — T3 is GONE: a habilitation with no rating id awards zero, never approximate credit', () => {
+    // This replaces the two former T3 tests ("legacy code match scores below
+    // T2" and "T3 is family-based since migration 022"). The tier had one
+    // possible input — the legacy aircraftTypeCode column — which migration
+    // 029 drops. A row that names no catalog rating is now indistinguishable
+    // from no evidence at all, and must never produce the 0.29 credit or the
+    // "Approximate match without engine data" clarification T3 used to emit.
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1')] });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.ok(result.breakdown.habilitation > 0, 'expected T3 credit, not T4/no-match');
-    assert.ok(result.clarifications.some((c) => c.includes('Approximate match without engine data')));
+
+    assert.equal(result.breakdown.habilitation, 0, 'a rating-less habilitation must award zero habilitation credit');
+    assert.ok(
+      !result.clarifications.some((c) => c.includes('Approximate match without engine data')),
+      'the T3 clarification must never be emitted again',
+    );
   });
 
   await test('Fase 2 — T4 (no match at all) awards zero habilitation', () => {
@@ -510,7 +492,6 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
       licenses: [],
       habilitations: [],
     });
@@ -524,7 +505,6 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.breakdown.habilitation, 0, 'habilitation must not be awarded when the offer has no qualification requirement');
@@ -543,14 +523,12 @@ async function main() {
     const weakProfileExactRating = makeTechnician({
       verificationStatus: 'pending',
       availability: { immediately: false, contractTypes: ['short_term'] },
-      aircraftExperience: [],
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const perfectProfileNoRating = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 10, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
       licenses: [makeLicense('B1.1')], // holds the right category...
       habilitations: [], // ...but no rating for it at all
     });
@@ -574,7 +552,6 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
     });
@@ -590,7 +567,7 @@ async function main() {
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })], // experienceYears/isCurrent left undefined
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.equal(result.breakdown.habilitation, 35, 'undefined experienceYears/isCurrent must not reduce the T1 score');
+    assert.equal(result.breakdown.habilitation, 45, 'undefined experienceYears/isCurrent must not reduce the T1 score');
     assert.equal(result.level, 'exact');
     assert.equal(result.mandatoryMissing.length, 0);
   });
@@ -620,14 +597,13 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.level, 'exact');
     assert.equal(result.mandatoryMissing.length, 0);
-    assert.equal(result.breakdown.habilitation, 35, 'exact match keeps the full habilitation weight');
+    assert.equal(result.breakdown.habilitation, 45, 'exact match keeps the full habilitation weight');
     assert.ok(result.total >= 80, `exact match must stay in the Excellent band, got ${result.total}`);
     assert.equal(result.label, 'Excellent match');
   });
@@ -640,7 +616,7 @@ async function main() {
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.level, 'legacy');
-    assert.equal(result.breakdown.habilitation, 20, 'round(35 * 0.57) — same fraction as T2, not the full 35');
+    assert.equal(result.breakdown.habilitation, 26, 'round(45 * 0.57) — same fraction as T2, not the full 45');
     assert.equal(result.breakdown.license, 20);
     assert.ok(
       result.clarifications.includes('Approximate requirement — engine not specified.'),
@@ -655,7 +631,7 @@ async function main() {
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const licenseOnly = calculateOfferTechnicianMatch(licenseOnlyOffer, technician, RATING_INDEX);
-    assert.equal(licenseOnly.breakdown.habilitation, 10, 'round(35 * 0.29) — the weaker T3 fraction');
+    assert.equal(licenseOnly.breakdown.habilitation, 13, 'round(45 * 0.29) — BROAD_TIER_FRACTIONS.legacy_category_only');
     assert.ok(
       licenseOnly.clarifications.includes('Category-only match — no specific aircraft requirement to verify.'),
       'the weaker sub-case must say why it is weaker',
@@ -679,7 +655,6 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
       locationCityId: 'airport:TEST',
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
@@ -717,7 +692,6 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      aircraftExperience: [{ id: 'exp-1', technicianId: 'tech-test', aircraftTypeCode: 'A320', value: 5, unit: 'years', createdAt: '2026-01-01T00:00:00.000Z' }],
       licenses: [makeLicense('B1.1')],
       habilitations: [], // holds the license but no habilitation row at all
     });
@@ -727,35 +701,10 @@ async function main() {
     assert.equal(result.label, 'Weak match');
   });
 
-  await test('Fase 5.3 — T3 surfaces migration 027\'s needs_review flag in its clarification (label only, score unchanged)', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
-    const base = { licenses: [makeLicense('B1.1')] };
-
-    const unflagged = calculateOfferTechnicianMatch(
-      offer,
-      makeTechnician({ ...base, habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318' })] }),
-      RATING_INDEX,
-    );
-    const flagged = calculateOfferTechnicianMatch(
-      offer,
-      makeTechnician({ ...base, habilitations: [makeHab('B1.1', { aircraftTypeCode: 'A318', needsReview: true })] }),
-      RATING_INDEX,
-    );
-
-    assert.equal(
-      flagged.breakdown.habilitation,
-      unflagged.breakdown.habilitation,
-      'needs_review must not change the score — label only',
-    );
-    assert.ok(
-      flagged.clarifications.some((c) => c.includes('Flagged for review')),
-      'a needs_review row must say so',
-    );
-    assert.ok(
-      !unflagged.clarifications.some((c) => c.includes('Flagged for review')),
-      'an unflagged row must not claim to be flagged',
-    );
-  });
+  // The needs_review labeling test that lived here is gone with T3 and with
+  // the column itself (migration 029). It asserted that a flagged legacy row
+  // scored identically to an unflagged one and only differed in its
+  // clarification text — neither row shape can exist anymore.
 
   // ── Fase 3 — vigencia (expired / not-current degradation) ────────────
   // Fixed reference date so expired-vs-future fixtures are deterministic
@@ -769,7 +718,7 @@ async function main() {
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
-    assert.equal(result.breakdown.habilitation, 35);
+    assert.equal(result.breakdown.habilitation, 45);
     assert.deepEqual(result.vigenciaNotices, []);
     assert.equal(result.mandatoryMissing.length, 0);
   });
@@ -781,7 +730,7 @@ async function main() {
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01' })],
     });
     const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
-    assert.ok(result.breakdown.habilitation < 35 && result.breakdown.habilitation > 0, `expected a slight cut, got ${result.breakdown.habilitation}`);
+    assert.ok(result.breakdown.habilitation < 45 && result.breakdown.habilitation > 0, `expected a slight cut, got ${result.breakdown.habilitation}`);
     assert.equal(result.level, 'exact', 'still tier exact — degraded, never excluded');
     assert.equal(result.mandatoryMissing.length, 0, 'a degraded exact match never becomes mandatoryMissing');
     assert.equal(result.vigenciaNotices.length, 1);
@@ -1012,36 +961,15 @@ async function main() {
     assert.equal(resolveAircraftCategoryForFamilyKeys(ratings, familyKeys), 'helicopter');
   });
 
-  // ── getAircraftFamilyKey / resolveLegacyCodeToFamilyKeys (migration 022) ──
+  // ── getAircraftFamilyKey (migration 022) ─────────────────────────────
+  // The three resolveLegacyCodeToFamilyKeys tests that lived here went with
+  // the function itself (Fase 5.3) — nothing resolves a bare aircraft code
+  // to a family anymore.
 
   await test('getAircraftFamilyKey matches the key getFamilies() groups by — never allowed to drift apart', () => {
     const groups = getFamilies(FIXTURES);
     const a320Group = groups.find((g) => g.aircraftFamily === 'A318/A319/A320/A321')!;
     assert.equal(getAircraftFamilyKey(FIXTURES.find((r) => r.id === 'fx-a320-cfm56')!), a320Group.key);
-  });
-
-  await test('resolveLegacyCodeToFamilyKeys is inclusive: a code aliasing two distinct families returns both, never a guessed single winner', () => {
-    const ambiguous: AircraftTypeRatingCatalog[] = [
-      makeRating({ id: 'fx-ambig-1', manufacturer: 'MakerA', aircraftFamily: 'FamilyOne', commercialAliases: ['SHARED'] }),
-      makeRating({ id: 'fx-ambig-2', manufacturer: 'MakerB', aircraftFamily: 'FamilyTwo', commercialAliases: ['SHARED'] }),
-    ];
-    const keys = resolveLegacyCodeToFamilyKeys('SHARED', buildAircraftRatingIndex(ambiguous));
-    assert.equal(keys.size, 2, 'expected both families, not a single guessed one');
-    assert.ok(keys.has('MakerA::FamilyOne'));
-    assert.ok(keys.has('MakerB::FamilyTwo'));
-  });
-
-  await test('resolveLegacyCodeToFamilyKeys collapses two ratings in the same family (different engine) into one key', () => {
-    // Mirrors the real H135 case (PW206 + Arrius 2B engines, same family) —
-    // see migration 022's backfill report.
-    const keys = resolveLegacyCodeToFamilyKeys('A320', RATING_INDEX);
-    assert.equal(keys.size, 1, 'fx-a320-cfm56 and fx-a320-v2500 are the same family — one key, not two');
-    assert.ok(keys.has('Airbus::A318/A319/A320/A321'));
-  });
-
-  await test('resolveLegacyCodeToFamilyKeys returns an empty set for a code with no catalog match', () => {
-    const keys = resolveLegacyCodeToFamilyKeys('NOT-A-REAL-CODE', RATING_INDEX);
-    assert.equal(keys.size, 0);
   });
 
   // ── License category -> productType pre-filter (Fase 3b.4) ───────────
@@ -1259,47 +1187,12 @@ async function main() {
   });
 
   // ── Backfill plan ────────────────────────────────────────────────────
-
-  await test('Backfill plan — an unambiguous alias maps a legacy row to its rating', () => {
-    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-1', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' }];
-    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, []);
-    assert.equal(plan[0].outcome, 'mapped');
-    assert.equal(plan[0].ratingId, 'fx-b777-ge90');
-  });
-
-  await test('Backfill plan — an alias shared by two ratings is left ambiguous, never guessed', () => {
-    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-2', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'A320' }];
-    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, []);
-    assert.equal(plan[0].outcome, 'ambiguous');
-    assert.deepEqual([...(plan[0].candidateIds ?? [])].sort(), ['fx-a320-cfm56', 'fx-a320-v2500']);
-  });
-
-  await test('Backfill plan — a code with no matching alias is left untouched', () => {
-    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-3', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'NOT-A-REAL-CODE' }];
-    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, []);
-    assert.equal(plan[0].outcome, 'no_match');
-  });
-
-  await test('Backfill plan — a mapping that would collide with an existing normalized row is avoided, not double-written', () => {
-    const legacyRows: LegacyHabilitationRow[] = [{ id: 'hab-4', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' }];
-    const existing: ExistingNormalizedHabilitation[] = [{ technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeRatingId: 'fx-b777-ge90' }];
-    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, existing);
-    assert.equal(plan[0].outcome, 'collision_avoided');
-    assert.equal(plan[0].ratingId, 'fx-b777-ge90');
-  });
-
-  await test('Backfill plan — summarizeBackfillPlan tallies every outcome across a mixed batch', () => {
-    const legacyRows: LegacyHabilitationRow[] = [
-      { id: 'hab-1', technicianId: 'tech-1', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' },
-      { id: 'hab-2', technicianId: 'tech-2', licenseCode: 'B1.1', aircraftTypeCode: 'A320' },
-      { id: 'hab-3', technicianId: 'tech-3', licenseCode: 'B1.1', aircraftTypeCode: 'NOT-A-REAL-CODE' },
-      { id: 'hab-4', technicianId: 'tech-4', licenseCode: 'B1.1', aircraftTypeCode: 'GE90' },
-    ];
-    const existing: ExistingNormalizedHabilitation[] = [{ technicianId: 'tech-4', licenseCode: 'B1.1', aircraftTypeRatingId: 'fx-b777-ge90' }];
-    const plan = planLegacyAircraftRatingBackfill(legacyRows, FIXTURES, existing);
-    const summary = summarizeBackfillPlan(plan);
-    assert.deepEqual(summary, { analyzed: 4, mapped: 1, ambiguous: 1, noMatch: 1, collisionsAvoided: 1 });
-  });
+  // The five tests that lived here went with src/utils/aircraftRatingBackfillPlan.ts
+  // and scripts/backfillLegacyAircraftRatings.ts (Fase 5.3, 2026-07-28).
+  // They covered resolving a legacy aircraft code to a rating — mapped /
+  // ambiguous / no_match / collision_avoided. With the aircraft_types
+  // catalog retired outright there are no legacy codes left to resolve, so
+  // the planner, the script and its npm entry are all gone.
 
   // ── License update plan ─────────────────────────────────────────────
   // Regression coverage for the profile save bug: deleting a
@@ -1367,22 +1260,66 @@ async function main() {
   });
 
   await test('assertOfferRelationTransition — same-status no-op never throws', () => {
-    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'pending'));
-    assert.doesNotThrow(() => assertOfferRelationTransition('accepted', 'accepted'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'pending', 'application'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('accepted', 'accepted', 'application'));
   });
 
   await test('assertOfferRelationTransition — pending can move to any terminal or accepted state', () => {
-    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'accepted'));
-    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'rejected'));
-    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'expired'));
-    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'withdrawn'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'accepted', 'application'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'rejected', 'application'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'expired', 'application'));
+    assert.doesNotThrow(() => assertOfferRelationTransition('pending', 'withdrawn', 'application'));
   });
 
   await test('assertOfferRelationTransition — terminal statuses never transition anywhere else (one-shot by design)', () => {
-    assert.throws(() => assertOfferRelationTransition('accepted', 'rejected'));
-    assert.throws(() => assertOfferRelationTransition('rejected', 'pending'));
-    assert.throws(() => assertOfferRelationTransition('withdrawn', 'pending'));
-    assert.throws(() => assertOfferRelationTransition('expired', 'accepted'));
+    assert.throws(() => assertOfferRelationTransition('accepted', 'rejected', 'application'));
+    assert.throws(() => assertOfferRelationTransition('rejected', 'pending', 'application'));
+    assert.throws(() => assertOfferRelationTransition('expired', 'accepted', 'application'));
+  });
+
+  await test('assertOfferRelationTransition — withdrawn -> pending SI se permite: retirarse no veta (2026-07-28)', () => {
+    // Retirarse (el tecnico se echa atras) y ser rechazado (la empresa dice
+    // no) son cosas distintas. Que la primera vetara de por vida era un
+    // efecto colateral de H6, no una decision.
+    assert.doesNotThrow(() => assertOfferRelationTransition('withdrawn', 'pending', 'application'));
+  });
+
+  await test('assertOfferRelationTransition — withdrawn NO puede saltar directamente a accepted ni a otro terminal', () => {
+    // Reactivar devuelve la fila a 'pending' y desde ahi el flujo normal
+    // decide. Nunca un atajo a aceptada.
+    assert.throws(() => assertOfferRelationTransition('withdrawn', 'accepted', 'application'));
+    assert.throws(() => assertOfferRelationTransition('withdrawn', 'rejected', 'application'));
+    assert.throws(() => assertOfferRelationTransition('withdrawn', 'expired', 'application'));
+  });
+
+  await test('assertOfferRelationTransition — withdrawn->pending es SOLO para aplicaciones, nunca para ofertas directas', () => {
+    // offer_applications tiene UNIQUE TOTAL (technician_id, offer_id): reactivar
+    // es la unica via de volver a aplicar. offer_requests tiene un unico PARCIAL
+    // sobre estados activos, asi que la empresa crea una fila nueva — reactivar
+    // ahi seria maquinaria inalcanzable y chocaria con ese indice.
+    assert.doesNotThrow(() => assertOfferRelationTransition('withdrawn', 'pending', 'application'));
+    assert.throws(
+      () => assertOfferRelationTransition('withdrawn', 'pending', 'direct_offer'),
+      /send a new one instead/,
+      'una oferta directa retirada NO se reactiva',
+    );
+  });
+
+  await test('evaluateApplicationConflict — una aplicacion retirada NO bloquea: permite reactivar', () => {
+    assert.equal(evaluateApplicationConflict(null, { status: 'withdrawn' }), null);
+  });
+
+  await test('evaluateApplicationConflict — rejected SIGUE bloqueando (asimetria deliberada)', () => {
+    const msg = evaluateApplicationConflict(null, { status: 'rejected' });
+    assert.ok(msg && msg.includes('decided'), `rejected debe bloquear con mensaje propio, got ${msg}`);
+    assert.ok(evaluateApplicationConflict(null, { status: 'expired' }), 'expired tambien bloquea');
+  });
+
+  await test('evaluateApplicationConflict — una oferta directa activa bloquea la reactivacion de una retirada', () => {
+    // El orden de las comprobaciones importa: si la empresa mando una oferta
+    // directa DESPUES de la retirada, volver a aplicar sigue bloqueado.
+    const msg = evaluateApplicationConflict({ status: 'pending' }, { status: 'withdrawn' });
+    assert.ok(msg && msg.includes('direct offer'), `la oferta directa activa debe ganar, got ${msg}`);
   });
 
   await test('shouldUnlockAcceptedRelation — true only for accepted', () => {
@@ -1486,11 +1423,13 @@ async function main() {
     );
   });
 
-  await test('evaluateApplicationConflict — a withdrawn or rejected application blocks reapplying with a dedicated message (one-shot per offer)', () => {
+  await test('evaluateApplicationConflict — rejected bloquea reapply; withdrawn ya NO (cambio 2026-07-28)', () => {
+    // Este test afirmaba que withdrawn Y rejected bloqueaban por igual. Era
+    // el efecto colateral de H6 que se corrigio: retirarse no veta.
     const withdrawn = evaluateApplicationConflict(undefined, { status: 'withdrawn' });
     const rejected = evaluateApplicationConflict(undefined, { status: 'rejected' });
-    assert.equal(withdrawn, 'You already applied to this offer previously — re-applying is not available once an application has been withdrawn or decided.');
-    assert.equal(rejected, withdrawn);
+    assert.equal(withdrawn, null, 'una retirada permite volver a aplicar (reactiva la fila)');
+    assert.equal(rejected, 'You already applied to this offer previously — re-applying is not available once an application has been decided.');
   });
 
   // ── Fase 4 scaffolding: canHold() / HabilitationScope ─────────────────
@@ -1623,6 +1562,74 @@ async function main() {
       kind: 'full_group', easaGroup: '3', aircraftClass: 'Helicopter', propulsion: 'piston',
     };
     assert.equal(canHold('B1.2', scope), false); // B1.2 is Aeroplane-only — group being valid doesn't rescue a class mismatch
+  });
+
+  // ── Contract fit (antes "Availability") — B3, 2026-07-29 ──────────────
+  await test('Contract fit — contract_types VACIO significa "abierto a cualquiera" y puntua COMPLETO', () => {
+    const offer = makeOffer({ contractType: 'permanent' });
+    const technician = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: [] },
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    const weights = getMatchScoreWeights(offer);
+    assert.equal(result.breakdown.contractFit, weights.contractFit,
+      'no declarar tipos de contrato es un campo OPCIONAL vacio: nunca debe penalizar');
+  });
+
+  await test('Contract fit — declarar tipos y que NINGUNO coincida es el unico caso que puntua cero', () => {
+    const offer = makeOffer({ contractType: 'permanent' });
+    const technician = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['short_term'] },
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.breakdown.contractFit, 0);
+  });
+
+  await test('Contract fit — declarar un tipo que SI coincide puntua completo', () => {
+    const offer = makeOffer({ contractType: 'permanent' });
+    const technician = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['short_term', 'permanent'] },
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.equal(result.breakdown.contractFit, getMatchScoreWeights(offer).contractFit);
+  });
+
+  await test('Contract fit — la DISPONIBILIDAD no puntua: immediately no mueve el score', () => {
+    const offer = makeOffer({ contractType: 'permanent' });
+    const base = { verificationStatus: 'verified' as const, licenses: [], habilitations: [] };
+    const abierto = makeTechnician({ ...base, availability: { immediately: true, contractTypes: ['permanent'] } });
+    const cerrado = makeTechnician({ ...base, availability: { immediately: false, contractTypes: ['permanent'] } });
+    const a = calculateOfferTechnicianMatch(offer, abierto, RATING_INDEX);
+    const b = calculateOfferTechnicianMatch(offer, cerrado, RATING_INDEX);
+    assert.equal(a.total, b.total,
+      'la disponibilidad es filtro y etiqueta, nunca puntos: un estado binario no debe mover un ranking');
+  });
+
+  await test('Contract fit — Option A es NEUTRAL en bandas: no declarar puntua igual que declarar y coincidir', () => {
+    // El invariante que importa, afirmado sin depender de que el catalogo de
+    // localizaciones resuelva estas fixtures: la regla del conjunto vacio no
+    // puede mover ninguna banda documentada, porque todas se midieron con
+    // "perfil perfecto" — que ya incluia esta fila al maximo. Lo unico que
+    // cambia es quien ANTES sacaba cero por no rellenar un campo opcional.
+    const offer = makeOffer({
+      contractType: 'permanent',
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const base = {
+      verificationStatus: 'verified' as const,
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
+    };
+    const sinDeclarar = calculateOfferTechnicianMatch(
+      offer, makeTechnician({ ...base, availability: { immediately: true, contractTypes: [] } }), RATING_INDEX);
+    const declarado = calculateOfferTechnicianMatch(
+      offer, makeTechnician({ ...base, availability: { immediately: true, contractTypes: ['permanent'] } }), RATING_INDEX);
+    assert.equal(sinDeclarar.total, declarado.total, 'la banda superior no debe depender de un campo opcional');
+    assert.equal(sinDeclarar.label, declarado.label);
+    assert.equal(sinDeclarar.label, 'Excellent match');
   });
 }
 

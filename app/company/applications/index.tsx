@@ -83,7 +83,8 @@ export default function ApplicationsListScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
 
   const [entries, setEntries] = useState<AppEntry[]>([]);
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set());
@@ -94,6 +95,11 @@ export default function ApplicationsListScreen() {
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!companyId) return;
+
     const apps = await offerApplicationRepository.getForCompany(companyId);
 
     const allOffers = await offerRepository.getAllWithRequirements();
@@ -247,7 +253,6 @@ export default function ApplicationsListScreen() {
                   <View style={styles.previewRow}>
                     <CompanyBadge label={`${safePreview.city}, ${safePreview.country}`} tone="muted" small />
                     <CompanyBadge label={safePreview.verificationStatus} tone={safePreview.verificationStatus === 'verified' ? 'success' : 'warning'} small />
-                    <CompanyBadge label={`${safePreview.age} yrs`} tone="muted" small />
                   </View>
                 ) : null}
 

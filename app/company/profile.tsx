@@ -34,6 +34,8 @@ import { CountryPickerField, CityPickerField } from '../../src/components/Locati
 import type { CompanyProfileView } from '../../src/types/company';
 import type { CompanyTypeCode } from '../../src/types/catalog';
 import { spacing } from '../../src/theme';
+import { notify, confirmAction } from '../../src/utils/platformAlert';
+import { isValidUrl, normalizeUrl } from '../../src/utils/urlValidation';
 
 type CompanyForm = {
   name: string;
@@ -43,6 +45,7 @@ type CompanyForm = {
   city: string;
   email: string;
   phone: string;
+  website: string;
 };
 
 function labelize(value: string): string {
@@ -64,12 +67,15 @@ function profileToForm(profile: CompanyProfileView): CompanyForm {
     city: profile.city,
     email: profile.email,
     phone: profile.phone ?? '',
+    website: profile.website ?? '',
   };
 }
 
 export default function CompanyProfileScreen() {
   const router = useRouter();
-const { companyId, companyMemberRole } = useCompanySession();
+const companySession = useCompanySession();
+const companyId = companySession?.companyId;
+const companyMemberRole = companySession?.companyMemberRole;
   const { width } = useWindowDimensions();
   const isWide = width >= 920;
   const { company, requests, loading, refresh } = useCompanyDashboard();
@@ -80,6 +86,8 @@ const { companyId, companyMemberRole } = useCompanySession();
   const canEditCompany = canManageCompanySettings(companyMemberRole);
 
   useEffect(() => {
+    // Guard de CARGA, mudo a proposito (ver nota en map.tsx).
+    if (!companyId) return;
     let active = true;
     companyRepositoryV2.getById(companyId).then((profile) => {
       if (!active) return;
@@ -106,12 +114,24 @@ const { companyId, companyMemberRole } = useCompanySession();
     const name = form.name.trim();
     const email = form.email.trim();
     const phone = form.phone.trim();
+    const website = form.website.trim();
 
     if (!name || !form.locationCityId || !email) {
-      Alert.alert('Missing information', 'Company name, country, city and email are required.');
+      notify('Missing information', 'Company name, country, city and email are required.');
       return;
     }
 
+    // Se valida en cliente para dar un mensaje legible; el CHECK
+    // chk_companies_website_format de la migracion 036 es la red de abajo.
+    if (!isValidUrl(website)) {
+      notify('Invalid website', 'Enter a valid web address, e.g. your-company.com.');
+      return;
+    }
+
+    if (!companyId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     setSaving(true);
     try {
       const updated = await companyRepositoryV2.update(companyId, {
@@ -120,6 +140,9 @@ const { companyId, companyMemberRole } = useCompanySession();
         locationCityId: form.locationCityId,
         email,
         phone: phone || undefined,
+        // Normalizada al guardar (le antepone https:// si falta), igual que
+        // los enlaces del tecnico. Vacio -> '' -> NULL en el repositorio.
+        website: normalizeUrl(website),
       });
       if (updated) {
         setCompanyProfile(updated);
@@ -128,7 +151,7 @@ const { companyId, companyMemberRole } = useCompanySession();
       await refresh();
       setEditing(false);
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not update company information.');
+      notify('Error', e?.message ?? 'Could not update company information.');
     } finally {
       setSaving(false);
     }
@@ -144,6 +167,7 @@ const { companyId, companyMemberRole } = useCompanySession();
   const displayCity = companyProfile?.city ?? company.city;
   const displayEmail = companyProfile?.email ?? company.contactEmail;
   const displayPhone = companyProfile?.phone;
+  const displayWebsite = companyProfile?.website;
   const acceptedCount = requests.filter((r) => r.status === 'accepted').length;
   const sentCount = requests.filter((r) => r.status === 'sent').length;
 
@@ -242,6 +266,7 @@ const { companyId, companyMemberRole } = useCompanySession();
                   <InfoRow label="City" value={displayCity} />
                   <InfoRow label="Contact email" value={displayEmail || 'Not provided'} />
                   <InfoRow label="Phone" value={displayPhone || 'Not provided'} />
+                  <InfoRow label="Website" value={displayWebsite || 'Not provided'} />
                 </View>
               )}
             </CompanyCard>
@@ -342,6 +367,19 @@ function CompanyEditForm({
         onChangeText={(phone) => onChange({ phone })}
         keyboardType="phone-pad"
       />
+      <EditableField
+        label="Website"
+        value={form.website}
+        onChangeText={(website) => onChange({ website })}
+        keyboardType="url"
+        autoCapitalize="none"
+      />
+      {/* A diferencia de los enlaces del tecnico, este NO lleva gate: la
+          empresa no es anonima. Se le dice aqui para que sea una decision
+          informada y no una sorpresa. */}
+      <Text style={styles.fieldHint}>
+        Optional. Shown to technicians on your offers — it is public, not gated by acceptance.
+      </Text>
     </View>
   );
 }
@@ -357,7 +395,7 @@ function EditableField({
   label: string;
   value: string;
   onChangeText: (value: string) => void;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad';
+  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   style?: object;
 }) {
@@ -559,6 +597,12 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '700',
     color: companyUi.textSoft,
+  },
+  fieldHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: companyUi.textSoft,
+    marginTop: -spacing.xs,
   },
   input: {
     minHeight: 44,

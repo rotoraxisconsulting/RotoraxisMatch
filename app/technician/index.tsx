@@ -179,7 +179,8 @@ export default function TechnicianDashboard() {
   useFocusEffect(
     useCallback(() => {
       if (!profile?.id) return;
-      const techId = techSession.technicianId;
+      // Fase 5.4 — techSession es `LocalTechnicianSession | null`.
+      const techId = techSession?.technicianId;
       if (!techId) return;
       Promise.all([
         supabase.from('documents').select('id', { count: 'exact', head: true }).eq('technician_id', techId),
@@ -200,7 +201,7 @@ export default function TechnicianDashboard() {
         setUnreadApplications(unreadApps as number);
         setUnreadChats(unreadChatCount as number);
       });
-    }, [profile?.id, techSession.technicianId]),
+    }, [profile?.id, techSession?.technicianId]),
   );
 
   if (authLoading || sessionLoading) {

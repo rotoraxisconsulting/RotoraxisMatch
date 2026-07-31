@@ -16,6 +16,7 @@ import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
 import { MatchExplanation } from '../../../src/components/MatchExplanation';
 import { Button } from '../../../src/components/Button';
+import { ExternalLink } from '../../../src/components/ExternalLink';
 import {
   EmptyPanel,
   InitialAvatar,
@@ -89,7 +90,8 @@ function statusLabel(status: string): string {
 }
 
 export default function DirectOfferDetailScreen() {
-  const { technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const technicianId = technicianSession?.technicianId;
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
@@ -109,6 +111,11 @@ export default function DirectOfferDetailScreen() {
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!technicianId) return;
+
     if (!id) return;
     const req = await offerRequestRepository.getById(id);
     if (!req) return;
@@ -254,6 +261,9 @@ export default function DirectOfferDetailScreen() {
                 {company.companyType ? COMPANY_TYPE_LABELS[company.companyType] ?? company.companyType : 'Company'}
               </Text>
               <Text style={styles.companyLocation}>{company.city}, {company.country}</Text>
+              {company.website ? (
+                <ExternalLink url={company.website} color={techUi.accent} />
+              ) : null}
             </View>
             <TechnicianBadge
               label={company.verificationStatus}
@@ -301,8 +311,7 @@ export default function DirectOfferDetailScreen() {
                 <BreakdownRow label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} accent={accent} />
                 <BreakdownRow label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} accent={accent} />
                 <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} accent={accent} />
-                <BreakdownRow label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} accent={accent} />
-                <BreakdownRow label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} accent={accent} />
+                <BreakdownRow label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} accent={accent} />
                 <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} accent={accent} />
                 <MatchExplanation score={score} hideBreakdown />
               </View>

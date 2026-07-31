@@ -52,9 +52,10 @@ import { OfferApplication, OfferRequest } from '../../../src/types/offerRequest'
 import { MatchScore } from '../../../src/types/matching';
 import { useCompanySession, useSession } from '../../../src/state/SessionContext';
 import { canManageOffers, canSendDirectOffers } from '../../../src/utils/companyPermissionsV2';
-import { habilitationAircraftCodes } from '../../../src/utils/v2CompatAdapters';
+import { resolveTypeRatingLabels } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
 
@@ -88,7 +89,6 @@ const TECH_TYPE_LABELS: Record<string, string> = {
 };
 
 function availabilityLabel(value?: string): string {
-  if (value === 'available') return 'Available';
   if (value === 'open_to_offers') return 'Open to offers';
   if (value === 'unavailable') return 'Unavailable';
   return 'Availability pending';
@@ -160,7 +160,9 @@ export default function OfferDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { companyId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberRole = companySession?.companyMemberRole;
   const { sessionLoading } = useSession();
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
 
@@ -241,23 +243,18 @@ export default function OfferDetailScreen() {
 
   async function handleClose() {
     if (!offer || !id) return;
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window === 'undefined'
-        ? true
-        : window.confirm('Close offer?\n\nThis offer will no longer be visible to technicians.');
-      if (!confirmed) return;
-      await closeOffer();
-      return;
-    }
-
-    Alert.alert('Close offer?', 'This offer will no longer be visible to technicians.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Close offer',
-        style: 'destructive',
-        onPress: closeOffer,
-      },
-    ]);
+    // Fase 5.7 — esta pantalla tenía su propia rama `Platform.OS === 'web'`
+    // con window.confirm, parcheada solo aquí cuando alguien tropezó con el
+    // Alert no-op de react-native-web. confirmAction() lo centraliza para
+    // toda la app; no reintroduzcas ramas por plataforma en las pantallas.
+    const confirmed = await confirmAction({
+      title: 'Close offer?',
+      message: 'This offer will no longer be visible to technicians.',
+      confirmLabel: 'Close offer',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await closeOffer();
   }
 
   async function deleteOffer() {
@@ -277,12 +274,12 @@ export default function OfferDetailScreen() {
       const updated = await offerRepository.getWithRequirements(id);
       setOffer(updated);
       setStatusChanging(false);
-      Alert.alert(
+      notify(
         'Offer archived',
         'This offer has existing applications or direct offers attached, so it was archived instead of permanently deleted. It is no longer visible to technicians, but every application, direct offer and chat tied to it is untouched.',
       );
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not delete the offer.');
+      notify('Error', e?.message ?? 'Could not delete the offer.');
       setStatusChanging(false);
     }
   }
@@ -296,27 +293,21 @@ export default function OfferDetailScreen() {
       : 'This action cannot be undone.';
     const confirmLabel = hasDependents ? 'Archive' : 'Delete';
 
-    if (Platform.OS === 'web') {
-      const confirmed = typeof window === 'undefined'
-        ? true
-        : window.confirm(`Delete offer?\n\n${message}`);
-      if (!confirmed) return;
-      await deleteOffer();
-      return;
-    }
-
-    Alert.alert(
-      'Delete offer?',
+    const confirmed = await confirmAction({
+      title: 'Delete offer?',
       message,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: confirmLabel, style: 'destructive', onPress: deleteOffer },
-      ],
-    );
+      confirmLabel,
+      destructive: true,
+    });
+    if (!confirmed) return;
+    await deleteOffer();
   }
 
   async function handleSendOffer() {
-    if (!selectedTechId || !id) return;
+    if (!selectedTechId || !id || !companyId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     setSending(true);
     try {
       await offerRequestRepository.create({
@@ -343,9 +334,9 @@ export default function OfferDetailScreen() {
       ]);
       setSelectedTechId(null);
       setMessage('');
-      Alert.alert('Offer sent', 'The technician will be notified of your interest.');
+      notify('Offer sent', 'The technician will be notified of your interest.');
     } catch (e: any) {
-      Alert.alert('Could not send', e?.message ?? 'An error occurred.');
+      notify('Could not send', e?.message ?? 'An error occurred.');
     } finally {
       setSending(false);
     }
@@ -584,7 +575,13 @@ export default function OfferDetailScreen() {
           const relation = offerRelationByTechnician[technician.id];
           const accent = scoreColor(score.total);
           const licenses = technician.licenses.slice(0, 4);
-          const aircraft = habilitationAircraftCodes(technician.habilitations, ratingIndex).slice(0, 4);
+          // displayName completo (célula + MOTOR), no `aircraftFamily` suelta.
+          // Ésta es la pantalla donde la empresa rankea candidatos contra un
+          // type rating que ES célula+motor: mostrar "Airbus A318/A319/A320/A321"
+          // sin el motor impedía distinguir CFM56 de V2500, justo la distinción
+          // que el modelo Part-66 existe para preservar. Misma función que usan
+          // búsqueda y mapa — una sola definición de la etiqueta.
+          const aircraft = resolveTypeRatingLabels(technician.habilitations, ratingIndex).slice(0, 4);
 
           return (
             <CompanyCard key={technician.id} style={[styles.techCard, { borderLeftColor: accent }]}>
@@ -634,8 +631,7 @@ export default function OfferDetailScreen() {
                 <BreakdownItem label="Verified" value={score.breakdown.verified} max={weights?.verified ?? 0} />
                 <BreakdownItem label="Habilitation" value={score.breakdown.habilitation} max={weights?.habilitation ?? 0} />
                 <BreakdownItem label="License" value={score.breakdown.license} max={weights?.license ?? 0} />
-                <BreakdownItem label="Availability" value={score.breakdown.availability} max={weights?.availability ?? 0} />
-                <BreakdownItem label="Experience" value={score.breakdown.experience} max={weights?.experience ?? 0} />
+                <BreakdownItem label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} />
                 <BreakdownItem label="Location" value={score.breakdown.location} max={weights?.location ?? 0} />
               </View>
 

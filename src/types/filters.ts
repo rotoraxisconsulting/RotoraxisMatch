@@ -57,7 +57,6 @@ export interface TechnicianFilters {
   city?: string;
   baseAirport?: string;
   contractType?: string;
-  availableFrom?: string;
 }
 
 /**

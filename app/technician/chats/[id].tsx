@@ -31,6 +31,7 @@ import { companyRepositoryV2 } from '../../../src/repositories/v2/companyReposit
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { ChatRoom, ChatMessage } from '../../../src/types/chat';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -38,7 +39,9 @@ function formatTime(iso: string): string {
 }
 
 export default function TechnicianChatDetailScreen() {
-  const { profileId, technicianId } = useTechnicianSession();
+  const technicianSession = useTechnicianSession();
+  const profileId = technicianSession?.profileId;
+  const technicianId = technicianSession?.technicianId;
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -55,6 +58,11 @@ export default function TechnicianChatDetailScreen() {
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!technicianId) return;
+
     if (!id) return;
     setLocked(false);
 
@@ -109,7 +117,13 @@ export default function TechnicianChatDetailScreen() {
 
   async function handleSend() {
     const body = text.trim();
+    // Cuerpo vacio: no hay nada que enviar ni nada que decir. Mudo a proposito.
     if (!body || !id) return;
+    // Sesion sin resolver: la accion NO puede completarse, asi que lo dice.
+    if (!profileId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     setSending(true);
     try {
       const msg = await chatRepository.sendMessage(id, {
@@ -120,7 +134,7 @@ export default function TechnicianChatDetailScreen() {
       setText('');
       setMessages((prev) => [...prev, msg]);
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not send message.');
+      notify('Error', e?.message ?? 'Could not send message.');
     } finally {
       setSending(false);
     }

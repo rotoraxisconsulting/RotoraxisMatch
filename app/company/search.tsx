@@ -38,6 +38,7 @@ import { useCompanySession } from '../../src/state/SessionContext';
 import { canSendDirectOffers } from '../../src/utils/companyPermissionsV2';
 import { isOfferOpenForTechnicians, offerRepository } from '../../src/repositories/v2/offerRepository';
 import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
+import { offerApplicationRepository } from '../../src/repositories/v2/offerApplicationRepository';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { calculateOfferTechnicianMatch } from '../../src/utils/matchingV2';
 import { useAircraftTypeRatingsCatalog } from '../../src/state/useAircraftTypeRatingsCatalog';
@@ -50,8 +51,15 @@ import { OfferWithRequirements } from '../../src/types/offer';
 import { SafeTechnicianView } from '../../src/types';
 import { MatchScore } from '../../src/types/matching';
 import { SafeTechnicianPreview } from '../../src/types/privacy';
-import { OfferRequest } from '../../src/types/offerRequest';
+import { OfferApplication, OfferRequest } from '../../src/types/offerRequest';
+import { OfferRelationKind } from '../../src/utils/offerRelationStateMachine';
+
+// Relacion existente entre este tecnico y la oferta seleccionada, venga por
+// donde venga. Deliberadamente minima: solo lo que la tarjeta necesita para
+// decidir si puede enviar y que etiqueta poner.
+type OfferRelationSummary = { kind: OfferRelationKind; status: OfferRequest['status'] };
 import { AircraftTypeRatingCatalog } from '../../src/types/catalog';
+import { notify, confirmAction } from '../../src/utils/platformAlert';
 
 type PreviewMap = Record<string, SafeTechnicianPreview>;
 type ScoreMap = Record<string, MatchScore>;
@@ -61,16 +69,13 @@ function labelize(value?: string): string {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+// Binaria desde 2026-07-29. `status` es la etiqueta del booleano persistido,
+// así que no hace falta ningún fallback: si no viene, se lee `immediately`.
 function availabilityLabel(tech: SafeTechnicianView): string {
-  const status = tech.availability.status;
-  if (status === 'available') return 'Available now';
-  if (status === 'open_to_offers') {
-    return tech.availability.availableFrom ? `Available ${tech.availability.availableFrom}` : 'Open to offers';
-  }
-  if (status === 'unavailable') return 'Unavailable';
-  if (tech.availability.immediately) return 'Available now';
-  if (tech.availability.availableFrom) return `Available ${tech.availability.availableFrom}`;
-  return 'Open to offers';
+  const openToOffers = tech.availability.status
+    ? tech.availability.status === 'open_to_offers'
+    : Boolean(tech.availability.immediately);
+  return openToOffers ? 'Open to offers' : 'Unavailable';
 }
 
 function verificationTone(status: string) {
@@ -83,10 +88,18 @@ function offerRequestBadgeTone(status: string): 'success' | 'warning' | 'muted' 
   return 'muted';
 }
 
-function offerRequestBadgeLabel(status: string): string {
-  if (status === 'pending') return 'Pending response';
-  if (status === 'accepted') return 'Offer accepted';
-  return 'Already sent';
+// Fase 5.7 (2026-07-28) — la etiqueta distingue el CAMINO de la relacion.
+// Antes solo se miraban las ofertas directas: un tecnico que habia APLICADO
+// a la oferta seguia mostrando "Send offer", el envio fallaba en el
+// repositorio y (con el Alert no-op de web) el fallo era invisible. Ese era
+// el fallo silencioso reportado.
+function relationBadgeLabel(relation: OfferRelationSummary): string {
+  const noun = relation.kind === 'application' ? 'Application' : 'Offer';
+  if (relation.status === 'pending') {
+    return relation.kind === 'application' ? 'Applied - pending' : 'Pending response';
+  }
+  if (relation.status === 'accepted') return `${noun} accepted`;
+  return relation.kind === 'application' ? 'Applied previously' : 'Already sent';
 }
 
 export default function TechnicianSearchScreen() {
@@ -96,7 +109,9 @@ export default function TechnicianSearchScreen() {
   const { results, filters, loading, hasSearched, updateFilter, clearFilters, search } =
     useTechnicianSearch();
   const { ratingIndex } = useAircraftTypeRatingsCatalog();
-  const { companyId, companyMemberRole } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberRole = companySession?.companyMemberRole;
   const canSendRole = canSendDirectOffers(companyMemberRole);
   const { offerId: preselectedOfferId } = useLocalSearchParams<{ offerId?: string }>();
 
@@ -105,11 +120,18 @@ export default function TechnicianSearchScreen() {
   const [previews, setPreviews] = useState<PreviewMap>({});
   const [scores, setScores] = useState<ScoreMap>({});
   const [offerRequests, setOfferRequests] = useState<OfferRequest[]>([]);
+  const [offerApplications, setOfferApplications] = useState<OfferApplication[]>([]);
   const [sendingTechId, setSendingTechId] = useState<string | null>(null);
 
   const loadOfferRequests = useCallback(async () => {
-    const reqs = await offerRequestRepository.getForCompany(companyId);
+    // Guard de CARGA, mudo a proposito (ver nota en map.tsx).
+    if (!companyId) return;
+    const [reqs, apps] = await Promise.all([
+      offerRequestRepository.getForCompany(companyId),
+      offerApplicationRepository.getForCompany(companyId),
+    ]);
     setOfferRequests(reqs);
+    setOfferApplications(apps);
   }, [companyId]);
 
   useFocusEffect(
@@ -205,15 +227,28 @@ export default function TechnicianSearchScreen() {
     setPreviews({});
   }
 
-  function getActiveOfferRequest(techId: string): OfferRequest | undefined {
+  // Relacion existente con la oferta seleccionada, POR CUALQUIERA DE LOS DOS
+  // CAMINOS: oferta directa que mandamos nosotros, o aplicacion que mando el
+  // tecnico. Ambas bloquean un envio nuevo (evaluateDirectOfferConflict), asi
+  // que ambas tienen que desactivar el boton — si no, la accion falla y el
+  // usuario no entiende por que.
+  function getExistingRelation(techId: string): OfferRelationSummary | undefined {
     if (!selectedOfferId) return undefined;
-    return offerRequests.find(
+    const application = offerApplications.find(
+      (a) => a.technicianId === techId && a.offerId === selectedOfferId,
+    );
+    if (application) return { kind: 'application', status: application.status };
+    const request = offerRequests.find(
       (r) => r.technicianId === techId && r.offerId === selectedOfferId,
     );
+    return request ? { kind: 'direct_offer', status: request.status } : undefined;
   }
 
   async function handleSendOffer(techId: string) {
-    if (!selectedOfferId) return;
+    if (!selectedOfferId || !companyId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     setSendingTechId(techId);
     try {
       await offerRequestRepository.create({
@@ -223,7 +258,7 @@ export default function TechnicianSearchScreen() {
       });
       await loadOfferRequests();
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Failed to send the direct offer. Please try again.');
+      notify('Error', err?.message ?? 'Failed to send the direct offer. Please try again.');
     } finally {
       setSendingTechId(null);
     }
@@ -277,6 +312,12 @@ export default function TechnicianSearchScreen() {
                 </View>
               </View>
 
+              {/* Mismas dos opciones que el mapa, mismo campo y misma función
+                  de repositorio — antes esta pantalla ofrecía 2 estados y el
+                  mapa 3, sobre el mismo dato (hallazgo I9). Un técnico
+                  "Unavailable" NO desaparece: aparece marcado, para que la
+                  empresa pueda planificar y decida ella si lo filtra. Mismo
+                  criterio que con los años no declarados. */}
               <FilterGroup label="Availability">
                 <CompanyChip
                   label="Any"
@@ -284,9 +325,14 @@ export default function TechnicianSearchScreen() {
                   onPress={() => updateFilter('availabilityStatus', undefined)}
                 />
                 <CompanyChip
-                  label="Available now"
-                  selected={filters.availabilityStatus === 'available'}
-                  onPress={() => updateFilter('availabilityStatus', 'available')}
+                  label="Open to offers"
+                  selected={filters.availabilityStatus === 'open_to_offers'}
+                  onPress={() => updateFilter('availabilityStatus', 'open_to_offers')}
+                />
+                <CompanyChip
+                  label="Unavailable"
+                  selected={filters.availabilityStatus === 'unavailable'}
+                  onPress={() => updateFilter('availabilityStatus', 'unavailable')}
                 />
               </FilterGroup>
 
@@ -417,7 +463,7 @@ export default function TechnicianSearchScreen() {
             preview={previews[item.id]}
             selectedOffer={selectedOffer}
             score={scores[item.id]}
-            activeOfferRequest={getActiveOfferRequest(item.id)}
+            existingRelation={getExistingRelation(item.id)}
             onSendOffer={() => handleSendOffer(item.id)}
             sendingThis={sendingTechId === item.id}
             canSendRole={canSendRole}
@@ -447,10 +493,8 @@ function FilterGroup({ label, children }: { label: string; children: React.React
  *
  * Send offer logic:
  * - No selectedOffer → button disabled, "Select an offer first"
- * - selectedOffer + no activeOfferRequest → "Send offer" (active)
- * - activeOfferRequest pending → "Pending response" (static)
- * - activeOfferRequest accepted → "Offer accepted" (static)
- * - activeOfferRequest other → "Already sent" (static)
+ * - selectedOffer + sin relacion previa → "Send offer" (active)
+ * - relacion existente (oferta directa O aplicacion) → etiqueta estatica
  * Duplicate detection is by company_id + technician_id + offer_id.
  */
 function TechnicianResultCard({
@@ -458,7 +502,7 @@ function TechnicianResultCard({
   preview,
   selectedOffer,
   score,
-  activeOfferRequest,
+  existingRelation,
   onSendOffer,
   sendingThis,
   canSendRole,
@@ -468,7 +512,7 @@ function TechnicianResultCard({
   preview?: SafeTechnicianPreview;
   selectedOffer: OfferWithRequirements | null;
   score?: MatchScore;
-  activeOfferRequest: OfferRequest | undefined;
+  existingRelation: OfferRelationSummary | undefined;
   onSendOffer: () => void;
   sendingThis: boolean;
   canSendRole: boolean;
@@ -484,7 +528,7 @@ function TechnicianResultCard({
   const aircraftCat = productTypes.size > 1 ? 'mixed' : productTypes.size === 1 ? [...productTypes][0] : null;
 
   // Footer button state — role gates the send action entirely
-  const canSend = canSendRole && selectedOffer !== null && !activeOfferRequest && !sendingThis;
+  const canSend = canSendRole && selectedOffer !== null && !existingRelation && !sendingThis;
 
   return (
     <CompanyCard style={styles.resultCard}>
@@ -495,10 +539,10 @@ function TechnicianResultCard({
             <Text style={styles.techName} numberOfLines={1}>
               {displayName}
             </Text>
-            {selectedOffer && activeOfferRequest ? (
+            {selectedOffer && existingRelation ? (
               <CompanyBadge
-                label={offerRequestBadgeLabel(activeOfferRequest.status)}
-                tone={offerRequestBadgeTone(activeOfferRequest.status)}
+                label={relationBadgeLabel(existingRelation)}
+                tone={offerRequestBadgeTone(existingRelation.status)}
                 small
               />
             ) : null}
@@ -590,9 +634,9 @@ function TechnicianResultCard({
               </>
             )}
           </TouchableOpacity>
-        ) : activeOfferRequest ? (
+        ) : existingRelation ? (
           <View style={styles.requestStatic}>
-            <Text style={styles.requestStaticText}>{offerRequestBadgeLabel(activeOfferRequest.status)}</Text>
+            <Text style={styles.requestStaticText}>{relationBadgeLabel(existingRelation)}</Text>
           </View>
         ) : canSendRole ? (
           <View style={[styles.requestStatic, styles.requestStaticDimmed]}>

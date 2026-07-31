@@ -34,18 +34,12 @@ import { resolveLocationSnapshot } from '../constants/locationCities';
 // Age
 // ---------------------------------------------------------------------------
 
-/**
- * Derive integer age from an ISO date string.
- * Never expose the raw birthDate in safe company views — only pass the return value.
- */
-export function calculateAge(birthDate: string): number {
-  const today = new Date();
-  const birth = new Date(birthDate);
-  let age = today.getFullYear() - birth.getFullYear();
-  const m = today.getMonth() - birth.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
-  return age;
-}
+// calculateAge() ELIMINADA (migración 040). La edad salió del contrato público
+// por ser característica protegida, así que no queda ningún sitio donde una
+// empresa deba verla derivada. Si alguna vez hace falta la edad para un uso
+// interno (p. ej. un requisito regulatorio), se calcula donde se necesite y con
+// `birthDate`, que sigue siendo privado — no se reintroduce aquí un helper cuyo
+// único cliente histórico fue la vista que una empresa consume.
 
 // ---------------------------------------------------------------------------
 // Shared params type for all three gate functions
@@ -108,9 +102,9 @@ export function canOpenChat(params: AcceptanceCheckParams): boolean {
 /**
  * Builds a SafeTechnicianPreview — the anonymous company view before acceptance.
  *
- * Includes: id, anonymousCode, age (derived), technicianType, country, city,
+ * Includes: id, anonymousCode, technicianType, country, city,
  *           baseAirport, location coordinates, licenses, habilitations,
- *           aircraftExperience, availability, verificationStatus.
+ *           yearsExperience, availability, verificationStatus.
  *
  * Excludes: firstName, lastName, email, phone, birthDate, socialLinks, documents, matchingScore.
  */
@@ -120,7 +114,6 @@ export function getSafeTechnicianPreview(technician: TechnicianWithRelations): S
   return {
     id: technician.id,
     anonymousCode: technician.anonymousCode,
-    age: calculateAge(technician.birthDate),
     technicianType: technician.technicianType,
     locationCityId: location?.locationCityId ?? technician.locationCityId,
     country: location?.country ?? '',
@@ -130,7 +123,7 @@ export function getSafeTechnicianPreview(technician: TechnicianWithRelations): S
     longitude: location?.longitude,
     licenses: technician.licenses.map((l) => l.licenseCode as LicenseCode),
     habilitations: technician.habilitations,
-    aircraftExperience: technician.aircraftExperience,
+    yearsExperience: technician.yearsExperience,
     availability: technician.availability,
     verificationStatus: technician.verificationStatus,
   };
@@ -182,11 +175,11 @@ export interface GetTechnicianViewParams extends AcceptanceCheckParams {
  *
  * @example
  * // Locked (no accepted record):
- * //   { id, anonymousCode, age: 34, technicianType: 'mechanic', country: 'France', ... }
+ * //   { id, anonymousCode, technicianType: 'mechanic', country: 'France', ... }
  *
  * @example
  * // Unlocked (accepted offer exists):
- * //   { id, anonymousCode, age: 34, ..., firstName: 'First', lastName: 'Last', email: '...', documents: [...] }
+ * //   { id, anonymousCode, ..., firstName: 'First', lastName: 'Last', email: '...', documents: [...] }
  */
 export function getTechnicianViewForCompany(params: GetTechnicianViewParams): TechnicianView {
   const { technicianWithRelations, documents, ...checkParams } = params;

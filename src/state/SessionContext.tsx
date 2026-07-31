@@ -22,36 +22,35 @@ export interface LocalAdminSession {
   role: Extract<AppRole, 'admin'>;
 }
 
+// Fase 5.4 — BLINDAJE DE DEUDA (2026-07-28). Las tres sesiones son
+// `T | null`, nunca un objeto relleno de cadenas vacías.
+//
+// Por qué: el mismo crash —leer companyId/technicianId antes de que este
+// contexto resolviera su propio fetch async contra
+// `company_members`/`technician_profiles`— apareció TRES veces seguidas,
+// pantalla a pantalla (offers list, offer detail, useMapTechnicians), antes
+// de cerrarse en la raíz gateando CompanyLayout/TechnicianLayout también en
+// `sessionLoading`. Ese gate cierra el bug activo, pero no impide que una
+// ruta FUTURA fuera de esos dos layouts repita el error de `map.tsx` (la
+// única que vivía fuera y hubo que mover a `app/company/map.tsx`).
+//
+// Un `companyId: ''` COMPILA y parece válido: se propaga hasta una query
+// Supabase que devuelve 0 filas o revienta con un uuid inválido, lejos del
+// origen. `null` no compila sin comprobarlo. El objetivo de este cambio es
+// que el error salga en `tsc`, no en producción.
+//
+// NO reintroduzcas un EMPTY_* "para simplificar": esa constante ERA el bug.
 export interface LocalSessionContextValue {
-  technician: LocalTechnicianSession;
-  company: LocalCompanySession;
-  admin: LocalAdminSession;
+  technician: LocalTechnicianSession | null;
+  company: LocalCompanySession | null;
+  admin: LocalAdminSession | null;
   sessionLoading: boolean;
 }
 
-const EMPTY_TECH: LocalTechnicianSession = {
-  profileId: '',
-  role: 'technician',
-  technicianId: '',
-};
-
-const EMPTY_COMPANY: LocalCompanySession = {
-  profileId: '',
-  role: 'company_user',
-  companyId: '',
-  companyMemberId: '',
-  companyMemberRole: 'viewer',
-};
-
-const EMPTY_ADMIN: LocalAdminSession = {
-  profileId: '',
-  role: 'admin',
-};
-
 const DEFAULT_VALUE: LocalSessionContextValue = {
-  technician: EMPTY_TECH,
-  company: EMPTY_COMPANY,
-  admin: EMPTY_ADMIN,
+  technician: null,
+  company: null,
+  admin: null,
   sessionLoading: true,
 };
 
@@ -79,13 +78,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle()
         .then(({ data }) => {
           setValue({
-            technician: {
-              profileId: profile.id,
-              role: 'technician',
-              technicianId: data?.id ?? '',
-            },
-            company: EMPTY_COMPANY,
-            admin: EMPTY_ADMIN,
+            // Sin fila en technician_profiles no hay sesión de técnico que
+            // ofrecer. Antes esto producía `technicianId: ''`; ahora es
+            // null y quien lo consuma tiene que decidir qué hacer.
+            technician: data?.id
+              ? { profileId: profile.id, role: 'technician', technicianId: data.id }
+              : null,
+            company: null,
+            admin: null,
             sessionLoading: false,
           });
         });
@@ -97,22 +97,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         .maybeSingle()
         .then(({ data }) => {
           setValue({
-            technician: EMPTY_TECH,
-            company: {
-              profileId: profile.id,
-              role: 'company_user',
-              companyId: data?.company_id ?? '',
-              companyMemberId: data?.id ?? '',
-              companyMemberRole: (data?.role as CompanyMemberRole) ?? 'viewer',
-            },
-            admin: EMPTY_ADMIN,
+            technician: null,
+            // Idem: sin membresía resuelta no hay sesión de empresa.
+            company: data?.company_id && data?.id
+              ? {
+                  profileId: profile.id,
+                  role: 'company_user',
+                  companyId: data.company_id,
+                  companyMemberId: data.id,
+                  companyMemberRole: (data.role as CompanyMemberRole) ?? 'viewer',
+                }
+              : null,
+            admin: null,
             sessionLoading: false,
           });
         });
     } else if (profile.role === 'admin') {
       setValue({
-        technician: EMPTY_TECH,
-        company: EMPTY_COMPANY,
+        technician: null,
+        company: null,
         admin: { profileId: profile.id, role: 'admin' },
         sessionLoading: false,
       });
@@ -132,14 +135,17 @@ export function useSession(): LocalSessionContextValue {
   return useContext(SessionContext);
 }
 
-export function useTechnicianSession(): LocalTechnicianSession {
+// null mientras `sessionLoading`, y también cuando el perfil autenticado no
+// tiene fila de técnico/miembro de empresa que resolver. Comprueba antes de
+// desestructurar — `tsc` no te dejará no hacerlo, que es justo el punto.
+export function useTechnicianSession(): LocalTechnicianSession | null {
   return useSession().technician;
 }
 
-export function useCompanySession(): LocalCompanySession {
+export function useCompanySession(): LocalCompanySession | null {
   return useSession().company;
 }
 
-export function useAdminSession(): LocalAdminSession {
+export function useAdminSession(): LocalAdminSession | null {
   return useSession().admin;
 }

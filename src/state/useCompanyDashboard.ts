@@ -84,13 +84,26 @@ async function buildTechnicianMapV2(
 }
 
 export function useCompanyDashboard(): CompanyDashboardState {
-  const { companyId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
   const [company, setCompany] = useState<Company | null>(null);
   const [requests, setRequests] = useState<MatchRequest[]>([]);
   const [technicianMap, setTechnicianMap] = useState<Record<string, SafeTechnicianView>>({});
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
+    // Fase 5.4 — la sesión de empresa aún no está resuelta (o el perfil no
+    // tiene fila en company_members). No hay nada que cargar y, sobre todo,
+    // no se dispara una query con un id vacío: ese era exactamente el crash
+    // que este blindaje existe para impedir.
+    if (!companyId) {
+      setCompany(null);
+      setRequests([]);
+      setTechnicianMap({});
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     const [companyProfile, v2Requests, ratings] = await Promise.all([
       companyRepositoryV2.getById(companyId),

@@ -34,6 +34,7 @@ import { isUnlocked } from '../../../src/types/privacy';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { canSendChatMessages } from '../../../src/utils/companyPermissionsV2';
 import { ChatRoom, ChatMessage } from '../../../src/types/chat';
+import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -46,7 +47,11 @@ export default function CompanyChatDetailScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
   const scrollRef = useRef<ScrollView>(null);
-  const { companyId, companyMemberId, companyMemberRole, profileId } = useCompanySession();
+  const companySession = useCompanySession();
+  const companyId = companySession?.companyId;
+  const companyMemberId = companySession?.companyMemberId;
+  const companyMemberRole = companySession?.companyMemberRole;
+  const profileId = companySession?.profileId;
 
   const [room, setRoom] = useState<ChatRoom | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -59,6 +64,11 @@ export default function CompanyChatDetailScreen() {
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
+    // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
+    // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
+    // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
+    if (!companyId) return;
+
     if (!id) return;
     setLocked(false);
 
@@ -117,7 +127,14 @@ export default function CompanyChatDetailScreen() {
 
   async function handleSend() {
     const body = text.trim();
+    // Cuerpo vacio: no hay nada que enviar ni nada que decir. Mudo a proposito.
     if (!body || !id) return;
+    // Sesion sin resolver: la accion NO puede completarse, asi que lo dice.
+    // Un `return` mudo aqui es indistinguible de un boton roto (Fase 5.7).
+    if (!profileId || !companyMemberId) {
+      notify('Not ready yet', 'Your session is still loading. Try again in a moment.');
+      return;
+    }
     setSending(true);
     try {
       const msg = await chatRepository.sendMessage(id, {
@@ -129,7 +146,7 @@ export default function CompanyChatDetailScreen() {
       setText('');
       setMessages((prev) => [...prev, msg]);
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Could not send message.');
+      notify('Error', e?.message ?? 'Could not send message.');
     } finally {
       setSending(false);
     }

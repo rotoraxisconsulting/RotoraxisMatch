@@ -66,7 +66,7 @@ No self-service company invitations, invite links, invite tokens, or email invit
 4. Company can still send a direct offer (without a linked job offer).
 
 **Direct offer screen:**
-- Company sees: anonymousCode, age, technicianType, licenses, habilitations, experience, availability.
+- Company sees: anonymousCode, technicianType, licenses, habilitations, experience, availability. SIN age (retirada 2026-07-29, migración 040 — característica protegida, riesgo de discriminación en el cribado).
 - If an offer was pre-selected, the match score for that offer is shown.
 - Company writes optional message.
 - Company sends offer → OfferRequest created with `status: pending`.

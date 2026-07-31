@@ -43,17 +43,70 @@ const AIRCRAFT_TYPE_RATINGS_SELECT = `
   updated_at
 `;
 
+// ── Fase 5.6 (2026-07-28) — paginación completa + aserción dura ────────
+//
+// PostgREST corta CUALQUIER respuesta en 1000 filas, sin error y sin aviso
+// (comprobado empíricamente contra el endpoint real: `Content-Range:
+// 0-999/2500`). Este catálogo tiene 606 filas activas — el 61% de ese tope,
+// y esta misión lo hizo crecer de 80 a 606.
+//
+// Un catálogo truncado no es "menos datos": es INSERVIBLE. Produciría
+// ratings que un técnico no puede seleccionar en su perfil ni una empresa
+// exigir en una oferta, sin ningún error visible. Y como esto alimenta la
+// caché TTL compartida, el recorte se propagaría a toda la app durante toda
+// la vida útil de la caché.
+//
+// Por eso aquí NO vale un aviso (a diferencia de search()/getPublicProfiles(),
+// donde sí — ver technicianRepositoryV2). Dos garantías:
+//   1. Se pagina hasta agotar, nunca una ventana.
+//   2. Se compara lo traído contra un `count: 'exact'` y se LANZA si no
+//      coinciden — antes de devolver, así que la caché nunca llega a
+//      poblarse con un catálogo incompleto (createAircraftTypeRatingsCache
+//      solo escribe estado en la promesa resuelta; si esta rechaza, o
+//      conserva el catálogo completo anterior o queda en 'error').
+const CATALOG_PAGE_SIZE = 500;
+// Cota de seguridad: 100 páginas = 50.000 filas, dos órdenes de magnitud por
+// encima del catálogo real. Existe para que un bug del servidor no produzca
+// un bucle infinito, no como límite funcional.
+const CATALOG_MAX_PAGES = 100;
+
 async function fetchActiveAircraftTypeRatings(): Promise<AircraftTypeRatingCatalog[]> {
-  const { data, error } = await supabase
-    .from('aircraft_type_ratings')
-    .select(AIRCRAFT_TYPE_RATINGS_SELECT)
-    .eq('is_active', true)
-    .order('priority', { ascending: false })
-    .order('manufacturer', { ascending: true })
-    .order('aircraft_family', { ascending: true })
-    .order('engine_family', { ascending: true });
-  throwIfError(error);
-  return ((data ?? []) as unknown as AircraftTypeRatingRow[]).map(mapAircraftTypeRatingRow);
+  const rows: AircraftTypeRatingRow[] = [];
+  let expectedTotal: number | null = null;
+
+  for (let page = 0; page < CATALOG_MAX_PAGES; page += 1) {
+    const from = page * CATALOG_PAGE_SIZE;
+    const { data, error, count } = await supabase
+      .from('aircraft_type_ratings')
+      .select(AIRCRAFT_TYPE_RATINGS_SELECT, { count: 'exact' })
+      .eq('is_active', true)
+      .order('priority', { ascending: false })
+      .order('manufacturer', { ascending: true })
+      .order('aircraft_family', { ascending: true })
+      .order('engine_family', { ascending: true })
+      // Desempate final por clave primaria: sin él, dos filas con la misma
+      // tupla de ordenación pueden repetirse o saltarse entre páginas, que es
+      // el fallo clásico de paginar por offset sobre un orden no total.
+      .order('id', { ascending: true })
+      .range(from, from + CATALOG_PAGE_SIZE - 1);
+    throwIfError(error);
+
+    if (expectedTotal === null) expectedTotal = count ?? null;
+    const batch = (data ?? []) as unknown as AircraftTypeRatingRow[];
+    rows.push(...batch);
+    if (batch.length < CATALOG_PAGE_SIZE) break;
+  }
+
+  // La aserción dura. Falla ruidosamente en vez de servir un catálogo a medias.
+  if (expectedTotal !== null && rows.length !== expectedTotal) {
+    throw new Error(
+      `Aircraft type ratings catalog is incomplete: fetched ${rows.length} of ${expectedTotal} rows. ` +
+        'Refusing to populate the catalog cache with a partial catalog — a truncated catalog silently ' +
+        'hides ratings from profiles, offers and matching. Check pagination and the PostgREST row limit.',
+    );
+  }
+
+  return rows.map(mapAircraftTypeRatingRow);
 }
 
 // Deliberately does NOT filter on is_active — this is the path that resolves

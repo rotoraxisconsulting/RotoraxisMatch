@@ -84,6 +84,8 @@ export default function AdminTechniciansScreen() {
   const {
     technicians,
     technicianDetailsMap,
+    typeRatingLabelsMap,
+    accountStatusMap,
     loading,
     refresh,
     updateTechnicianVerification,
@@ -181,6 +183,8 @@ export default function AdminTechniciansScreen() {
           <AdminTechnicianCard
             technician={item}
             details={technicianDetailsMap[item.id]}
+            typeRatingLabels={typeRatingLabelsMap[item.id]}
+            accountStatus={accountStatusMap[item.id]}
             onUpdateStatus={updateTechnicianVerification}
           />
         )}
