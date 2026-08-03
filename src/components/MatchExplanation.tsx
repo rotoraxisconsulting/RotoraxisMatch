@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, spacing } from '../theme';
-import { MatchScore } from '../types/matching';
+import { MatchScore, MatchDisplayLabel } from '../types/matching';
 
 const LEVEL_LABEL: Record<MatchScore['level'], string> = {
   exact: 'Exact match',
@@ -38,7 +38,20 @@ const BREAKDOWN_ORDER: (keyof MatchScore['breakdown'])[] = ['habilitation', 'lic
 // getMatchScoreWeights) — avoids showing the same numbers twice. The cap
 // note, matches, clarifications and mandatory-missing sections always
 // render regardless, since those are never duplicated elsewhere.
-export function MatchExplanation({ score, hideBreakdown = false }: { score: MatchScore; hideBreakdown?: boolean }) {
+// displayLabel: overrides the band label ("Excellent match", …) next to the
+// score. Passed by callers that know the offer targets non-licensed trades,
+// where there is no Part-66 requirement to have matched and the honest
+// wording is "General compatibility" — see getMatchDisplayLabel. Defaults to
+// the score's own label.
+export function MatchExplanation({
+  score,
+  hideBreakdown = false,
+  displayLabel,
+}: {
+  score: MatchScore;
+  hideBreakdown?: boolean;
+  displayLabel?: MatchDisplayLabel;
+}) {
   const rawSum = Object.values(score.breakdown).reduce((sum, v) => sum + v, 0);
   const wasCapped = rawSum > score.total;
 
@@ -46,17 +59,31 @@ export function MatchExplanation({ score, hideBreakdown = false }: { score: Matc
     score.matches.length === 0 &&
     score.clarifications.length === 0 &&
     score.vigenciaNotices.length === 0 &&
-    score.mandatoryMissing.length === 0
+    score.mandatoryMissing.length === 0 &&
+    score.blockers.length === 0
   ) {
     return null;
   }
 
   return (
     <View style={styles.wrap}>
+      {/* Blockers render ABOVE the score row on purpose: a blocked pair must
+          never be read as a percentage first and a disqualification second.
+          See MatchScore.blockers for why this is not the same as an unmet
+          mandatory requirement (which stays below, with the rest). */}
+      {score.blockers.length > 0 && (
+        <View style={styles.blockerBox}>
+          <Text style={styles.blockerTitle}>Not eligible</Text>
+          {score.blockers.map((b, i) => (
+            <Text key={i} style={styles.blockerLine}>• {b}</Text>
+          ))}
+        </View>
+      )}
+
       <View style={styles.levelRow}>
         <View style={[styles.levelDot, { backgroundColor: LEVEL_COLOR[score.level] }]} />
         <Text style={[styles.levelText, { color: LEVEL_COLOR[score.level] }]}>{LEVEL_LABEL[score.level]}</Text>
-        <Text style={styles.scoreText}>{score.total}/100 — {score.label}</Text>
+        <Text style={styles.scoreText}>{score.total}/100 — {displayLabel ?? score.label}</Text>
       </View>
 
       {!hideBreakdown && (
@@ -72,9 +99,11 @@ export function MatchExplanation({ score, hideBreakdown = false }: { score: Matc
       )}
       {wasCapped && (
         <Text style={styles.cappedNote}>
-          {score.mandatoryMissing.length > 0
-            ? 'Score capped: a mandatory requirement is not met exactly (see below).'
-            : 'Score capped: the offer requires a qualification this profile does not have.'}
+          {score.blockers.length > 0
+            ? 'Score capped: this profile does not meet a hard requirement of the offer (see above).'
+            : score.mandatoryMissing.length > 0
+              ? 'Score capped: a mandatory requirement is not met exactly (see below).'
+              : 'Score capped: the offer requires a qualification this profile does not have.'}
         </Text>
       )}
 
@@ -149,6 +178,28 @@ const styles = StyleSheet.create({
   },
   block: {
     gap: 2,
+  },
+  blockerBox: {
+    gap: 2,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: colors.error + '14',
+    borderRadius: 8,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  blockerTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.error,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 2,
+  },
+  blockerLine: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.error,
   },
   breakdownRow: {
     flexDirection: 'row',

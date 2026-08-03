@@ -111,13 +111,9 @@ export default function SettingsScreen() {
               <Text style={styles.aboutKey}>App</Text>
               <Text style={styles.aboutValue}>Aviation Job Talent</Text>
             </View>
-            <View style={styles.aboutRow}>
+            <View style={[styles.aboutRow, styles.aboutRowLast]}>
               <Text style={styles.aboutKey}>Version</Text>
               <Text style={styles.aboutValue}>{Constants.expoConfig?.version ?? '1.0.0'}</Text>
-            </View>
-            <View style={[styles.aboutRow, styles.aboutRowLast]}>
-              <Text style={styles.aboutKey}>Mode</Text>
-              <Text style={styles.aboutValue}>Live · Supabase</Text>
             </View>
           </View>
         </View>

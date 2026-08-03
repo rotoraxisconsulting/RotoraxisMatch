@@ -36,7 +36,7 @@ import { companyRepositoryV2 } from '../../../src/repositories/v2/companyReposit
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchScoreWeights, getMatchDisplayLabel } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { resolveFamilyKeyLabels } from '../../../src/constants/aircraftTypeRatingViews';
@@ -286,7 +286,7 @@ export default function OfferDetailScreen() {
             </View>
           )}
           {score && (
-            <InlineScore score={score.total} quality={score.label} context="match with your profile" />
+            <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match with your profile" />
           )}
           <View style={styles.badgeRow}>
             <TechnicianBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" />
@@ -340,7 +340,7 @@ export default function OfferDetailScreen() {
             <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} accent={accent} />
             <BreakdownRow label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} accent={accent} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} accent={accent} />
-            <MatchExplanation score={score} hideBreakdown />
+            <MatchExplanation score={score} hideBreakdown displayLabel={getMatchDisplayLabel(offer, score)} />
           </TechnicianCard>
         )}
 

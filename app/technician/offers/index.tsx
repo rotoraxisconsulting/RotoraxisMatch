@@ -24,7 +24,7 @@ import {
   techStyles,
   techUi,
 } from '../../../src/components/technician/TechnicianUI';
-import { getOfferMatchesForTechnician, OfferMatchResult } from '../../../src/utils/matchingV2';
+import { getOfferMatchesForTechnician, OfferMatchResult, getMatchDisplayLabel } from '../../../src/utils/matchingV2';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { companyRepositoryV2 } from '../../../src/repositories/v2/companyRepositoryV2';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
@@ -286,7 +286,7 @@ export default function BrowseOffersScreen() {
                       </Text>
                     )}
                   </View>
-                  <MatchBadge score={score.total} context="match" />
+                  <MatchBadge score={score.total} context="match" notEligible={score.blockers.length > 0} />
                 </View>
 
                 <Text style={styles.cardLocation}>
@@ -303,7 +303,7 @@ export default function BrowseOffersScreen() {
                   {aircraftCatBadge && (
                     <TechnicianBadge label={aircraftCatBadge.label} tone={aircraftCatBadge.tone} small />
                   )}
-                  <TechnicianBadge label={score.label} tone={scoreTone(score.total)} small />
+                  <TechnicianBadge label={getMatchDisplayLabel(offer, score)} tone={scoreTone(score.total)} small />
                 </View>
 
                 {(offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0) && (

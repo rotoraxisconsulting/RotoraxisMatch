@@ -15,5 +15,4 @@ export * from './catalogRequest'; // CatalogRequest, CatalogRequestStatus
 export * from './habilitationScope'; // AircraftClass, PropulsionType, EasaGroup, HabilitationScope (Fase 4 scaffolding, unused by production code)
 
 // V1 unchanged files
-export * from './session';     // UserRole, DemoSession
 export * from './matchRequest'; // MatchRequest, MatchRequestStatus

@@ -42,6 +42,22 @@ import {
 } from '../src/utils/offerRelationStateMachine';
 import { canHold, getCompatiblePropulsion } from '../src/utils/habilitationScope';
 import { HabilitationScope } from '../src/types/habilitationScope';
+import { isLicensedTechnicianType, offerTargetsLicensedProfiles } from '../src/constants/technicianTypes';
+import { planOfferTechnicianTypeToggle } from '../src/utils/offerTechnicianTypePlan';
+import { getMatchDisplayLabel } from '../src/utils/offerMatchExplain';
+import { GENERAL_COMPATIBILITY_LABEL } from '../src/types/matching';
+import {
+  computeProfileCompleteness,
+  LICENSED_COMPLETENESS_WEIGHTS,
+  NON_LICENSED_COMPLETENESS_WEIGHTS,
+  ProfileCompletenessWeights,
+} from '../src/utils/profileCompleteness';
+import { Technician } from '../src/types';
+import {
+  parseYearsExperience,
+  validateSignupYearsExperience,
+  validateProfileYearsExperience,
+} from '../src/utils/yearsExperienceValidation';
 
 let passed = 0;
 let failed = 0;
@@ -666,20 +682,31 @@ async function main() {
   });
 
   await test('Fase 5.3 — applyScoreCeilings: most restrictive ceiling always wins, in any combination', () => {
-    const none = { isBroadOnlyMatch: false, hasMandatoryUnmet: false, isZeroQualification: false };
+    // `hasBlocker` joined this object when BLOCKER_CAP was added — the flags
+    // param is deliberately all-required (a forgotten flag would silently
+    // mean "no cap", and the ladder is most-restrictive-wins). Only the
+    // fixture gained the field; every expectation below is unchanged.
+    const none = { isBroadOnlyMatch: false, hasMandatoryUnmet: false, isZeroQualification: false, hasBlocker: false };
     assert.equal(applyScoreCeilings(100, none), 100, 'no ceiling applies to a confirmed exact match');
     assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true }), 79);
     assert.equal(applyScoreCeilings(100, { ...none, hasMandatoryUnmet: true }), 59);
     assert.equal(applyScoreCeilings(100, { ...none, isZeroQualification: true }), 39);
+    assert.equal(applyScoreCeilings(100, { ...none, hasBlocker: true }), 19);
     // Overlaps — the stricter one wins regardless of declaration order.
     assert.equal(
       applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasMandatoryUnmet: true }),
       59,
       'broad-only (79) + mandatory unmet (59) must land on 59, not 79',
     );
-    assert.equal(applyScoreCeilings(100, { isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true }), 39);
+    assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true }), 39);
+    assert.equal(
+      applyScoreCeilings(100, { isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true, hasBlocker: true }),
+      19,
+      'the blocker cap is the tightest rung — it wins over all three qualification ceilings',
+    );
     // A ceiling never RAISES a score that was already below it.
-    assert.equal(applyScoreCeilings(20, { isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true }), 20);
+    assert.equal(applyScoreCeilings(20, { ...none, isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true }), 20);
+    assert.equal(applyScoreCeilings(5, { ...none, hasBlocker: true }), 5);
   });
 
   await test('Fase 5.3 — real overlap: a broad-only offer the technician cannot satisfy hits the stricter ceiling, not BROAD_ONLY_CAP', () => {
@@ -1630,6 +1657,416 @@ async function main() {
     assert.equal(sinDeclarar.total, declarado.total, 'la banda superior no debe depender de un campo opcional');
     assert.equal(sinDeclarar.label, declarado.label);
     assert.equal(sinDeclarar.label, 'Excellent match');
+  });
+
+  // ── Blockers — hard disqualifiers (BLOCKER_CAP = 19) ─────────────────
+  // Distinct from mandatoryMissing: that one says the qualification evidence
+  // is weak, these say the pair should not exist at all. Both rules live in
+  // the pure function, never in a matchingV2.ts wrapper — see Case 8.
+
+  const EXACT_A320 = {
+    licenses: [makeLicense('B1.1')],
+    habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
+  };
+
+  await test('Blockers — Case 1: right technician type + exact rating produces no blocker at all', () => {
+    const offer = makeOffer({
+      requiredTechnicianTypes: ['mechanic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const technician = makeTechnician({ technicianType: 'mechanic', ...EXACT_A320 });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    assert.deepEqual(result.blockers, [], 'a matching type must never be a blocker');
+    assert.equal(result.level, 'exact');
+    assert.ok(
+      result.matches.some((m) => m.includes('Mechanic')),
+      'a satisfied type requirement must be surfaced by its catalog LABEL, never the raw code',
+    );
+    assert.ok(!result.matches.some((m) => m.includes('mechanic')), 'the raw code must not leak into user-facing text');
+  });
+
+  await test('Blockers — Case 2: wrong technician type blocks even with an exact rating, and caps the total at 19', () => {
+    const offer = makeOffer({
+      requiredTechnicianTypes: ['avionic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const technician = makeTechnician({ technicianType: 'mechanic', ...EXACT_A320 });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+
+    assert.equal(result.blockers.length, 1, 'exactly one blocker — the type');
+    assert.ok(
+      result.blockers[0].includes('Avionics Technician') && result.blockers[0].includes('Mechanic'),
+      `the blocker must name both sides with catalog labels, got: ${result.blockers[0]}`,
+    );
+    assert.ok(result.total <= 19, `BLOCKER_CAP must apply, got ${result.total}`);
+    // The qualification itself is untouched — a blocker caps the total, it
+    // never rewrites the breakdown into a fake "no qualification" story.
+    assert.equal(result.breakdown.habilitation, 45, 'the exact rating still scores in the breakdown');
+    assert.equal(result.level, 'exact');
+    assert.equal(result.mandatoryMissing.length, 0, 'a type blocker is not a missing qualification');
+  });
+
+  await test('Blockers — Case 3: an empty requiredTechnicianTypes does not restrict the type and leaves the score untouched', () => {
+    const base = {
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    };
+    const technician = makeTechnician({ technicianType: 'mechanic', verificationStatus: 'verified', ...EXACT_A320 });
+    const unrestricted = calculateOfferTechnicianMatch(makeOffer({ ...base, requiredTechnicianTypes: [] }), technician, RATING_INDEX);
+    const restrictedAndMet = calculateOfferTechnicianMatch(
+      makeOffer({ ...base, requiredTechnicianTypes: ['mechanic'] }),
+      technician,
+      RATING_INDEX,
+    );
+
+    assert.deepEqual(unrestricted.blockers, [], 'an offer that never named a type cannot disqualify one');
+    assert.equal(unrestricted.total, restrictedAndMet.total, 'not restricting the type must score exactly like satisfying it');
+    assert.equal(unrestricted.label, 'Excellent match');
+    assert.ok(
+      !unrestricted.matches.some((m) => m.startsWith('Technician type:')),
+      'no match line either — claiming a match for a requirement the offer never stated is noise',
+    );
+  });
+
+  await test('Blockers — Case 4: fewer declared years than the offer minimum is a blocker (and exactly the minimum is not)', () => {
+    const offer = makeOffer({ minYearsExperience: 5, requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+
+    const below = calculateOfferTechnicianMatch(makeOffer({ ...offer }), makeTechnician({ yearsExperience: 2, ...EXACT_A320 }), RATING_INDEX);
+    assert.equal(below.blockers.length, 1, 'a declared 2 against a required 5 must block');
+    assert.ok(below.blockers[0].includes('5') && below.blockers[0].includes('2'), `blocker must state both numbers, got: ${below.blockers[0]}`);
+    assert.ok(below.total <= 19, `BLOCKER_CAP must apply, got ${below.total}`);
+    assert.equal(below.breakdown.habilitation, 45, 'experience still does not touch the breakdown — it blocks or it says nothing');
+
+    const atMinimum = calculateOfferTechnicianMatch(offer, makeTechnician({ yearsExperience: 5, ...EXACT_A320 }), RATING_INDEX);
+    assert.deepEqual(atMinimum.blockers, [], 'meeting the minimum exactly is meeting it — the comparison is strict "<"');
+  });
+
+  await test('Blockers — Case 5: NOT declaring years is never a blocker, however high the offer minimum (absent data never penalizes)', () => {
+    const offer = makeOffer({ minYearsExperience: 5, requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    // yearsExperience left undefined — "not declared", deliberately distinct
+    // from a declared 0. Same product rule the server-side prefilter encodes
+    // as `years_experience.is.null OR >= N` (applyMinYearsFilter).
+    const technician = makeTechnician({ verificationStatus: 'verified', ...EXACT_A320 });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+
+    assert.deepEqual(result.blockers, [], 'an undeclared optional field must never disqualify');
+    assert.equal(result.label, 'Excellent match', 'and it must not cap the score either');
+
+    // A DECLARED 0 is a different fact and does block — the distinction is
+    // the whole reason yearsExperience is nullable rather than defaulted.
+    const declaredZero = calculateOfferTechnicianMatch(offer, makeTechnician({ yearsExperience: 0, ...EXACT_A320 }), RATING_INDEX);
+    assert.equal(declaredZero.blockers.length, 1, 'a declared 0 is data, not absence of data');
+  });
+
+  await test('Blockers — Case 6: minYearsExperience = 0 means the offer sets no minimum, so nothing is evaluated', () => {
+    const offer = makeOffer({ minYearsExperience: 0, requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const undeclared = calculateOfferTechnicianMatch(offer, makeTechnician({ ...EXACT_A320 }), RATING_INDEX);
+    assert.deepEqual(undeclared.blockers, []);
+    const declaredZero = calculateOfferTechnicianMatch(offer, makeTechnician({ yearsExperience: 0, ...EXACT_A320 }), RATING_INDEX);
+    assert.deepEqual(declaredZero.blockers, [], 'no minimum to fall below — 0 < 0 is false');
+  });
+
+  await test('Blockers — Case 7: a blocker plus zero qualification lands on the tightest ceiling (19), not the qualification one (39)', () => {
+    const offer = makeOffer({
+      contractType: 'permanent',
+      requiredTechnicianTypes: ['avionic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const technician = makeTechnician({
+      technicianType: 'mechanic',
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['permanent'] },
+      licenses: [],
+      habilitations: [],
+    });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+
+    assert.equal(result.breakdown.habilitation, 0);
+    assert.ok(result.blockers.length > 0);
+    assert.ok(result.mandatoryMissing.length > 0, 'both mechanisms fire at once here — they are independent');
+    // The raw sum is verified(15) + contractFit(15) = 30 at least, so
+    // ZERO_QUALIFICATION_CAP (39) alone would not have reduced it at all.
+    // Landing on 19 proves the blocker rung is what applied.
+    assert.equal(result.total, 19, `expected BLOCKER_CAP to win over every qualification ceiling, got ${result.total}`);
+    assert.equal(result.label, 'Weak match');
+  });
+
+  await test('Blockers — Case 8: the same pair evaluated in both directions yields identical blockers', () => {
+    // Both matchingV2.ts wrappers (getTechnicianMatchesForOffer, company →
+    // technicians; getOfferMatchesForTechnician, technician → offers) call
+    // this same pure function — the wrappers are not imported here because
+    // they pull in the Supabase repositories, which this standalone runner
+    // deliberately has no connection for. The invariant under test is
+    // exactly why both rules were implemented in the pure function instead
+    // of in a wrapper: a rule added to one wrapper would apply to one
+    // direction and to none of the ~12 direct call sites in app/.
+    const offer = makeOffer({
+      requiredTechnicianTypes: ['avionic'],
+      minYearsExperience: 5,
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const technician = makeTechnician({ technicianType: 'mechanic', yearsExperience: 2, ...EXACT_A320 });
+
+    // Company side: one offer scored against a list of technicians.
+    const companyDirection = [technician].map((t) => calculateOfferTechnicianMatch(offer, t, RATING_INDEX))[0];
+    // Technician side: one technician scored against a list of offers.
+    const technicianDirection = [offer].map((o) => calculateOfferTechnicianMatch(o, technician, RATING_INDEX))[0];
+
+    assert.deepEqual(companyDirection.blockers, technicianDirection.blockers);
+    assert.equal(companyDirection.total, technicianDirection.total);
+    assert.equal(companyDirection.blockers.length, 2, 'both rules fire independently — wrong type AND too few declared years');
+  });
+
+  await test('Blockers — order: a blocked pair sinks to the bottom of the existing total-descending sort, with no special-casing', () => {
+    // Verifies the claim BLOCKER_CAP relies on (matchingV2.ts sorts by
+    // `b.score.total - a.score.total` and was deliberately NOT changed): at
+    // 19, a blocked pair ranks below every unblocked one — including a
+    // technician with zero qualification, whose own ceiling is 39.
+    const offer = makeOffer({
+      contractType: 'permanent',
+      requiredTechnicianTypes: ['avionic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const blockedButPerfectlyQualified = makeTechnician({
+      id: 'tech-blocked',
+      technicianType: 'mechanic', // the offer is for avionics
+      verificationStatus: 'verified',
+      ...EXACT_A320,
+    });
+    const eligibleButUnqualified = makeTechnician({
+      id: 'tech-unqualified',
+      technicianType: 'avionic',
+      verificationStatus: 'verified',
+      licenses: [],
+      habilitations: [],
+    });
+
+    const ranked = [blockedButPerfectlyQualified, eligibleButUnqualified]
+      .map((t) => calculateOfferTechnicianMatch(offer, t, RATING_INDEX))
+      .sort((a, b) => b.total - a.total); // the exact sort matchingV2.ts uses
+
+    assert.equal(ranked[ranked.length - 1].technicianId, 'tech-blocked', 'the blocked pair must rank last on score alone');
+    assert.ok(
+      ranked[0].total > ranked[1].total,
+      `an eligible-but-unqualified technician (${ranked[0].total}) must outrank a blocked one (${ranked[1].total})`,
+    );
+  });
+
+  // ── Licensed vs non-licensed profiles ────────────────────────────────
+  // EASA Part-66 licences and type ratings only exist for the types that
+  // certify work. `requiresLicense` in the technician type catalog is the
+  // single switch; these tests pin what reads it.
+
+  await test('Licensed types — requiresLicense drives the split, per catalog row', () => {
+    assert.equal(isLicensedTechnicianType('mechanic'), true);
+    assert.equal(isLicensedTechnicianType('avionic'), true);
+    assert.equal(isLicensedTechnicianType('pilot'), true, 'inactive in the pickers, but still a licensed type');
+    assert.equal(isLicensedTechnicianType('sheet_metal_worker'), false);
+    assert.equal(isLicensedTechnicianType('painter'), false);
+    assert.equal(isLicensedTechnicianType('composite'), false);
+  });
+
+  await test('Licensed types — an unknown code is treated as licensed, never as a reason to hide a qualification section', () => {
+    assert.equal(isLicensedTechnicianType('not_in_the_catalog'), true);
+  });
+
+  await test('Licensed types — an offer with no declared type does not restrict the Part-66 axis (current behaviour)', () => {
+    assert.equal(offerTargetsLicensedProfiles({ requiredTechnicianTypes: [] }), true);
+  });
+
+  await test('Licensed types — an offer for non-licensed trades has no Part-66 axis; one licensed type is enough to keep it', () => {
+    assert.equal(offerTargetsLicensedProfiles({ requiredTechnicianTypes: ['painter', 'composite'] }), false);
+    assert.equal(offerTargetsLicensedProfiles({ requiredTechnicianTypes: ['mechanic'] }), true);
+    assert.equal(
+      offerTargetsLicensedProfiles({ requiredTechnicianTypes: ['painter', 'mechanic'] }),
+      true,
+      'a mixed row (only possible from data predating the rule) must keep its requirements visible, not hide them',
+    );
+  });
+
+  await test('Type selection — mixing a licensed and a non-licensed type is refused with a message, selection unchanged', () => {
+    const plan = planOfferTechnicianTypeToggle({ current: ['mechanic'], code: 'painter', part66RequirementCount: 0 });
+    assert.deepEqual(plan.next, ['mechanic'], 'a refused tap must not alter the selection');
+    assert.ok(plan.error && plan.error.includes('Painter') && plan.error.includes('Mechanic'), plan.error ?? 'expected an error');
+  });
+
+  await test('Type selection — going non-licensed with Part-66 requirements still on the form is refused, not silently cleared', () => {
+    const plan = planOfferTechnicianTypeToggle({ current: [], code: 'painter', part66RequirementCount: 2 });
+    assert.deepEqual(plan.next, []);
+    assert.ok(plan.error && plan.error.includes('2'), 'the message must say how many requirements are in the way');
+
+    const clean = planOfferTechnicianTypeToggle({ current: [], code: 'painter', part66RequirementCount: 0 });
+    assert.deepEqual(clean.next, ['painter']);
+    assert.equal(clean.error, undefined);
+  });
+
+  await test('Type selection — deselecting is always allowed, even when it would otherwise be refused', () => {
+    // Otherwise a company that reached a mixed state (older data) could
+    // never get out of it: every tap refused, including the undo.
+    const plan = planOfferTechnicianTypeToggle({ current: ['painter', 'mechanic'], code: 'painter', part66RequirementCount: 5 });
+    assert.deepEqual(plan.next, ['mechanic']);
+    assert.equal(plan.error, undefined);
+  });
+
+  await test('Type selection — several types of the same family stack normally', () => {
+    const first = planOfferTechnicianTypeToggle({ current: ['mechanic'], code: 'avionic', part66RequirementCount: 3 });
+    assert.deepEqual(first.next, ['mechanic', 'avionic']);
+    const second = planOfferTechnicianTypeToggle({ current: ['painter'], code: 'composite', part66RequirementCount: 0 });
+    assert.deepEqual(second.next, ['painter', 'composite']);
+  });
+
+  await test('Copy — a non-licensed offer reads "General compatibility", never a technical match label', () => {
+    const score = calculateOfferTechnicianMatch(
+      makeOffer({ requiredTechnicianTypes: ['painter'] }),
+      makeTechnician({ technicianType: 'painter', verificationStatus: 'verified' }),
+      RATING_INDEX,
+    );
+    assert.equal(
+      getMatchDisplayLabel({ requiredTechnicianTypes: ['painter'] }, score),
+      GENERAL_COMPATIBILITY_LABEL,
+      'nothing about the technician\'s qualification was confirmed, because there was nothing to confirm',
+    );
+    // The scoring itself is untouched — it already lands in the
+    // no-requirements branch on its own, which is why this is copy only.
+    assert.equal(score.breakdown.habilitation, 0);
+    assert.equal(score.breakdown.license, 0);
+    assert.ok(score.total <= 75, `the no-requirements ceiling still applies, got ${score.total}`);
+  });
+
+  await test('Copy — a licensed offer keeps its real band label', () => {
+    const offer = makeOffer({
+      requiredTechnicianTypes: ['mechanic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const score = calculateOfferTechnicianMatch(
+      offer,
+      makeTechnician({ technicianType: 'mechanic', verificationStatus: 'verified', ...EXACT_A320 }),
+      RATING_INDEX,
+    );
+    assert.equal(getMatchDisplayLabel(offer, score), score.label);
+    assert.equal(score.label, 'Excellent match');
+    // An offer that names no type at all is unchanged too.
+    assert.equal(getMatchDisplayLabel(makeOffer({}), score), score.label);
+  });
+
+  // ── Years of experience: required at signup, never erasable ──────────
+
+  await test('Years — signup with no years declared is rejected client-side', () => {
+    assert.ok(validateSignupYearsExperience(''), 'an empty field must be rejected');
+    assert.ok(validateSignupYearsExperience('   '), 'whitespace is still empty');
+    assert.equal(parseYearsExperience(''), null, 'and it never parses into a number');
+  });
+
+  await test('Years — signup with 0 years is ACCEPTED: 0 is a declaration, not a blank', () => {
+    assert.equal(validateSignupYearsExperience('0'), null);
+    assert.equal(parseYearsExperience('0'), 0, 'must be the number 0, never null — null would mean "not declared"');
+  });
+
+  await test('Years — saving the profile with the years field emptied is rejected', () => {
+    assert.ok(validateProfileYearsExperience(''), 'a technician must not be able to erase it back to "not declared"');
+    assert.equal(validateProfileYearsExperience('0'), null, 'but 0 is still a valid answer here too');
+    assert.equal(validateProfileYearsExperience('8'), null);
+  });
+
+  await test('Years — the accepted range matches chk_technician_years_experience_range (0..70)', () => {
+    assert.equal(parseYearsExperience('70'), 70);
+    assert.equal(parseYearsExperience('71'), null);
+    assert.equal(parseYearsExperience('99'), null);
+    assert.equal(parseYearsExperience('-1'), null);
+    assert.equal(parseYearsExperience('8 years'), null, 'a typo is not a declaration');
+    assert.equal(parseYearsExperience('4.5'), null, 'the column is an integer');
+    assert.equal(parseYearsExperience('  5  '), 5, 'surrounding whitespace is tolerated');
+  });
+
+  // ── Profile completeness: both branches must be able to reach 100 ────
+
+  // A profile with every field the screen offers filled in. `licenseCategories`
+  // and `aircraftTypes` are the two a non-licensed trade can never have — the
+  // tests below override them per branch.
+  function makeCompleteProfile(overrides: Partial<Technician> = {}): Technician {
+    return {
+      id: 'tech-completeness',
+      anonymousCode: 'AVT-9999',
+      fullName: 'Complete Technician',
+      email: 'complete@example.com',
+      phone: '+34 600 000 000',
+      locationCityId: 'airport:LEMD',
+      country: 'Spain',
+      city: 'Madrid',
+      baseAirport: 'LEMD',
+      licenseCategories: [],
+      aircraftTypes: [],
+      specialties: [],
+      availability: { immediately: true, status: 'open_to_offers', contractTypes: ['permanent'] },
+      verificationStatus: 'verified',
+      profileCompleteness: 0,
+      yearsExperience: 8,
+      ...overrides,
+    } as Technician;
+  }
+
+  function sumWeights(w: ProfileCompletenessWeights): number {
+    return Object.values(w).reduce((sum, v) => sum + v, 0);
+  }
+
+  await test('Completeness — a fully completed NON-LICENSED profile reaches 100 (was capped at 65)', () => {
+    // The bug: licences (20) + aircraft types (15) are unreachable for a
+    // painter/sheet metal/composite profile since the licensed split, so the
+    // single old table topped out at 65 for someone who had answered every
+    // question the app asks them.
+    const painter = makeCompleteProfile();
+    assert.equal(computeProfileCompleteness(painter, true, true, 'painter'), 100);
+    assert.equal(computeProfileCompleteness(painter, true, true, 'sheet_metal_worker'), 100);
+    assert.equal(computeProfileCompleteness(painter, true, true, 'composite'), 100);
+  });
+
+  await test('Completeness — the same non-licensed profile scored under the licensed table would only reach 65', () => {
+    // Pins the regression itself, not just the fix: if the branch is ever
+    // removed, this is the number that comes back.
+    const painter = makeCompleteProfile();
+    assert.equal(
+      computeProfileCompleteness(painter, true, true, 'mechanic'),
+      65,
+      'no licences + no aircraft types under the licensed table = 65, the exact bug being fixed',
+    );
+  });
+
+  await test('Completeness — the licensed branch is untouched: a fully completed licensed profile still reaches 100', () => {
+    const mechanic = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] });
+    assert.equal(computeProfileCompleteness(mechanic, true, true, 'mechanic'), 100);
+    assert.equal(computeProfileCompleteness(mechanic, true, true, 'avionic'), 100);
+    // An unknown type falls back to the licensed table — previous behaviour.
+    assert.equal(computeProfileCompleteness(mechanic, true, true, 'not_in_the_catalog'), 100);
+  });
+
+  await test('Completeness — both weight tables sum to exactly 100, so neither branch can silently become unreachable', () => {
+    assert.equal(sumWeights(LICENSED_COMPLETENESS_WEIGHTS), 100);
+    assert.equal(sumWeights(NON_LICENSED_COMPLETENESS_WEIGHTS), 100);
+  });
+
+  await test('Completeness — the non-licensed table redistributes exactly the 35 orphaned points, leaving social and availability alone', () => {
+    const moved = LICENSED_COMPLETENESS_WEIGHTS.licenses + LICENSED_COMPLETENESS_WEIGHTS.aircraftTypes;
+    assert.equal(moved, 35);
+    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.licenses, 0);
+    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.aircraftTypes, 0);
+    // The two branches recorded on 2026-07-29 are separate product decisions
+    // and were explicitly out of scope for this redistribution.
+    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.social, LICENSED_COMPLETENESS_WEIGHTS.social);
+    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.availability, LICENSED_COMPLETENESS_WEIGHTS.availability);
+  });
+
+  await test('Completeness — an empty non-licensed profile still scores low, and the cap still holds', () => {
+    const empty = makeCompleteProfile({
+      fullName: '',
+      email: '',
+      phone: '',
+      country: '',
+      city: '',
+      baseAirport: '',
+      availability: { immediately: false, status: 'unavailable', contractTypes: [] },
+    });
+    assert.equal(computeProfileCompleteness(empty, false, false, 'painter'), 0, 'redistributing weights must not hand out free points');
+    // 0 declared years IS a declaration, and scores like one.
+    assert.equal(computeProfileCompleteness(empty, true, false, 'painter'), NON_LICENSED_COMPLETENESS_WEIGHTS.years);
   });
 }
 

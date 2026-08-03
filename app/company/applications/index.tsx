@@ -246,7 +246,7 @@ export default function ApplicationsListScreen() {
                       <Text style={styles.deletedLine} numberOfLines={1}>[Deleted user]</Text>
                     ) : null}
                   </View>
-                  {score ? <MatchBadge score={score.total} context="match for this offer" /> : null}
+                  {score ? <MatchBadge score={score.total} context="match for this offer" notEligible={score.blockers.length > 0} /> : null}
                 </View>
 
                 {safePreview ? (

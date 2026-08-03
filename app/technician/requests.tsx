@@ -22,16 +22,17 @@ export default function TechnicianRequestsLegacy() {
         showsVerticalScrollIndicator={false}
       >
         <TechnicianPageHeader
-          eyebrow="Legacy route"
-          title="Requests moved"
-          subtitle="Company outreach is now managed from Direct Offers."
+          eyebrow="Requests"
+          title="Where to find your requests"
+          subtitle="Company outreach and your own applications each have their own space."
           onBack={() => router.back()}
         />
 
         <TechnicianCard style={styles.card}>
-          <Text style={[typography.h3, styles.title]}>Moved to new screen</Text>
+          <Text style={[typography.h3, styles.title]}>Pick a destination</Text>
           <Text style={styles.body}>
-            Direct offers from companies are now managed under Direct Offers.
+            Offers companies sent you are under Direct Offers. Open roles you can apply
+            to are under Job Offers.
           </Text>
           <Button
             label="View Direct Offers"

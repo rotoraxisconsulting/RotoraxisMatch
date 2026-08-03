@@ -14,6 +14,7 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { AdminTechnicianCard } from '../../src/components/AdminTechnicianCard';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
 import type { Technician, TechnicianWithRelations, VerificationStatus } from '../../src/types';
+import type { UserStatus } from '../../src/types/enums';
 import {
   AdminCard,
   AdminChip,
@@ -43,15 +44,33 @@ function normalizedStatus(status: VerificationStatus): StatusFilter {
   return status;
 }
 
+// Una LÁPIDA no tiene estado de verificación vigente, tiene el que TENÍA al
+// borrarse. Contarla en "pending" hacía que el panel anunciara trabajo que no
+// existe — y que no puede existir: admin_update_technician_verification()
+// (migración 037) rechaza por excepción cualquier cambio sobre una cuenta
+// borrada, así que ese "1 pendiente" no era accionable ni por error.
+//
+// Se quedan visibles en "All" a propósito: cuando una empresa pregunta por
+// T5353F0227, el admin tiene que poder encontrarlo. Lo que se les retira es el
+// sitio en la COLA (filtros de estado, recuentos, prioridad de orden).
+function isTombstone(technicianId: string, accountStatusMap: Record<string, UserStatus>): boolean {
+  return accountStatusMap[technicianId] === 'deleted';
+}
+
 function filterTechnicians(
   techs: Technician[],
   detailsMap: Record<string, TechnicianWithRelations>,
+  accountStatusMap: Record<string, UserStatus>,
   status: StatusFilter,
   query: string,
 ): Technician[] {
   let result = techs;
   if (status !== 'all') {
-    result = result.filter((technician) => normalizedStatus(technician.verificationStatus) === status);
+    result = result.filter(
+      (technician) =>
+        !isTombstone(technician.id, accountStatusMap) &&
+        normalizedStatus(technician.verificationStatus) === status,
+    );
   }
   if (query.trim()) {
     const q = query.trim().toLowerCase();
@@ -73,10 +92,15 @@ function filterTechnicians(
       return searchable.includes(q);
     });
   }
-  return [...result].sort((a, b) => {
+  // Las lápidas van al final sea cual sea su estado congelado: el orden de
+  // esta lista es "qué tengo que mirar primero", y ahí no hay nada que mirar.
+  const DELETED_RANK = 9;
+  const rank = (technician: Technician): number => {
+    if (isTombstone(technician.id, accountStatusMap)) return DELETED_RANK;
     const order: Record<StatusFilter, number> = { pending: 0, rejected: 1, verified: 2, all: 3 };
-    return order[normalizedStatus(a.verificationStatus)] - order[normalizedStatus(b.verificationStatus)];
-  });
+    return order[normalizedStatus(technician.verificationStatus)];
+  };
+  return [...result].sort((a, b) => rank(a) - rank(b));
 }
 
 export default function AdminTechniciansScreen() {
@@ -102,10 +126,15 @@ export default function AdminTechniciansScreen() {
   );
 
   const filtered = useMemo(
-    () => filterTechnicians(technicians, technicianDetailsMap, statusFilter, query),
-    [technicians, technicianDetailsMap, statusFilter, query],
+    () => filterTechnicians(technicians, technicianDetailsMap, accountStatusMap, statusFilter, query),
+    [technicians, technicianDetailsMap, accountStatusMap, statusFilter, query],
   );
-  const pendingCount = technicians.filter((technician) => normalizedStatus(technician.verificationStatus) === 'pending').length;
+  const pendingCount = technicians.filter(
+    (technician) =>
+      !isTombstone(technician.id, accountStatusMap) &&
+      normalizedStatus(technician.verificationStatus) === 'pending',
+  ).length;
+  const deletedCount = technicians.filter((technician) => isTombstone(technician.id, accountStatusMap)).length;
 
   if (loading) {
     return (
@@ -168,6 +197,7 @@ export default function AdminTechniciansScreen() {
               </Text>
               <Text style={styles.resultSub}>
                 {pendingCount} pending verification
+                {deletedCount > 0 ? ` — ${deletedCount} deleted account${deletedCount !== 1 ? 's' : ''}` : ''}
               </Text>
             </View>
             <AdminIconBox icon={UserRound} size={17} color={adminUi.accent} backgroundColor={adminUi.accentSoft} />

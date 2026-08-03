@@ -36,9 +36,10 @@ export interface MatchScore {
   offerId: string;      // the offer this score belongs to
   technicianId: string; // the technician this score belongs to
   // 0–100 — ordering only, never the sole explanation. May be lower than
-  // breakdown's own sum: an unmet mandatory requirement or a zero
-  // habilitation score on a qualification-requiring offer caps this value
-  // (see offerMatchExplain.ts MANDATORY_UNMET_CAP / ZERO_QUALIFICATION_CAP).
+  // breakdown's own sum: an unmet mandatory requirement, a zero habilitation
+  // score on a qualification-requiring offer, or a hard blocker caps this
+  // value (see offerMatchExplain.ts MANDATORY_UNMET_CAP /
+  // ZERO_QUALIFICATION_CAP / BLOCKER_CAP).
   // breakdown itself is never capped — compare sum(breakdown) to total to
   // detect whether (and how much) a cap applied.
   total: number;
@@ -63,6 +64,44 @@ export interface MatchScore {
   clarifications: string[];   // human-readable points that need confirming
   vigenciaNotices: VigenciaNotice[]; // expired / not-current — informational, never excludes (see VigenciaNotice)
   mandatoryMissing: string[]; // mandatory requirements not met exactly
+  // Hard disqualifiers — English, human-readable, one entry per broken rule.
+  //
+  // blockers ≠ mandatoryMissing, and the distinction is deliberate:
+  //   - mandatoryMissing is a QUALIFICATION requirement that was not met
+  //     exactly. The pair is still a legitimate one to look at — a B1.1
+  //     technician with the A320 V2500 rating against an offer asking for
+  //     the CFM56 is a real, plausible candidate a recruiter may well want
+  //     to call. It caps the score (MANDATORY_UNMET_CAP) and is surfaced,
+  //     never hidden.
+  //   - blockers means "this pair should not exist": the offer is not for
+  //     this technician at all (wrong technician type, less declared
+  //     experience than the offer's stated minimum). No amount of profile
+  //     quality makes it eligible, so it is capped far lower
+  //     (BLOCKER_CAP) and the UI must not present it as a bare percentage.
+  //
+  // Empty array = nothing disqualifies the pair. It is never used to remove
+  // a result from a list here — the scorer only ever explains and ranks;
+  // whether a blocked pair is hidden is a UI/repository decision.
+  blockers: string[];
 }
 
 export type MatchLabel = 'Excellent match' | 'Strong match' | 'Partial match' | 'Weak match';
+
+// Shown instead of a MatchLabel for an offer aimed at non-licensed trades
+// (sheet metal, paint, composite). Those offers have no Part-66 requirement
+// to satisfy — by rule, not by omission — so the score comes entirely from
+// verification, contract fit and location. Calling that a "match" in the
+// technical sense the rest of the product uses would overclaim: nothing
+// about the technician's qualification was confirmed, because there was
+// nothing to confirm.
+//
+// Declared HERE, next to MatchLabel, rather than in the util that applies
+// it: the type below needs it, and a domain label with a type that depends
+// on it should have exactly one definition. Never retype the string — import
+// the constant (there are 7 display sites).
+export const GENERAL_COMPATIBILITY_LABEL = 'General compatibility';
+
+// Everything a score can legitimately be CALLED on screen. Deliberately a
+// closed union rather than `string`: this type is what stops a typo in a
+// seventh screen from compiling (it briefly was `string`, and did).
+export type MatchDisplayLabel = MatchLabel | typeof GENERAL_COMPATIBILITY_LABEL;

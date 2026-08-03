@@ -25,7 +25,7 @@ import { OfferRequest, OfferApplication } from '../types/offerRequest';
 import {
   TechnicianWithRelations,
 } from '../types/technician';
-import { SafeTechnicianPreview, UnlockedTechnicianView, TechnicianView } from '../types/privacy';
+import { SafeTechnicianPreview, UnlockedTechnicianView } from '../types/privacy';
 import { Document } from '../types/document';
 import { LicenseCode } from '../types/catalog';
 import { resolveLocationSnapshot } from '../constants/locationCities';
@@ -76,22 +76,6 @@ function hasAcceptedRecord({ companyId, technicianId, offerRequests, offerApplic
  * Only unlocked after an accepted direct offer or accepted application.
  */
 export function canRevealIdentity(params: AcceptanceCheckParams): boolean {
-  return hasAcceptedRecord(params);
-}
-
-/**
- * True if the company may access the technician's documents.
- * Only unlocked after acceptance — same condition as identity.
- */
-export function canAccessDocuments(params: AcceptanceCheckParams): boolean {
-  return hasAcceptedRecord(params);
-}
-
-/**
- * True if the company may open a chat with the technician.
- * Chat is only available after an accepted offer.
- */
-export function canOpenChat(params: AcceptanceCheckParams): boolean {
   return hasAcceptedRecord(params);
 }
 
@@ -154,39 +138,4 @@ export function getUnlockedTechnicianView(
     socialLinks: technician.socialLinks,
     documents,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Combined view selector
-// ---------------------------------------------------------------------------
-
-export interface GetTechnicianViewParams extends AcceptanceCheckParams {
-  technicianWithRelations: TechnicianWithRelations;
-  documents: Document[];
-}
-
-/**
- * Returns the correct view of a technician for a given company.
- *
- * - If the company has an accepted record with this technician → UnlockedTechnicianView
- * - Otherwise → SafeTechnicianPreview
- *
- * This is the single entry-point hooks and screens should call — never build the view manually.
- *
- * @example
- * // Locked (no accepted record):
- * //   { id, anonymousCode, technicianType: 'mechanic', country: 'France', ... }
- *
- * @example
- * // Unlocked (accepted offer exists):
- * //   { id, anonymousCode, ..., firstName: 'First', lastName: 'Last', email: '...', documents: [...] }
- */
-export function getTechnicianViewForCompany(params: GetTechnicianViewParams): TechnicianView {
-  const { technicianWithRelations, documents, ...checkParams } = params;
-
-  if (canRevealIdentity(checkParams)) {
-    return getUnlockedTechnicianView(technicianWithRelations, documents);
-  }
-
-  return getSafeTechnicianPreview(technicianWithRelations);
 }

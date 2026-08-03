@@ -611,7 +611,7 @@ function TechnicianResultCard({
         <View style={styles.matchArea}>
           {selectedOffer ? (
             score ? (
-              <MatchBadge score={score.total} context="for selected offer" />
+              <MatchBadge score={score.total} context="for selected offer" notEligible={score.blockers.length > 0} />
             ) : (
               <Text style={styles.matchHint}>Calculating match...</Text>
             )

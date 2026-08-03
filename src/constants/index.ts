@@ -1,7 +1,0 @@
-export * from './licenses';
-export * from './specialties';
-export * from './contractTypes';
-export * from './verificationStatuses';
-export * from './technicianTypes';
-export * from './companyTypes';
-export * from './aircraftTypeRatings';

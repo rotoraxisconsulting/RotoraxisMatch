@@ -16,6 +16,7 @@ import { supabase } from '../../../src/lib/supabase';
 import { useTechnicianTypes, useAirports, AirportOption } from '../../../src/auth/useCatalogOptions';
 import { AuthPickerField, PickerOption } from '../../../src/components/auth/AuthPickerField';
 import { Button } from '../../../src/components/Button';
+import { parseYearsExperience, validateSignupYearsExperience } from '../../../src/utils/yearsExperienceValidation';
 import { colors, spacing } from '../../../src/theme';
 
 const CONSENT_VERSION = '2025-06';
@@ -49,6 +50,7 @@ export default function TechnicianSignupScreen() {
   const [birthMonth, setBirthMonth] = useState('');
   const [birthYear, setBirthYear] = useState('');
   const [technicianType, setTechnicianType] = useState('');
+  const [yearsExperience, setYearsExperience] = useState('');
   const [locationCityId, setLocationCityId] = useState('');
 
   const [tosAccepted, setTosAccepted] = useState(false);
@@ -79,6 +81,8 @@ export default function TechnicianSignupScreen() {
     if (!birthYear || !birthMonth || !birthDay) return 'Date of birth is required.';
     if (!buildDate(birthYear, birthMonth, birthDay)) return 'Enter a valid date of birth.';
     if (!technicianType) return 'Select your technician type.';
+    const yearsError = validateSignupYearsExperience(yearsExperience);
+    if (yearsError) return yearsError;
     if (!locationCityId) return 'Select your base airport.';
     if (!tosAccepted) return 'You must accept the Terms of Service and Privacy Policy to continue.';
     return null;
@@ -94,6 +98,9 @@ export default function TechnicianSignupScreen() {
     setLoading(true);
 
     const birthDate = buildDate(birthYear, birthMonth, birthDay)!;
+    // Non-null: validate() above rejected anything parseYearsExperience
+    // cannot read, including the empty string.
+    const years = parseYearsExperience(yearsExperience)!;
 
     // Step 1: Create auth user.
     // All form fields are stored in user_metadata so AuthContext can call
@@ -108,6 +115,10 @@ export default function TechnicianSignupScreen() {
           last_name: lastName.trim(),
           birth_date: birthDate,
           technician_type: technicianType,
+          // Stored as a NUMBER, not the raw input string: ensureRoleProfile
+          // forwards this straight to the RPC's integer parameter when the
+          // profile is created after email confirmation.
+          years_experience: years,
           location_city_id: locationCityId,
           tos_accepted_at: new Date().toISOString(),
           tos_version: CONSENT_VERSION,
@@ -131,6 +142,7 @@ export default function TechnicianSignupScreen() {
         p_birth_date: birthDate,
         p_technician_type: technicianType,
         p_location_city_id: locationCityId,
+        p_years_experience: years,
       });
 
       if (rpcError) {
@@ -312,6 +324,22 @@ export default function TechnicianSignupScreen() {
               loading={typesLoading}
               modalTitle="Select technician type"
             />
+
+            {/* Years of experience — required here, unlike the profile
+                screen's optional-looking copy: this is the one moment the
+                platform is guaranteed to ask. */}
+            <FormField label="Total years of experience">
+              <TextInput
+                style={styles.input}
+                value={yearsExperience}
+                onChangeText={(v) => setYearsExperience(v.replace(/[^0-9]/g, ''))}
+                placeholder="e.g. 8 — enter 0 if you have none yet"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="number-pad"
+                maxLength={2}
+                returnKeyType="next"
+              />
+            </FormField>
 
             {/* Base airport */}
             <AuthPickerField

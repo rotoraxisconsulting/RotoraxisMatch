@@ -304,7 +304,7 @@ export default function CompanyDashboard() {
 
           <View style={styles.mainColumn}>
             <CompanyCard>
-              <SectionTitle label="Overview" value="Live counts" />
+              <SectionTitle label="Overview" />
               <View style={styles.metricsGrid}>
                 {metrics.map((metric) => (
                   <MetricTile

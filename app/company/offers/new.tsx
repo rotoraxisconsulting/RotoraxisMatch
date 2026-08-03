@@ -26,7 +26,8 @@ import { TypeRatingRequirementsEditor, ExactHabilitationRow } from '../../../src
 import { ApproximateFilterSection } from '../../../src/components/company/ApproximateFilterSection';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { useCompanySession } from '../../../src/state/SessionContext';
-import { TECHNICIAN_TYPES } from '../../../src/constants/technicianTypes';
+import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../../src/constants/technicianTypes';
+import { planOfferTechnicianTypeToggle } from '../../../src/utils/offerTechnicianTypePlan';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
 import { OfferStatus } from '../../../src/types/enums';
@@ -46,10 +47,6 @@ interface FormState {
   requiredLicenses: LicenseCode[];
   requiredAircraftTypes: string[];
   requiredHabilitations: ExactHabilitationRow[];
-}
-
-function toggle<T>(arr: T[], item: T): T[] {
-  return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item];
 }
 
 function computeErrors(form: FormState) {
@@ -86,6 +83,26 @@ export default function NewOfferScreen() {
   });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
+
+  // Non-licensed trades (sheet metal, paint, composite) hold no EASA Part-66
+  // licence and no aircraft type rating, so the whole qualification axis is
+  // empty for them and its sections are hidden below. offerRepository
+  // enforces the same rule on write — hiding a section is not a guarantee.
+  const targetsLicensedProfiles = offerTargetsLicensedProfiles({ requiredTechnicianTypes: form.requiredTechnicianTypes });
+
+  function onToggleTechnicianType(code: TechnicianTypeCode) {
+    const { next, error } = planOfferTechnicianTypeToggle({
+      current: form.requiredTechnicianTypes,
+      code,
+      part66RequirementCount:
+        form.requiredHabilitations.length + form.requiredLicenses.length + form.requiredAircraftTypes.length,
+    });
+    if (error) {
+      notify('Technician types', error);
+      return;
+    }
+    set('requiredTechnicianTypes', next);
+  }
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -235,29 +252,40 @@ export default function NewOfferScreen() {
           </FormField>
         </FormSection>
 
-        <TypeRatingRequirementsEditor
-          value={form.requiredHabilitations}
-          onChange={(next) => set('requiredHabilitations', next)}
-        />
+        {targetsLicensedProfiles && (
+          <TypeRatingRequirementsEditor
+            value={form.requiredHabilitations}
+            onChange={(next) => set('requiredHabilitations', next)}
+          />
+        )}
 
-        <ChoiceSection title="Required technician types" helper="Leave empty to accept any type.">
+        <ChoiceSection
+          title="Required technician types"
+          helper={
+            targetsLicensedProfiles
+              ? 'Leave empty to accept any type.'
+              : 'These trades hold no EASA Part-66 licence, so this offer has no qualification requirements.'
+          }
+        >
           {TECHNICIAN_TYPES.filter((t) => t.isActive).map((t) => (
             <CompanyChip
               key={t.code}
               label={t.label}
               selected={form.requiredTechnicianTypes.includes(t.code as TechnicianTypeCode)}
-              onPress={() => set('requiredTechnicianTypes', toggle(form.requiredTechnicianTypes, t.code as TechnicianTypeCode))}
+              onPress={() => onToggleTechnicianType(t.code as TechnicianTypeCode)}
             />
           ))}
         </ChoiceSection>
 
-        <ApproximateFilterSection
-          requiredLicenses={form.requiredLicenses}
-          onChangeLicenses={(next) => set('requiredLicenses', next)}
-          requiredAircraftTypes={form.requiredAircraftTypes}
-          onChangeAircraftTypes={(next) => set('requiredAircraftTypes', next)}
-          hasExactRequirements={form.requiredHabilitations.length > 0}
-        />
+        {targetsLicensedProfiles && (
+          <ApproximateFilterSection
+            requiredLicenses={form.requiredLicenses}
+            onChangeLicenses={(next) => set('requiredLicenses', next)}
+            requiredAircraftTypes={form.requiredAircraftTypes}
+            onChangeAircraftTypes={(next) => set('requiredAircraftTypes', next)}
+            hasExactRequirements={form.requiredHabilitations.length > 0}
+          />
+        )}
 
         <View style={styles.actions}>
           <TouchableOpacity

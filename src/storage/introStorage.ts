@@ -10,7 +10,3 @@ export async function hasSeenIntro(): Promise<boolean> {
 export async function markIntroAsSeen(): Promise<void> {
   await storageAdapter.set(INTRO_SEEN_KEY, true);
 }
-
-export async function resetIntroSeen(): Promise<void> {
-  await storageAdapter.remove(INTRO_SEEN_KEY);
-}

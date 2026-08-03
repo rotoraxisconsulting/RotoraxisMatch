@@ -11,7 +11,7 @@ import { SafeTechnicianPreview } from '../types/privacy';
 // src/utils/offerMatchExplain.ts and scripts/testMatching.ts. These two
 // functions are the I/O boundary: load the offer/technician data AND the
 // aircraft ratings catalog, then hand everything to the pure function.
-export { calculateOfferTechnicianMatch, getMatchLabel, getMatchScoreWeights } from './offerMatchExplain';
+export { calculateOfferTechnicianMatch, getMatchLabel, getMatchScoreWeights, getMatchDisplayLabel } from './offerMatchExplain';
 export type { MatchScoreWeights } from './offerMatchExplain';
 import { calculateOfferTechnicianMatch } from './offerMatchExplain';
 

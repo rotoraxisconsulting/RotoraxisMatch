@@ -43,6 +43,47 @@ function makeJson(corsHeaders) {
 // anonimización en base de datos. Se elimina de aquí para que no queden dos
 // definiciones que puedan divergir.
 
+// Espejo del CHECK de account_deletion_feedback (migración 043) y de
+// src/constants/deletionReasons.ts. Se valida aquí y no sólo en el cliente
+// porque esta función escribe con service_role, que salta RLS: lo que no filtre
+// este allowlist entra en la tabla.
+const DELETION_REASONS = [
+  'goal_met_here',
+  'goal_met_elsewhere',
+  'not_enough_supply',
+  'verification_slow',
+  'privacy_concerns',
+  'just_testing',
+  'other',
+];
+const COMMENT_MAX_LENGTH = 1000;
+
+/**
+ * Guarda el motivo de baja una vez la cuenta YA se ha borrado.
+ *
+ * Nunca lanza. El borrado es un derecho que la persona ya ha ejercido: que
+ * falle una encuesta opcional no puede impedirlo, ni dejar la cuenta a medio
+ * borrar, ni devolver un error que parezca que el borrado no ocurrió. Si esto
+ * se cae, se pierde una respuesta — y eso es todo lo que se pierde.
+ *
+ * La fila NO lleva user_id ni FK (ver cabecera de la migración 043): es lo que
+ * le permite sobrevivir al borrado sin quedar atada a quien la escribió.
+ */
+async function recordDeletionFeedback(supabaseAdmin, role, feedback) {
+  try {
+    if (!feedback || typeof feedback !== 'object') return;
+    const reason = feedback.reason;
+    if (!DELETION_REASONS.includes(reason)) return;
+
+    const rawComment = typeof feedback.comment === 'string' ? feedback.comment.trim() : '';
+    const comment = rawComment.length > 0 ? rawComment.slice(0, COMMENT_MAX_LENGTH) : null;
+
+    await supabaseAdmin.from('account_deletion_feedback').insert({ role, reason, comment });
+  } catch (_err) {
+    // Silencio deliberado: ver arriba.
+  }
+}
+
 async function deleteAccountTechnician(supabaseAdmin, userId) {
   // 1. Resolve technician_profiles row — sólo para localizar los ficheros.
   const { data: techProfile, error: techErr } = await supabaseAdmin
@@ -161,12 +202,29 @@ Deno.serve(async (req) => {
       throw new AppError(403, 'Admin accounts cannot be self-deleted. Contact a super-admin.');
     }
 
+    // El cuerpo puede venir vacío: las versiones anteriores del cliente no
+    // mandaban ninguno y tienen que seguir funcionando.
+    let feedback = null;
+    try {
+      feedback = await req.json();
+    } catch (_err) {
+      feedback = null;
+    }
+
     // ── 3. Delete by role ─────────────────────────────────
     if (profile.role === 'technician') {
       await deleteAccountTechnician(supabaseAdmin, userId);
     } else {
       await deleteAccountCompanyUser(supabaseAdmin, userId);
     }
+
+    // ── 4. Motivo de baja (opcional) ──────────────────────
+    // DESPUÉS del borrado, no antes: ambas rutas de arriba lanzan si la baja
+    // no procede (el guard de último administrador de la empresa es el caso
+    // real), y una baja rechazada no puede dejar registrada una baja. La fila
+    // no tiene user_id ni FK, así que escribirla cuando la cuenta ya no existe
+    // es exactamente lo que la migración 043 hace posible.
+    await recordDeletionFeedback(supabaseAdmin, profile.role, feedback);
 
     return json({ success: true });
 

@@ -79,7 +79,7 @@ export default function PrivacyPolicyScreen() {
             Technician identity is <Bold>private by default</Bold>. Companies can only see an anonymous code, country, city, base airport, licences, aircraft types, availability, years of experience, verification status and match score.
           </P>
           <P>
-            Full name, email address, phone number, professional links and identity documents are <Bold>never visible to companies</Bold> until both parties have accepted a connection (application accepted or direct offer accepted) and <Bold>identityRevealed = true</Bold>.
+            Full name, email address, phone number, professional links and identity documents are <Bold>never visible to companies</Bold> until both parties have accepted a connection (application accepted or direct offer accepted).
           </P>
           <P>
             Medical certificates and identity documents are <Bold>exclusively reviewed by our admin team</Bold> for verification purposes. They are never shared with companies in any form.
@@ -123,6 +123,7 @@ export default function PrivacyPolicyScreen() {
             'Active accounts: data retained while your account is active.',
             'Deleted accounts: personal data (name, email, phone, documents) is erased or anonymised within 30 days of deletion. Anonymised records (message history, application history) may be retained for operational integrity.',
             'Documents: deleted from storage immediately on account deletion or on your request.',
+            'Exit survey: if you choose to tell us why you are leaving when you delete your account, that answer is stored separately with no link to your identity, and is kept so we can improve the service. Answering is optional and deleting your account never depends on it.',
           ]} />
         </Section>
 

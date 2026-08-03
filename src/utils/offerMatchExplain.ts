@@ -13,7 +13,7 @@
 // technician who holds exactly what an offer requires must score clearly
 // above one who does not, regardless of how good the rest of their profile
 // looks — a missing mandatory qualification is a legal blocker, not a minor
-// preference gap. Two mechanisms enforce this, applied after the raw
+// preference gap. Three mechanisms enforce this, applied after the raw
 // breakdown is summed:
 //   - an unmet MANDATORY exact-habilitation requirement caps the total at
 //     MANDATORY_UNMET_CAP (stays in the "Partial" label range at most);
@@ -21,6 +21,11 @@
 //     score is zero caps the total further, at ZERO_QUALIFICATION_CAP
 //     (stays "Weak" — verified/availability/location alone can
 //     never manufacture a "Partial" result out of zero real qualification).
+//   - a hard disqualifier (MatchScore.blockers — wrong technician type, or
+//     fewer declared years than the offer's minimum) caps it lowest of all,
+//     at BLOCKER_CAP. Unlike the two above this is not a statement about
+//     weak qualification evidence but about the pair itself: the offer was
+//     never for this technician. See the ceiling ladder below.
 //
 // ratingIndex: the caller loads the aircraft_type_ratings catalog (via
 // catalogRepository/useAircraftTypeRatingsCatalog) and builds the index with
@@ -30,8 +35,16 @@
 // never a crash.
 import { OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer';
 import { TechnicianHabilitation, TechnicianLicense, TechnicianWithRelations } from '../types/technician';
-import { MatchScore, MatchLabel, MatchLevel, VigenciaNotice } from '../types/matching';
+import {
+  MatchScore,
+  MatchLabel,
+  MatchLevel,
+  MatchDisplayLabel,
+  VigenciaNotice,
+  GENERAL_COMPATIBILITY_LABEL,
+} from '../types/matching';
 import { resolveLocationSnapshot } from '../constants/locationCities';
+import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../constants/technicianTypes';
 import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, getAircraftFamilyKey, habilitationCoversFamilyKey } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
 
@@ -135,9 +148,21 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 //                     or broad) and the technician's habilitation score
 //                     came out to zero — stricter than the two above,
 //                     applies even for a preferred-only mismatch.
+//   BLOCKER_CAP     — a hard disqualifier applies (MatchScore.blockers):
+//                     the wrong technician type, or fewer declared years
+//                     than the offer's stated minimum. The tightest rung by
+//                     construction, and a different KIND of statement from
+//                     the three above: those all say "the qualification
+//                     evidence is weak", this one says "this pair should
+//                     not exist". Sits below ZERO_QUALIFICATION_CAP so a
+//                     blocked pair can never outrank a merely unqualified
+//                     one, and low enough that a blocked pair sinks to the
+//                     bottom of any total-descending sort on its own — no
+//                     special-casing in the ordering code (matchingV2.ts).
 const BROAD_ONLY_CAP = 79;
 const MANDATORY_UNMET_CAP = 59;
 const ZERO_QUALIFICATION_CAP = 39;
+const BLOCKER_CAP = 19;
 
 // Single place the whole ceiling ladder is combined — see the comment
 // above for what each one means and why "most restrictive wins" needs no
@@ -147,13 +172,25 @@ const ZERO_QUALIFICATION_CAP = 39;
 // combination in practice (see scripts/testMatching.ts).
 export function applyScoreCeilings(
   total: number,
-  flags: { isBroadOnlyMatch: boolean; hasMandatoryUnmet: boolean; isZeroQualification: boolean },
+  flags: { isBroadOnlyMatch: boolean; hasMandatoryUnmet: boolean; isZeroQualification: boolean; hasBlocker: boolean },
 ): number {
   let capped = total;
   if (flags.isBroadOnlyMatch) capped = Math.min(capped, BROAD_ONLY_CAP);
   if (flags.hasMandatoryUnmet) capped = Math.min(capped, MANDATORY_UNMET_CAP);
   if (flags.isZeroQualification) capped = Math.min(capped, ZERO_QUALIFICATION_CAP);
+  if (flags.hasBlocker) capped = Math.min(capped, BLOCKER_CAP);
   return capped;
+}
+
+// Blocker text is read by a human (recruiter or technician), so it always
+// names the type the way the rest of the product does — "Avionics
+// Technician", never the raw `avionic` code. Falls back to the code only if
+// a profile somehow carries a type absent from the catalog, which is a data
+// problem to surface, never a reason to render nothing. `isActive` is
+// deliberately not consulted: a type retired from the pickers must still
+// label the rows already storing it.
+function technicianTypeLabel(code: string): string {
+  return TECHNICIAN_TYPES.find((t) => t.code === code)?.label ?? code;
 }
 
 type HabilitationTier = 'exact' | 'related_family' | 'not_met';
@@ -424,6 +461,7 @@ export function calculateOfferTechnicianMatch(
   const clarifications: string[] = [];
   const vigenciaNotices: VigenciaNotice[] = [];
   const mandatoryMissing: string[] = [];
+  const blockers: string[] = [];
   let level: MatchLevel = 'not_met';
   // True only when the qualification evidence came exclusively from the
   // approximate broad filter — never from a confirmed exact rating. Drives
@@ -556,11 +594,9 @@ export function calculateOfferTechnicianMatch(
     contractFit = weights.contractFit;
   }
 
-  // offer.minYearsExperience NO puntúa aquí: es un FILTRO DURO server-side
-  // (technicianRepositoryV2.search/getPublicProfiles → .or(years_experience
-  // .is.null, .gte.N)). Un técnico que no cumple el mínimo declarado no llega
-  // a este scorer; el que no ha declarado años llega y no se le penaliza.
-  // "La cualificación puntúa, la experiencia informa."
+  // offer.minYearsExperience SIGUE sin puntuar y sin entrar en breakdown —
+  // "la cualificación puntúa, la experiencia informa" no cambia. Lo que sí
+  // hace ahora es descalificar: ver la sección de blockers más abajo.
 
   const technicianLocation = resolveLocationSnapshot(technician);
   const offerLocation = resolveLocationSnapshot({
@@ -578,6 +614,47 @@ export function calculateOfferTechnicianMatch(
     location = weights.location;
   }
 
+  // ── Hard blockers ────────────────────────────────────────────────────
+  // Not a weak-evidence signal like mandatoryMissing — these say the offer
+  // was never for this technician. They live HERE, in the pure function,
+  // rather than in either matchingV2.ts wrapper on purpose: the wrappers
+  // cover one direction each (company→technicians, technician→offers) and
+  // a dozen screens call this function directly, so a rule implemented in a
+  // wrapper would silently apply to some of the product and not the rest.
+  // Neither rule touches breakdown — a blocker caps the total (BLOCKER_CAP,
+  // see applyScoreCeilings), it never awards or subtracts component points.
+
+  // Technician type. The list is an OR: the offer accepts ANY of the types
+  // it names. Empty means the offer does not restrict the type at all, so
+  // there is nothing to evaluate — never a blocker, and no match line
+  // either (claiming a match for a requirement the offer never stated would
+  // be noise).
+  if (offer.requiredTechnicianTypes.length > 0) {
+    if (offer.requiredTechnicianTypes.includes(technician.technicianType)) {
+      matches.push(`Technician type: ${technicianTypeLabel(technician.technicianType)}`);
+    } else {
+      const accepted = offer.requiredTechnicianTypes.map(technicianTypeLabel).join(' or ');
+      blockers.push(
+        `The offer is for ${accepted}; this profile is a ${technicianTypeLabel(technician.technicianType)}.`,
+      );
+    }
+  }
+
+  // Minimum declared experience. `yearsExperience` absent (undefined/NULL)
+  // is NOT a blocker — deliberate product rule, the same one the server-side
+  // prefilter encodes as `years_experience.is.null OR >= N` (see
+  // applyMinYearsFilter in technicianRepositoryV2): the ABSENCE OF DATA NEVER
+  // PENALIZES. Only a value the technician actually declared, below the
+  // offer's stated minimum, disqualifies. `!= null` rather than a typeof
+  // check so a NULL that survives a mapper is treated as "not declared"
+  // instead of comparing as 0 and blocking everyone who left the field empty.
+  const declaredYears = technician.yearsExperience;
+  if (offer.minYearsExperience > 0 && declaredYears != null && declaredYears < offer.minYearsExperience) {
+    blockers.push(
+      `The offer requires at least ${offer.minYearsExperience} years of experience; this profile declares ${declaredYears}.`,
+    );
+  }
+
   const rawTotal = verified + habilitation + license + contractFit + location;
 
   // Every score ceiling is applied in one place — see applyScoreCeilings()
@@ -587,6 +664,7 @@ export function calculateOfferTechnicianMatch(
     isBroadOnlyMatch,
     hasMandatoryUnmet: mandatoryMissing.length > 0,
     isZeroQualification: hasQualificationRequirements && habilitation === 0,
+    hasBlocker: blockers.length > 0,
   });
 
   return {
@@ -600,6 +678,7 @@ export function calculateOfferTechnicianMatch(
     clarifications,
     vigenciaNotices,
     mandatoryMissing,
+    blockers,
   };
 }
 
@@ -608,4 +687,16 @@ export function getMatchLabel(total: number): MatchLabel {
   if (total >= 60) return 'Strong match';
   if (total >= 40) return 'Partial match';
   return 'Weak match';
+}
+
+// PRESENTATION ONLY — the scoring is untouched. An offer with no
+// qualification requirement already falls into NO_REQUIREMENTS_WEIGHTS on its
+// own (topping out at 75, never "Excellent"); this only decides what the
+// resulting number is CALLED on screen. See GENERAL_COMPATIBILITY_LABEL in
+// types/matching.ts for why non-licensed offers get their own wording.
+export function getMatchDisplayLabel(
+  offer: Pick<OfferWithRequirements, 'requiredTechnicianTypes'>,
+  score: Pick<MatchScore, 'label'>,
+): MatchDisplayLabel {
+  return offerTargetsLicensedProfiles(offer) ? score.label : GENERAL_COMPATIBILITY_LABEL;
 }

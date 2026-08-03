@@ -145,12 +145,16 @@ export function AdminTechnicianCard({ technician, details, typeRatingLabels, acc
   // motorización — la distinción que un type rating Part-66 codifica.
   const habilitationChips = compactValues(typeRatingLabels ?? technician.aircraftTypes);
 
+  // El realce de estado es una señal de COLA ("mírame"), no una etiqueta de
+  // color: sobre una lápida el borde ámbar de "pendiente" prometía una revisión
+  // que la propia tarjeta ya declara imposible unas líneas más abajo.
   return (
     <AdminCard
       style={[
         styles.card,
-        currentStatus === 'pending' && styles.cardPending,
-        currentStatus === 'rejected' && styles.cardRejected,
+        isPending && styles.cardPending,
+        !isDeleted && currentStatus === 'rejected' && styles.cardRejected,
+        isDeleted && styles.cardDeleted,
       ]}
     >
       <View style={styles.header}>
@@ -314,6 +318,10 @@ const styles = StyleSheet.create({
   },
   cardRejected: {
     borderColor: '#FECACA',
+  },
+  // Atenuada, no alarmante: una cuenta borrada es archivo, no incidencia.
+  cardDeleted: {
+    opacity: 0.72,
   },
   pendingNote: {
     fontSize: 12,

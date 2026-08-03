@@ -127,7 +127,7 @@ export default function LoginScreen() {
           </View>
 
           <Text style={styles.footerNote}>
-            Access is based on your verified Supabase account role.
+            Access depends on your account role and verification status.
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

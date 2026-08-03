@@ -43,48 +43,7 @@ export interface TechnicianMapProps {
   onSendOffer?: (technicianId: string, offerId: string) => Promise<void>;
 }
 
-// ─── STEP 1 — minimal static HTML (no Leaflet, no CDN) ───────────────────────
-// Purpose: prove the WebView renders at all before introducing Leaflet.
-// Once "WebView is working" is visible in the emulator, swap this for LEAFLET_HTML.
-
-function buildMinimalHtml(techCount: number): string {
-  const coordText = 'Initial center: 48.5, 8.0 (Europe)';
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <style>
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      background: #0A1628;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }
-    h1 { color: #ffffff; font-size: 28px; margin: 0 0 16px; text-align: center; }
-    p  { color: #94C5FF; font-size: 16px; margin: 6px 0; text-align: center; }
-  </style>
-</head>
-<body>
-  <h1>WebView is working</h1>
-  <p>Technicians: ${techCount}</p>
-  <p>${coordText}</p>
-  <script>
-    try {
-      window.ReactNativeWebView.postMessage("minimal-webview-loaded");
-    } catch(e) {}
-  </script>
-</body>
-</html>`;
-}
-
-// ─── STEP 6+7 — Leaflet HTML (reintroduced once static WebView is confirmed) ──
+// ─── Leaflet HTML ────────────────────────────────────────────────────────────
 // Uses jsdelivr CDN (HTTPS). All JS wrapped in try/catch.
 // Posts status messages: leaflet-script-start | leaflet-loaded | map-created | markers-added
 // Full html/body/#map sizing so the map fills the WebView.
@@ -279,9 +238,6 @@ const LEAFLET_HTML = `<!DOCTYPE html>
           onerror="post('leaflet-load-error')"></script>
 </body>
 </html>`;
-
-// ─── toggle: set USE_MINIMAL=true to test static WebView; false for Leaflet ───
-const USE_MINIMAL = false;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -648,7 +604,7 @@ export function TechnicianMap({
   );
 
   useEffect(() => {
-    if (!mapReady || !webViewRef.current || USE_MINIMAL) return;
+    if (!mapReady || !webViewRef.current) return;
     const payload = JSON.stringify(markerPayload);
     webViewRef.current.injectJavaScript(
       `window.updateMarkers(${JSON.stringify(payload)});true;`,
@@ -701,10 +657,6 @@ export function TechnicianMap({
     }
   }
 
-  const htmlSource = USE_MINIMAL
-    ? buildMinimalHtml(technicians.length)
-    : LEAFLET_HTML;
-
   return (
     <View style={styles.container}>
 
@@ -718,7 +670,7 @@ export function TechnicianMap({
           domStorageEnabled={true}
           mixedContentMode="always"
           setSupportMultipleWindows={false}
-          source={{ html: htmlSource }}
+          source={{ html: LEAFLET_HTML }}
           style={styles.webView}
           // Step 4: all WebView event callbacks
           onLoadStart={() => setWebViewStatus('loading')}
@@ -743,7 +695,7 @@ export function TechnicianMap({
               return;
             }
             // Leaflet: consider map ready once initMap completes
-            if (!USE_MINIMAL && msg === 'map-ready') {
+            if (msg === 'map-ready') {
               setMapReady(true);
             }
           }}

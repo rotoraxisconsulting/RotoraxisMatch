@@ -6,7 +6,7 @@ import { Stack, useRouter } from 'expo-router';
 import { TechnicianMap } from '../../src/components/TechnicianMap';
 import { useMapTechnicians } from '../../src/state/useMapTechnicians';
 import { offerRequestRepository } from '../../src/repositories/v2/offerRequestRepository';
-import { getOfferMatchesForTechnician } from '../../src/utils/matchingV2';
+import { getOfferMatchesForTechnician, getMatchDisplayLabel } from '../../src/utils/matchingV2';
 import { useCompanySession } from '../../src/state/SessionContext';
 import { MapFilters, MapFilterValue } from '../../src/types/filters';
 import { MapOfferMatchOption } from '../../src/types/mapOffers';
@@ -58,7 +58,7 @@ export default function MapScreen() {
                 contractType: offer.contractType,
                 location: [offer.locationCity, offer.locationCountry].filter(Boolean).join(', '),
                 score: score.total,
-                label: score.label,
+                label: getMatchDisplayLabel(offer, score),
                 requestStatus: existing?.status,
               };
             });

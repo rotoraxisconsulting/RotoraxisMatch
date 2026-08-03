@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import {
+  Archive,
   BriefcaseBusiness,
   Building2,
   ChevronRight,
@@ -60,9 +61,11 @@ type ActionConfig = {
 };
 
 type SupabaseAdminMetrics = {
+  /** Cuentas vivas: excluye lápidas (profiles.status='deleted'). */
   totalProfiles: number;
   pendingProfiles: number;
   activeProfiles: number;
+  deletedProfiles: number;
   totalTechnicians: number;
   pendingTechnicians: number;
   verifiedTechnicians: number;
@@ -93,6 +96,7 @@ export default function AdminDashboard() {
     totalProfiles: 0,
     pendingProfiles: 0,
     activeProfiles: 0,
+    deletedProfiles: 0,
     totalTechnicians: 0,
     pendingTechnicians: 0,
     verifiedTechnicians: 0,
@@ -126,14 +130,29 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (!profile?.id) return;
+    // Toda cuenta de técnico se cuenta EXCLUYENDO lápidas. Una cuenta borrada
+    // conserva su verification_status congelado, así que sin este filtro seguía
+    // sumando en "pending" (cola de trabajo inexistente: la migración 037
+    // impide moderarla) y en "verified" (oferta que ya no existe).
+    //
+    // `profiles!inner(status)` es un join interno sobre la ÚNICA FK
+    // technician_profiles.user_id → profiles.id, así que no hay ambigüedad de
+    // embed; el `.neq` se aplica a la columna incrustada.
+    const livingTechnicians = () =>
+      supabase
+        .from('technician_profiles')
+        .select('id, profiles!inner(status)', { count: 'exact', head: true })
+        .neq('profiles.status', 'deleted');
+
     Promise.all([
-      supabase.from('profiles').select('id', { count: 'exact', head: true }),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).neq('status', 'deleted'),
       supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'pending_verification'),
       supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }),
-      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
-      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified'),
-      supabase.from('technician_profiles').select('id', { count: 'exact', head: true }).eq('verification_status', 'rejected'),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('status', 'deleted'),
+      livingTechnicians(),
+      livingTechnicians().eq('verification_status', 'pending'),
+      livingTechnicians().eq('verification_status', 'verified'),
+      livingTechnicians().eq('verification_status', 'rejected'),
       supabase.from('companies').select('id', { count: 'exact', head: true }),
       supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'pending'),
       supabase.from('companies').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified'),
@@ -147,7 +166,7 @@ export default function AdminDashboard() {
       supabase.from('documents').select('id', { count: 'exact', head: true }).eq('status', 'verified'),
       supabase.from('documents').select('id', { count: 'exact', head: true }).eq('status', 'rejected'),
     ]).then(([
-      total, pending, active,
+      total, pending, active, deleted,
       techTotal, techPending, techVerified, techRejected,
       compTotal, compPending, compVerified, compRejected,
       offPublished, offDraft,
@@ -158,6 +177,7 @@ export default function AdminDashboard() {
         totalProfiles: total.count ?? 0,
         pendingProfiles: pending.count ?? 0,
         activeProfiles: active.count ?? 0,
+        deletedProfiles: deleted.count ?? 0,
         totalTechnicians: techTotal.count ?? 0,
         pendingTechnicians: techPending.count ?? 0,
         verifiedTechnicians: techVerified.count ?? 0,
@@ -376,6 +396,16 @@ export default function AdminDashboard() {
       softTone: adminUi.greenSoft,
       onPress: () => router.push('/admin/requests' as any),
     },
+    // Sin `badge`: una lápida no es cola de trabajo, y un contador ámbar aquí
+    // reintroduciría por la puerta de atrás justo lo que este cambio corrige.
+    {
+      label: 'Deleted accounts',
+      subtitle: `${supaMetrics.deletedProfiles} closed by their owner`,
+      icon: Archive,
+      tone: adminUi.textSoft,
+      softTone: adminUi.surfaceSoft,
+      onPress: () => router.push('/admin/deleted-accounts' as any),
+    },
   ];
 
   return (
@@ -410,7 +440,7 @@ export default function AdminDashboard() {
             <View style={styles.summaryTextBlock}>
               <Text style={styles.summaryTitle}>Marketplace supervision</Text>
               <Text style={styles.summaryText}>
-                Live Supabase data. Review queues grouped by users, marketplace flow and compliance state.
+                Review queues grouped by users, marketplace flow and compliance state.
               </Text>
             </View>
           </View>

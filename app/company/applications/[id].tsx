@@ -47,7 +47,7 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchScoreWeights, getMatchDisplayLabel } from '../../../src/utils/matchingV2';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
 import { useCompanySession } from '../../../src/state/SessionContext';
@@ -309,8 +309,8 @@ export default function ApplicationDetailScreen() {
               <Text style={styles.sectionSub}>Review the fit, privacy state and action status.</Text>
             </View>
           </View>
-          {score ? (
-            <InlineScore score={score.total} quality={score.label} context="match for this offer" />
+          {score && offer ? (
+            <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match for this offer" />
           ) : null}
           {app.coverNote ? (
             <View style={styles.coverNote}>
@@ -401,7 +401,7 @@ export default function ApplicationDetailScreen() {
             <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} />
             <BreakdownRow label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} />
             <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} />
-            <MatchExplanation score={score} hideBreakdown />
+            <MatchExplanation score={score} hideBreakdown displayLabel={offer ? getMatchDisplayLabel(offer, score) : undefined} />
           </CompanyCard>
         ) : null}
 

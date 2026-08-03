@@ -14,7 +14,12 @@ import { Stack, useRouter } from 'expo-router';
 import { supabase } from '../../src/lib/supabase';
 import { useAuth } from '../../src/auth/AuthContext';
 import { colors, spacing } from '../../src/theme';
-import { APP_PUBLIC_URL } from '../../src/lib/appUrl';
+import {
+  DELETION_COMMENT_MAX_LENGTH,
+  DELETION_REASON_CODES,
+  DeletionReasonCode,
+  deletionReasonLabel,
+} from '../../src/constants/deletionReasons';
 
 const CONFIRM_WORD = 'DELETE';
 
@@ -28,6 +33,11 @@ export default function DeleteAccountScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // Encuesta de salida, OPCIONAL. No participa en `confirmed`: el botón de
+  // borrar no depende de ella en ningún momento. Poner una pregunta entre
+  // alguien y el ejercicio de su derecho de supresión sería obstruirlo.
+  const [reason, setReason] = useState<DeletionReasonCode | null>(null);
+  const [comment, setComment] = useState('');
 
   const isTechnician = profile?.role === 'technician';
   const confirmed = confirmText.trim().toUpperCase() === CONFIRM_WORD;
@@ -44,14 +54,16 @@ export default function DeleteAccountScreen() {
         return;
       }
 
-      const functionUrl = `${APP_PUBLIC_URL.replace('http://localhost:8081', process.env.EXPO_PUBLIC_SUPABASE_URL ?? '')}/functions/v1/delete-account`.replace(
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL ?? ''}/functions/v1/delete-account`,
-        `${process.env.EXPO_PUBLIC_SUPABASE_URL ?? ''}/functions/v1/delete-account`,
-      );
-
-      // Call via supabase.functions.invoke for clean URL resolution
+      // Call via supabase.functions.invoke for clean URL resolution.
+      // El motivo viaja en el cuerpo y lo escribe la Edge Function con
+      // service_role: el cliente no puede insertar en account_deletion_feedback
+      // (sin política de INSERT, y sin GRANT desde la migración 043).
+      const trimmedComment = comment.trim();
       const { error: fnError } = await supabase.functions.invoke('delete-account', {
         headers: { Authorization: `Bearer ${session.access_token}` },
+        body: reason
+          ? { reason, ...(trimmedComment ? { comment: trimmedComment } : {}) }
+          : {},
       });
 
       if (fnError) {
@@ -137,6 +149,43 @@ export default function DeleteAccountScreen() {
           </View>
         )}
 
+        {/* Exit survey — optional, never a gate. */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Before you go</Text>
+          <Text style={styles.surveyIntro}>
+            Why are you leaving? This is optional — you can delete your account without answering.
+            Your answer is stored on its own and is not linked to your account, so we will not know
+            it was you.
+          </Text>
+          {DELETION_REASON_CODES.map((code) => (
+            <ReasonOption
+              key={code}
+              label={deletionReasonLabel(code, profile?.role)}
+              selected={reason === code}
+              // Segundo toque sobre la opción marcada la desmarca: sin esto, un
+              // toque accidental no se puede deshacer y la única salida es
+              // mandar un motivo que no es el tuyo.
+              onPress={() => setReason((prev) => (prev === code ? null : code))}
+            />
+          ))}
+          {reason ? (
+            <TextInput
+              style={styles.commentInput}
+              value={comment}
+              onChangeText={setComment}
+              // Aviso explícito: la fila no lleva identidad, pero nada impide
+              // que alguien escriba la suya en el texto libre. Pedirlo aquí es
+              // más barato y más honesto que intentar detectarlo después.
+              placeholder="Anything else? (optional — please don't include personal details)"
+              placeholderTextColor={colors.textMuted}
+              multiline
+              numberOfLines={3}
+              maxLength={DELETION_COMMENT_MAX_LENGTH}
+              textAlignVertical="top"
+            />
+          ) : null}
+        </View>
+
         {/* Confirmation */}
         <View style={styles.card}>
           <Text style={styles.confirmLabel}>
@@ -187,6 +236,31 @@ export default function DeleteAccountScreen() {
         </Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function ReasonOption({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.reasonRow, selected && styles.reasonRowSelected]}
+      onPress={onPress}
+      activeOpacity={0.78}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+    >
+      <View style={[styles.radio, selected && styles.radioSelected]}>
+        {selected ? <View style={styles.radioDot} /> : null}
+      </View>
+      <Text style={[styles.reasonText, selected && styles.reasonTextSelected]}>{label}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -277,6 +351,70 @@ const styles = StyleSheet.create({
     color: colors.warning,
     lineHeight: 19,
     fontWeight: '500',
+  },
+  surveyIntro: {
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 18,
+    marginBottom: spacing.xs,
+  },
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: 44,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  reasonRowSelected: {
+    borderColor: colors.cyan,
+    backgroundColor: 'rgba(6,182,212,0.12)',
+  },
+  radio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioSelected: {
+    borderColor: colors.cyan,
+  },
+  radioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.cyan,
+  },
+  reasonText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.cyanLight,
+    fontWeight: '500',
+  },
+  reasonTextSelected: {
+    color: colors.white,
+    fontWeight: '600',
+  },
+  commentInput: {
+    marginTop: spacing.xs,
+    minHeight: 76,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    color: colors.white,
+    fontSize: 14,
+    lineHeight: 20,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   confirmLabel: {
     fontSize: 13,

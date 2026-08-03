@@ -31,9 +31,12 @@ import {
 
 
 export interface AdminMetrics {
+  /** Cuentas VIVAS. Las lápidas se cuentan aparte en `deletedTechnicians`. */
   totalTechnicians: number;
   verifiedTechnicians: number;
   pendingTechnicians: number;
+  /** Cuentas borradas por su dueño (profiles.status='deleted'). No son cola de trabajo. */
+  deletedTechnicians: number;
   totalCompanies: number;
   verifiedCompanies: number;
   pendingCompanies: number;
@@ -241,10 +244,17 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
     setOffers((prev) => prev.map((o) => (o.id === id ? { ...o, status } : o)));
   }, []);
 
+  // Una lápida conserva el verification_status que tenía al borrarse, así que
+  // seguía sumando en "verified" y en "pending" como si fuera oferta activa o
+  // cola por revisar. Ninguna de las dos cosas es cierta: no hay técnico
+  // detrás. Se separan aquí para que el total signifique "cuentas vivas".
+  const livingTechnicians = technicians.filter((t) => accountStatusMap[t.id] !== 'deleted');
+
   const metrics: AdminMetrics = {
-    totalTechnicians: technicians.length,
-    verifiedTechnicians: technicians.filter((t) => t.verificationStatus === 'verified').length,
-    pendingTechnicians: technicians.filter((t) => t.verificationStatus === 'pending').length,
+    totalTechnicians: livingTechnicians.length,
+    verifiedTechnicians: livingTechnicians.filter((t) => t.verificationStatus === 'verified').length,
+    pendingTechnicians: livingTechnicians.filter((t) => t.verificationStatus === 'pending').length,
+    deletedTechnicians: technicians.length - livingTechnicians.length,
     totalCompanies: companies.length,
     verifiedCompanies: companies.filter((c) => c.verificationStatus === 'verified').length,
     pendingCompanies: companies.filter((c) => c.verificationStatus === 'pending').length,

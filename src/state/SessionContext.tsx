@@ -145,7 +145,3 @@ export function useTechnicianSession(): LocalTechnicianSession | null {
 export function useCompanySession(): LocalCompanySession | null {
   return useSession().company;
 }
-
-export function useAdminSession(): LocalAdminSession | null {
-  return useSession().admin;
-}

@@ -593,7 +593,7 @@ export default function OfferDetailScreen() {
                     {TECH_TYPE_LABELS[technician.technicianType] ?? technician.technicianType} - {technician.city}, {technician.country}
                   </Text>
                 </View>
-                <MatchBadge score={score.total} context="match for this offer" />
+                <MatchBadge score={score.total} context="match for this offer" notEligible={score.blockers.length > 0} />
               </View>
 
               <View style={styles.badgeRow}>

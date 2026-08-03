@@ -42,10 +42,3 @@ export function canReviewApplications(role: CompanyMemberRole | undefined): bool
 export function canSendChatMessages(role: CompanyMemberRole | undefined): boolean {
   return role === 'admin' || role === 'recruiter';
 }
-
-// Una sesión sin resolver NO es "un viewer": devuelve false, igual que los
-// demás. Sirve para mostrar avisos de solo-lectura, y no hay nada que avisar
-// mientras no se sabe quién eres.
-export function isCompanyViewer(role: CompanyMemberRole | undefined): boolean {
-  return role === 'viewer';
-}

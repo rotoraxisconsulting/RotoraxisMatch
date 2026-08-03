@@ -3,6 +3,7 @@ import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../../t
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
+import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../constants/technicianTypes';
 import {
   loadOfferRequirements,
   mapOfferRow,
@@ -66,6 +67,43 @@ function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record
 
 export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible'> | null | undefined): boolean {
   return Boolean(offer && offer.status === 'published' && offer.visible);
+}
+
+/**
+ * An offer aimed at non-licensed technician types (sheet metal worker,
+ * painter, composite) has no Part-66 axis: those profiles hold no licence
+ * and no aircraft type rating, so a licence/rating/habilitation requirement
+ * on such an offer can only ever be unsatisfiable.
+ *
+ * This runs in the repository, not only in the form, on purpose. Hiding the
+ * sections on screen stops the ONE path a user clicks through; it does
+ * nothing about a stale form state, a screen that sets the types after the
+ * requirements, or any future caller. The rule belongs where every write
+ * passes through.
+ *
+ * Throws rather than silently stripping the requirements: dropping them
+ * quietly would tell the company "saved" while discarding what it typed —
+ * the same class of false success `throwIfNoRows` exists to prevent.
+ */
+function assertRequirementsMatchTechnicianTypes(requirements: {
+  technicianTypes: readonly TechnicianTypeCode[];
+  licenses: readonly LicenseCode[];
+  aircraftTypes: readonly string[];
+  habilitations?: readonly unknown[];
+}): void {
+  if (offerTargetsLicensedProfiles({ requiredTechnicianTypes: requirements.technicianTypes })) return;
+
+  const part66 =
+    requirements.licenses.length + requirements.aircraftTypes.length + (requirements.habilitations?.length ?? 0);
+  if (part66 === 0) return;
+
+  const targeted = requirements.technicianTypes
+    .map((code) => TECHNICIAN_TYPES.find((t) => t.code === code)?.label ?? code)
+    .join(', ');
+  throw new Error(
+    `This offer targets ${targeted}, which do not hold EASA Part-66 licences or aircraft type ratings. ` +
+      'Remove the licence, aircraft and type rating requirements, or target a licensed technician type.',
+  );
 }
 
 export const offerRepository = {
@@ -184,6 +222,14 @@ export const offerRepository = {
     requiredAircraftTypes?: string[];
     requiredHabilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
   }): Promise<OfferWithRequirements> {
+    // Checked BEFORE the insert: failing after it would leave an orphan
+    // offer row behind for a save the caller was told had failed.
+    assertRequirementsMatchTechnicianTypes({
+      technicianTypes: data.requiredTechnicianTypes ?? [],
+      licenses: data.requiredLicenses ?? [],
+      aircraftTypes: data.requiredAircraftTypes ?? [],
+      habilitations: data.requiredHabilitations ?? [],
+    });
     const status = data.status ?? 'draft';
     const location = controlledOfferLocation(data);
     const { data: inserted, error } = await supabase
@@ -295,6 +341,10 @@ export const offerRepository = {
     // need to know about this table).
     habilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
   }): Promise<void> {
+    // Before the deletes, never after: a rejected save must leave the offer's
+    // existing requirements exactly as they were.
+    assertRequirementsMatchTechnicianTypes(requirements);
+
     const deletes = await Promise.all([
       supabase.from('offer_required_technician_types').delete().eq('offer_id', offerId),
       supabase.from('offer_required_licenses').delete().eq('offer_id', offerId),

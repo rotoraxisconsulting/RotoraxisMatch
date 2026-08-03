@@ -31,10 +31,13 @@ import { SocialLinks } from '../../src/types/technician';
 import { isValidUrl, normalizeUrl } from '../../src/utils/urlValidation';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
+import { isLicensedTechnicianType } from '../../src/constants/technicianTypes';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
 import { HabilitationsEditor, HabilitationRow as HabRow } from '../../src/components/technician/HabilitationsEditor';
 import { DateField } from '../../src/components/DateField';
 import { isValidDateOrder } from '../../src/utils/validityDates';
+import { validateProfileYearsExperience } from '../../src/utils/yearsExperienceValidation';
+import { computeProfileCompleteness } from '../../src/utils/profileCompleteness';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { catalogRepository } from '../../src/repositories/v2/catalogRepository';
 import { catalogRequestRepository } from '../../src/repositories/v2/catalogRequestRepository';
@@ -72,6 +75,7 @@ type SupaTechRow = {
   last_name: string;
   email: string;
   phone: string | null;
+  technician_type: string;
   location_city_id: string;
   availability: {
     immediately?: boolean;
@@ -92,41 +96,6 @@ const SOCIAL_FIELDS: { key: keyof SocialLinks & string; label: string; placehold
   { key: 'instagram', label: 'Instagram', placeholder: 'instagram.com/your-handle' },
   { key: 'website', label: 'Personal website', placeholder: 'your-portfolio.com' },
 ];
-
-// `yearsDeclared` en vez de `t.yearsExperience > 0`: declarar 0 anios ES
-// completar el perfil. Penalizar a un junior por ser honesto contradiria el
-// principio de la mision (la ausencia de dato no penaliza, pero el dato
-// declarado tampoco debe castigar por su valor).
-//
-// `socialDeclared` (2026-07-29): TRUE con AL MENOS UN enlace declarado — no
-// uno por red. Los 10 puntos que quedaron huerfanos al retirar specialties
-// vuelven aqui, asi que la escala vuelve a topar en 100 de verdad. Que baste
-// con uno es deliberado: el objetivo es "hay una via de contacto profesional
-// verificable", no obligar a tener las tres.
-function computeProfileCompleteness(t: Technician, yearsDeclared: boolean, socialDeclared: boolean): number {
-  let score = 0;
-  if (t.fullName?.trim()) score += 10;
-  if (t.email?.trim()) score += 10;
-  if (t.phone?.trim()) score += 5;
-  if (t.city?.trim()) score += 5;
-  if (t.country?.trim()) score += 5;
-  if (t.baseAirport?.trim()) score += 5;
-  if (t.licenseCategories.length > 0) score += 20;
-  if (t.aircraftTypes.length > 0) score += 15;
-  // 2026-07-29: aqui habia `if (t.specialties.length > 0) score += 10;`, una
-  // rama muerta (specialties no tenia almacenamiento y siempre llegaba []),
-  // que dejaba el maximo real de este score en 90. Esos 10 puntos son ahora
-  // los enlaces sociales, que SI tienen columna y camino de escritura.
-  if (socialDeclared) score += 10;
-  // NOTA (2026-07-29): con dos estados esto significa "+5 por estar abierto a
-  // ofertas". Es discutible que la completitud del PERFIL dependa de si ahora
-  // mismo buscas trabajo — pero cambiarlo mueve el % de todos los perfiles, y
-  // eso es una decisión de producto propia, no un arrastre de esta tanda.
-  // Se deja como estaba y queda señalado.
-  if (t.availability.status !== 'unavailable') score += 5;
-  if (yearsDeclared) score += 10;
-  return Math.min(score, 100);
-}
 
 function supaRowToForm(
   row: SupaTechRow,
@@ -220,6 +189,12 @@ export default function TechnicianProfileScreen() {
   // fue justo el bug de la primera version (el boton "Save changes" no se
   // activaba al cambiar los anios).
   const [yearsInput, setYearsInput] = useState('');
+  // El tipo de tecnico NO se edita en esta pantalla (se fija en el alta), pero
+  // decide si el eje Part-66 existe siquiera para este perfil: un chapista,
+  // pintor o tecnico de composite no tiene licencia ni type ratings, asi que
+  // las secciones de Licenses y Habilitations no se le muestran. Fuera de
+  // `form` porque el tipo V1 `Technician` no tiene este campo.
+  const [technicianType, setTechnicianType] = useState('');
   // Enlaces sociales, EN CRUDO tal y como los teclea el tecnico (sin
   // normalizar): normalizar en cada pulsacion pelearia con el cursor. La
   // normalizacion pasa una sola vez, al guardar.
@@ -274,7 +249,7 @@ export default function TechnicianProfileScreen() {
       const { data: techRow, error: techErr } = await supabase
         .from('technician_profiles')
         .select(
-          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, years_experience, verification_status, profile_completeness, social_links',
+          'id, anonymous_code, first_name, last_name, email, phone, technician_type, location_city_id, availability, years_experience, verification_status, profile_completeness, social_links',
         )
         .eq('user_id', profile.id)
         .maybeSingle();
@@ -288,6 +263,7 @@ export default function TechnicianProfileScreen() {
       }
 
       setTechId(techRow.id);
+      setTechnicianType((techRow as SupaTechRow).technician_type ?? '');
 
       const [licResult, habResult] = await Promise.all([
         supabase
@@ -389,6 +365,13 @@ export default function TechnicianProfileScreen() {
     }, [loadProfile]),
   );
 
+  // Las licencias y los type ratings solo existen para los tipos que
+  // certifican (mechanic, avionic, pilot). Para el resto no hay nada que
+  // declarar en ese eje — ver isLicensedTechnicianType. Mientras el perfil
+  // carga, technicianType es '' y el helper devuelve `true`: se muestran las
+  // secciones, que es el comportamiento previo y el lado seguro del error.
+  const holdsPart66Qualifications = isLicensedTechnicianType(technicianType);
+
   function updateField<K extends keyof Technician>(key: K, value: Technician[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
     setIsDirty(true);
@@ -485,6 +468,20 @@ export default function TechnicianProfileScreen() {
   async function handleSave() {
     if (!form || !isDirty || !techId) return;
 
+    // Los anios declarados son OBLIGATORIOS desde que el alta los pide
+    // (migracion 044). Aqui se revalida porque esta pantalla es el otro
+    // camino de escritura del campo: sin esto, un tecnico podia vaciar la
+    // casilla y volver a dejar su perfil en "no declarado".
+    //
+    // OJO: '' y '0' NO son lo mismo y esa distincion se respeta intacta —
+    // esto rechaza SOLO la cadena vacia. Declarar 0 anios sigue siendo una
+    // respuesta valida y se guarda como 0, no como NULL.
+    const yearsError = validateProfileYearsExperience(yearsInput);
+    if (yearsError) {
+      setProfileError(yearsError);
+      return;
+    }
+
     // Client-side validation only — must never reach the database as a
     // constraint error. Absent dates are neutral (checked inside
     // isValidDateOrder); only an explicit expiresAt on/before issuedAt is
@@ -557,6 +554,10 @@ export default function TechnicianProfileScreen() {
       { ...form, aircraftTypes: derivedAircraftTypes },
       yearsToSave !== null,
       socialDeclared,
+      // Decide la tabla de pesos: un tipo no licenciado no puede tener
+      // licencias ni type ratings, asi que esos 35 puntos se reparten entre
+      // lo que SI puede rellenar. Sin esto su maximo real era 65%.
+      technicianType,
     );
 
     setSaving(true);
@@ -837,14 +838,14 @@ export default function TechnicianProfileScreen() {
               style={styles.input}
               value={yearsInput}
               onChangeText={updateYearsInput}
-              placeholder="Optional — leave empty if you prefer not to say"
+              placeholder="e.g. 8 — enter 0 if you have none yet"
               placeholderTextColor={techUi.textMuted}
               keyboardType="number-pad"
               maxLength={2}
             />
             <Text style={styles.privacyNote}>
-              Companies can filter by minimum years of experience. Leaving this empty never
-              excludes you from a search — your profile is shown as "not specified".
+              Required. Companies filter by minimum years of experience, so a profile with
+              nothing here is hard to place. Entering 0 is a valid answer.
             </Text>
           </TechnicianCard>
           <Text style={styles.privacyNote}>
@@ -952,6 +953,13 @@ export default function TechnicianProfileScreen() {
 
           </TechnicianCard>
 
+          {/* Eje Part-66 completo (licencias + habilitaciones + peticion de
+              catalogo). Solo para tipos que certifican: un chapista, pintor o
+              tecnico de composite no tiene ninguna de las tres cosas, y
+              enseñarle secciones que nunca podra rellenar era pedirle datos
+              que no existen. Ver isLicensedTechnicianType. */}
+          {holdsPart66Qualifications && (
+          <>
           <SectionTitle title="Licenses" subtitle="Select all EASA Part-66 categories you hold." />
           <TechnicianCard style={styles.sectionCard}>
             <View style={styles.chipRow}>
@@ -1070,6 +1078,8 @@ export default function TechnicianProfileScreen() {
                 />
               )}
             </TechnicianCard>
+          )}
+          </>
           )}
 
           {/* La seccion "Specialties" se retiro el 2026-07-29: no existe ni

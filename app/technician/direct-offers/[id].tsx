@@ -34,7 +34,7 @@ import { companyRepositoryV2 } from '../../../src/repositories/v2/companyReposit
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch, getMatchScoreWeights } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchScoreWeights, getMatchDisplayLabel } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
@@ -275,7 +275,13 @@ export default function DirectOfferDetailScreen() {
 
         {visibleOffer && (
           <TechnicianCard style={styles.section}>
-            {score && <InlineScore score={score.total} quality={score.label} context="match with your profile" />}
+            {score && (
+              <InlineScore
+                score={score.total}
+                quality={getMatchDisplayLabel(visibleOffer, score)}
+                context="match with your profile"
+              />
+            )}
             <Text style={styles.offerTitle}>{visibleOffer.title}</Text>
             <Text style={styles.offerLocation}>
               {visibleOffer.locationCity}, {visibleOffer.locationCountry}
@@ -313,7 +319,11 @@ export default function DirectOfferDetailScreen() {
                 <BreakdownRow label="License" value={score.breakdown.license} max={weights?.license ?? 0} accent={accent} />
                 <BreakdownRow label="Contract fit" value={score.breakdown.contractFit} max={weights?.contractFit ?? 0} accent={accent} />
                 <BreakdownRow label="Location" value={score.breakdown.location} max={weights?.location ?? 0} accent={accent} />
-                <MatchExplanation score={score} hideBreakdown />
+                <MatchExplanation
+                  score={score}
+                  hideBreakdown
+                  displayLabel={visibleOffer ? getMatchDisplayLabel(visibleOffer, score) : undefined}
+                />
               </View>
             )}
           </TechnicianCard>

@@ -21,9 +21,9 @@ export default function CompanyRequestsLegacy() {
       <View style={styles.wrap}>
         <CompanyCard style={styles.card}>
           <CompanyPageHeader
-            eyebrow="Legacy route"
-            title="Requests moved"
-            subtitle="Incoming applications and direct offer responses now live in dedicated company workspaces."
+            eyebrow="Requests"
+            title="Where to find your requests"
+            subtitle="Incoming applications and direct offer responses each have their own workspace."
             onBack={() => router.back()}
           />
 

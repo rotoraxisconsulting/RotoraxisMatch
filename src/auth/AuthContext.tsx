@@ -75,6 +75,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             p_birth_date: meta.birth_date ?? '',
             p_technician_type: meta.technician_type ?? '',
             p_location_city_id: meta.location_city_id ?? '',
+            // `?? null` rather than `?? 0`: an account created before the
+            // signup form asked for this has no value in its metadata, and
+            // NULL means "not declared" — which never penalizes the
+            // technician. Defaulting to 0 would invent a declaration of "no
+            // experience" and get them filtered out of every offer with a
+            // minimum. The signup form makes this required for new accounts;
+            // this branch only runs for metadata written before that.
+            p_years_experience: meta.years_experience ?? null,
           });
         }
       } else if (role === 'company_user') {

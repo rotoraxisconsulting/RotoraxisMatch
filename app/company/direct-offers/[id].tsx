@@ -44,7 +44,7 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { technicianRepositoryV2 } from '../../../src/repositories/v2/technicianRepositoryV2';
 import { chatRepository } from '../../../src/repositories/v2/chatRepository';
 import { activityRepository } from '../../../src/repositories/v2/activityRepository';
-import { calculateOfferTechnicianMatch } from '../../../src/utils/matchingV2';
+import { calculateOfferTechnicianMatch, getMatchDisplayLabel } from '../../../src/utils/matchingV2';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { isUnlocked, TechnicianView } from '../../../src/types/privacy';
 import { getDocumentSignedUrl, openDocumentPreWindow, openDocumentUrl } from '../../../src/lib/documentStorage';
@@ -284,10 +284,10 @@ export default function DirectOfferDetailScreen() {
               </Text>
             </View>
           </View>
-          {score ? (
+          {score && offer ? (
             <>
-              <InlineScore score={score.total} quality={score.label} context="match for this offer" />
-              <MatchExplanation score={score} />
+              <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match for this offer" />
+              <MatchExplanation score={score} displayLabel={getMatchDisplayLabel(offer, score)} />
             </>
           ) : null}
           {req.message ? (

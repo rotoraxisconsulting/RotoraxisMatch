@@ -49,7 +49,7 @@ const SLIDES = [
     title: 'Web, Android and iOS',
     subtitle: null,
     description:
-      'A cross-platform marketplace prepared for Supabase authentication, database and document storage.',
+      'One account across every device, with secure sign-in and encrypted document storage.',
   },
 ] as const;
 

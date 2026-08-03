@@ -297,7 +297,7 @@ export default function TechnicianDashboard() {
 
           <View style={styles.mainColumn}>
             <View style={styles.panel}>
-              <SectionTitle label="Overview" value="Live counts" />
+              <SectionTitle label="Overview" />
               <View style={styles.metricsGrid}>
                 {metrics.map((metric) => (
                   <MetricTile
@@ -352,7 +352,7 @@ export default function TechnicianDashboard() {
                         </Text>
                       </View>
                       <View style={styles.matchRowRight}>
-                        <MatchBadge score={score.total} />
+                        <MatchBadge score={score.total} notEligible={score.blockers.length > 0} />
                         <Text style={styles.matchRowArrow}>{'>'}</Text>
                       </View>
                     </TouchableOpacity>
