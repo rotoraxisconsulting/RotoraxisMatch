@@ -182,6 +182,12 @@ export default function TechnicianDashboard() {
       // Fase 5.4 — techSession es `LocalTechnicianSession | null`.
       const techId = techSession?.technicianId;
       if (!techId) return;
+      // Señal de cancelacion: sin ella, dos cargas en vuelo escriben las dos y
+      // gana la que termine la ultima. getOfferMatchesForTechnician() carga y
+      // espera su propio catalogo de ratings, asi que aqui el score nunca sale
+      // de un indice vacio — pero la escritura si tiene que descartarse al
+      // salir de la pantalla.
+      const signal = { active: true };
       Promise.all([
         supabase.from('documents').select('id', { count: 'exact', head: true }).eq('technician_id', techId),
         supabase.from('offer_requests').select('id', { count: 'exact', head: true }).eq('technician_id', techId).eq('status', 'pending'),
@@ -192,6 +198,7 @@ export default function TechnicianDashboard() {
         activityRepository.getUnreadCount('technician', techId, ['chat_message_received']),
         getOfferMatchesForTechnician(techId),
       ]).then(([docs, reqs, apps, chats, unreadOffers, unreadApps, unreadChatCount, matches]) => {
+        if (!signal.active) return;
         setDocumentCount(docs.count ?? 0);
         setPendingDirectOffers(reqs.count ?? 0);
         setPendingApplications(apps.count ?? 0);
@@ -201,6 +208,7 @@ export default function TechnicianDashboard() {
         setUnreadApplications(unreadApps as number);
         setUnreadChats(unreadChatCount as number);
       });
+      return () => { signal.active = false; };
     }, [profile?.id, techSession?.technicianId]),
   );
 

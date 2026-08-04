@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -117,9 +117,14 @@ export default function ApplicationDetailScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [viewingDocId, setViewingDocId] = useState<string | null>(null);
 
-  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+  // El catalogo de ratings llega asincrono: en el primer render ratingIndex
+  // esta VACIO, y con el vacio areRatingsRelated() siempre da false, la
+  // habilitacion puntua 0 y ZERO_QUALIFICATION_CAP deja el total en 39 en vez
+  // del real. Por eso no se puntua hasta state === 'success': un score
+  // erroneo es peor que ningun score.
+  const { ratingIndex, state: catalogState } = useAircraftTypeRatingsCatalog();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: { active: boolean }) => {
     // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
     // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
     // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
@@ -128,6 +133,7 @@ export default function ApplicationDetailScreen() {
     if (!id) return;
     const application = await offerApplicationRepository.getById(id);
     if (!application) return;
+    if (!signal.active) return;
     setApp(application);
 
     const [o, view, rel] = await Promise.all([
@@ -136,26 +142,38 @@ export default function ApplicationDetailScreen() {
       technicianRepositoryV2.getWithRelations(application.technicianId),
     ]);
 
+    if (!signal.active) return;
     setOffer(o);
     setTechView(view);
-    if (o && rel) setScore(calculateOfferTechnicianMatch(o, rel, ratingIndex));
+    if (catalogState === 'success' && o && rel) {
+      setScore(calculateOfferTechnicianMatch(o, rel, ratingIndex));
+    }
 
     if (application.status === 'accepted') {
       const rooms = await chatRepository.getRoomsForCompany(companyId);
+      if (!signal.active) return;
       setChatRoom(rooms.find((r) => r.offerApplicationId === application.id) ?? null);
     } else {
       setChatRoom(null);
     }
 
     await activityRepository.markRead('company', companyId, id);
-  }, [companyId, id, ratingIndex]);
+  }, [companyId, id, ratingIndex, catalogState]);
+
+  // Señal de cancelacion compartida por el efecto de foco y el pull-to-refresh.
+  // load() la comprueba ANTES de cada setState, no solo en el .finally: cuando
+  // llega el catalogo, `load` cambia de identidad y el efecto relanza; sin esta
+  // señal habria dos load() en vuelo (uno con el indice vacio, otro lleno) y
+  // ganaria el que terminase el ultimo, de forma no determinista.
+  const loadSignal = useRef<{ active: boolean }>({ active: false });
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
+      const signal = { active: true };
+      loadSignal.current = signal;
       setLoading(true);
-      load().finally(() => { if (active) setLoading(false); });
-      return () => { active = false; };
+      load(signal).finally(() => { if (signal.active) setLoading(false); });
+      return () => { signal.active = false; };
     }, [load]),
   );
 
@@ -165,7 +183,7 @@ export default function ApplicationDetailScreen() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await load();
+    await load(loadSignal.current);
     setRefreshing(false);
   }
 
@@ -210,7 +228,7 @@ export default function ApplicationDetailScreen() {
         setActionError('Could not update application status. Please try again.');
         return;
       }
-      await load();
+      await load(loadSignal.current);
     } catch (e: any) {
       setActionError(e?.message ?? 'An error occurred. Please try again.');
     } finally {
@@ -218,7 +236,10 @@ export default function ApplicationDetailScreen() {
     }
   }
 
-  if (loading) {
+  // Mismo gate que app/technician/offers/index.tsx: mientras el catalogo
+  // carga no se pinta nada, para no enseñar el bloque Match con un score
+  // calculado sobre un indice vacio ni un UUID crudo como nombre de rating.
+  if (loading || catalogState === 'loading') {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />

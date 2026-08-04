@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -164,7 +164,13 @@ export default function OfferDetailScreen() {
   const companyId = companySession?.companyId;
   const companyMemberRole = companySession?.companyMemberRole;
   const { sessionLoading } = useSession();
-  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+  // El score de esta pantalla lo calcula getTechnicianMatchesForOffer(), que
+  // carga y espera su propio catalogo, asi que nunca sale de un indice vacio.
+  // El ratingIndex del hook alimenta solo las ETIQUETAS de los ratings
+  // (getAircraftTypeRatingLabel / resolveTypeRatingLabels), y esas si caen al
+  // fallback y pintan el UUID crudo con el indice a medio cargar — de ahi el
+  // gate de abajo.
+  const { ratingIndex, state: catalogState } = useAircraftTypeRatingsCatalog();
 
   const [offer, setOffer] = useState<OfferWithRequirements | null>(null);
   const [matches, setMatches] = useState<TechnicianMatchResult[]>([]);
@@ -179,7 +185,7 @@ export default function OfferDetailScreen() {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: { active: boolean }) => {
     // companyId hydrates asynchronously in SessionContext, independently of
     // the auth guard CompanyLayout already waits for — reading it before
     // that fetch resolves (e.g. a fresh page load straight into this
@@ -191,35 +197,43 @@ export default function OfferDetailScreen() {
       offerRequestRepository.getForCompany(companyId),
       offerApplicationRepository.getForOffer(id),
     ]);
+    if (!signal.active) return;
     setOffer(o);
     setExistingRequests(reqs.filter((r) => r.offerId === id));
     setApplications(apps);
   }, [companyId, id]);
 
-  const loadMatches = useCallback(async () => {
+  const loadMatches = useCallback(async (signal: { active: boolean }) => {
     if (!id) return;
     setLoadingMatches(true);
     const results = await getTechnicianMatchesForOffer(id);
+    if (!signal.active) return;
     setMatches(results);
     setLoadingMatches(false);
   }, [id]);
 
+  // Señal de cancelacion compartida por el efecto de foco y el pull-to-refresh:
+  // load()/loadMatches() la comprueban ANTES de cada setState, no solo en el
+  // .then/.finally, para que una carga vieja no pise los resultados de la nueva.
+  const loadSignal = useRef<{ active: boolean }>({ active: false });
+
   useFocusEffect(
     useCallback(() => {
       if (!companyId) return;
-      let active = true;
+      const signal = { active: true };
+      loadSignal.current = signal;
       setLoading(true);
-      load()
-        .then(() => { if (active) loadMatches(); })
-        .finally(() => { if (active) setLoading(false); });
-      return () => { active = false; };
+      load(signal)
+        .then(() => { if (signal.active) loadMatches(signal); })
+        .finally(() => { if (signal.active) setLoading(false); });
+      return () => { signal.active = false; };
     }, [load, loadMatches, companyId]),
   );
 
   async function handleRefresh() {
     setRefreshing(true);
-    await load();
-    await loadMatches();
+    await load(loadSignal.current);
+    await loadMatches(loadSignal.current);
     setRefreshing(false);
   }
 
@@ -410,7 +424,10 @@ export default function OfferDetailScreen() {
 
   const weights = useMemo(() => (offer ? getMatchScoreWeights(offer) : null), [offer]);
 
-  if (loading || sessionLoading) {
+  // Mismo gate que app/technician/offers/index.tsx: mientras el catalogo
+  // carga no se pinta nada, para no enseñar los ratings requeridos como UUID
+  // crudo antes de que llegue el catalogo.
+  if (loading || sessionLoading || catalogState === 'loading') {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />

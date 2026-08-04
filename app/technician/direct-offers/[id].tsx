@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -108,9 +108,14 @@ export default function DirectOfferDetailScreen() {
   const [confirmAction, setConfirmAction] = useState<'accept' | 'reject' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+  // El catalogo de ratings llega asincrono: en el primer render ratingIndex
+  // esta VACIO, y con el vacio areRatingsRelated() siempre da false, la
+  // habilitacion puntua 0 y ZERO_QUALIFICATION_CAP deja el total en 39 en vez
+  // del real. Por eso no se puntua hasta state === 'success': un score
+  // erroneo es peor que ningun score.
+  const { ratingIndex, state: catalogState } = useAircraftTypeRatingsCatalog();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: { active: boolean }) => {
     // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
     // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
     // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
@@ -119,6 +124,7 @@ export default function DirectOfferDetailScreen() {
     if (!id) return;
     const req = await offerRequestRepository.getById(id);
     if (!req) return;
+    if (!signal.active) return;
     setRequest(req);
 
     const [co, off, techWithRelations] = await Promise.all([
@@ -127,12 +133,13 @@ export default function DirectOfferDetailScreen() {
       technicianRepositoryV2.getWithRelations(technicianId),
     ]);
 
+    if (!signal.active) return;
     setCompany(co);
     setOffer(off);
 
     // Compute score when offer is active, or when the direct offer is accepted (historical context).
     const offerActive = isOfferOpenForTechnicians(off);
-    if (off && (offerActive || req.status === 'accepted') && techWithRelations) {
+    if (catalogState === 'success' && off && (offerActive || req.status === 'accepted') && techWithRelations) {
       setScore(calculateOfferTechnicianMatch(off, techWithRelations, ratingIndex));
     } else {
       setScore(null);
@@ -140,23 +147,32 @@ export default function DirectOfferDetailScreen() {
 
     if (req.status === 'accepted') {
       const rooms = await chatRepository.getRoomsForTechnician(technicianId);
+      if (!signal.active) return;
       setChatRoom(rooms.find((r) => r.offerRequestId === id) ?? null);
     } else {
       setChatRoom(null);
     }
 
     await activityRepository.markRead('technician', technicianId, id);
-  }, [id, technicianId, ratingIndex]);
+  }, [id, technicianId, ratingIndex, catalogState]);
+
+  // Señal de cancelacion compartida por el efecto de foco y el pull-to-refresh.
+  // load() la comprueba ANTES de cada setState, no solo en el .finally: cuando
+  // llega el catalogo, `load` cambia de identidad y el efecto relanza; sin esta
+  // señal habria dos load() en vuelo (uno con el indice vacio, otro lleno) y
+  // ganaria el que terminase el ultimo, de forma no determinista.
+  const loadSignal = useRef<{ active: boolean }>({ active: false });
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
+      const signal = { active: true };
+      loadSignal.current = signal;
       setLoading(true);
-      load().finally(() => {
-        if (active) setLoading(false);
+      load(signal).finally(() => {
+        if (signal.active) setLoading(false);
       });
       return () => {
-        active = false;
+        signal.active = false;
       };
     }, [load]),
   );
@@ -167,7 +183,7 @@ export default function DirectOfferDetailScreen() {
 
   async function handleRefresh() {
     setRefreshing(true);
-    await load();
+    await load(loadSignal.current);
     setRefreshing(false);
   }
 
@@ -198,7 +214,7 @@ export default function DirectOfferDetailScreen() {
         setActionError('Could not update offer status. Please try again.');
         return;
       }
-      await load();
+      await load(loadSignal.current);
     } catch (e: any) {
       setActionError(e?.message ?? 'An error occurred. Please try again.');
     } finally {
@@ -206,7 +222,10 @@ export default function DirectOfferDetailScreen() {
     }
   }
 
-  if (loading) {
+  // Mismo gate que app/technician/offers/index.tsx: mientras el catalogo
+  // carga no se pinta nada, para no enseñar el bloque Match con un score
+  // calculado sobre un indice vacio ni un UUID crudo como nombre de rating.
+  if (loading || catalogState === 'loading') {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
@@ -296,12 +315,10 @@ export default function DirectOfferDetailScreen() {
 
             {(visibleOffer.requiredTechnicianTypes.length > 0 ||
               visibleOffer.requiredLicenses.length > 0 ||
-              visibleOffer.requiredAircraftTypes.length > 0 ||
               visibleOffer.requiredHabilitations.length > 0) && (
               <View style={styles.reqBlock}>
                 {visibleOffer.requiredTechnicianTypes.length > 0 && <ReqRow label="Types" items={visibleOffer.requiredTechnicianTypes} />}
                 {visibleOffer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={visibleOffer.requiredLicenses} />}
-                {visibleOffer.requiredAircraftTypes.length > 0 && <ReqRow label="Aircraft types" items={visibleOffer.requiredAircraftTypes} />}
                 {visibleOffer.requiredHabilitations.length > 0 && (
                   <ReqRow
                     label="Type rating requirements"

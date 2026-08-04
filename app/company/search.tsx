@@ -108,7 +108,12 @@ export default function TechnicianSearchScreen() {
   const isWide = width >= 960;
   const { results, filters, loading, hasSearched, updateFilter, clearFilters, search } =
     useTechnicianSearch();
-  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+  // El catalogo de ratings llega asincrono: en el primer render ratingIndex
+  // esta VACIO, y con el vacio areRatingsRelated() siempre da false, la
+  // habilitacion puntua 0 y ZERO_QUALIFICATION_CAP deja el total en 39 en vez
+  // del real. Por eso no se puntua hasta state === 'success': un score
+  // erroneo es peor que ningun score.
+  const { ratingIndex, state: catalogState } = useAircraftTypeRatingsCatalog();
   const companySession = useCompanySession();
   const companyId = companySession?.companyId;
   const companyMemberRole = companySession?.companyMemberRole;
@@ -193,7 +198,7 @@ export default function TechnicianSearchScreen() {
       });
 
       const nextScores: ScoreMap = {};
-      if (selectedOffer) {
+      if (selectedOffer && catalogState === 'success') {
         const scoreEntries = await Promise.all(
           results.map(async (tech) => {
             const full = await technicianRepositoryV2.getWithRelations(tech.id);
@@ -215,7 +220,7 @@ export default function TechnicianSearchScreen() {
     return () => {
       active = false;
     };
-  }, [results, selectedOffer, ratingIndex]);
+  }, [results, selectedOffer, ratingIndex, catalogState]);
 
   async function handleSearch() {
     await search();

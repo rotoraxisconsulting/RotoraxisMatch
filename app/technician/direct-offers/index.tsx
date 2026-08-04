@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -91,9 +91,14 @@ export default function DirectOffersListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const { ratingIndex } = useAircraftTypeRatingsCatalog();
+  // El catalogo de ratings llega asincrono: en el primer render ratingIndex
+  // esta VACIO, y con el vacio areRatingsRelated() siempre da false, la
+  // habilitacion puntua 0 y ZERO_QUALIFICATION_CAP deja el total en 39 en vez
+  // del real. Por eso no se puntua hasta state === 'success': un score
+  // erroneo es peor que ningun score.
+  const { ratingIndex, state: catalogState } = useAircraftTypeRatingsCatalog();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: { active: boolean }) => {
     // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
     // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
     // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
@@ -112,7 +117,7 @@ export default function DirectOffersListScreen() {
         ]);
 
         let score: MatchScore | null = null;
-        if (offer && techWithRelations) {
+        if (catalogState === 'success' && offer && techWithRelations) {
           score = calculateOfferTechnicianMatch(offer, techWithRelations, ratingIndex);
         }
 
@@ -142,30 +147,42 @@ export default function DirectOffersListScreen() {
       return b.request.createdAt.localeCompare(a.request.createdAt);
     });
 
+    if (!signal.active) return;
     setUnreadIds(ids);
     setEntries(built);
-  }, [technicianId, ratingIndex]);
+  }, [technicianId, ratingIndex, catalogState]);
+
+  // Señal de cancelacion compartida por el efecto de foco y el pull-to-refresh.
+  // load() la comprueba ANTES de cada setState, no solo en el .finally: cuando
+  // llega el catalogo, `load` cambia de identidad y el efecto relanza; sin esta
+  // señal habria dos load() en vuelo (uno con el indice vacio, otro lleno) y
+  // ganaria el que terminase el ultimo, de forma no determinista.
+  const loadSignal = useRef<{ active: boolean }>({ active: false });
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
+      const signal = { active: true };
+      loadSignal.current = signal;
       setLoading(true);
-      load().finally(() => {
-        if (active) setLoading(false);
+      load(signal).finally(() => {
+        if (signal.active) setLoading(false);
       });
       return () => {
-        active = false;
+        signal.active = false;
       };
     }, [load]),
   );
 
   async function handleRefresh() {
     setRefreshing(true);
-    await load();
+    await load(loadSignal.current);
     setRefreshing(false);
   }
 
-  if (loading) {
+  // Mismo gate que app/technician/offers/index.tsx: mientras el catalogo
+  // carga no se pinta nada, para no enseñar un "% match" calculado sobre un
+  // indice vacio.
+  if (loading || catalogState === 'loading') {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />

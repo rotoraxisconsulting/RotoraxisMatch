@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -115,9 +115,15 @@ export default function OfferDetailScreen() {
   const [coverNote, setCoverNote] = useState('');
   const [applying, setApplying] = useState(false);
 
-  const { ratingIndex, ratings } = useAircraftTypeRatingsCatalog();
+  // El catalogo de ratings llega asincrono: en el primer render ratingIndex
+  // esta VACIO, y con el vacio areRatingsRelated() siempre da false, la
+  // habilitacion puntua 0 y ZERO_QUALIFICATION_CAP deja el total en 39 en vez
+  // del real (ademas getAircraftTypeRatingLabel() cae al fallback y pinta el
+  // UUID). Por eso no se puntua hasta state === 'success': un score erroneo
+  // es peor que ningun score.
+  const { ratingIndex, ratings, state: catalogState } = useAircraftTypeRatingsCatalog();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: { active: boolean }) => {
     // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
     // vacio. El .finally(setLoading(false)) del efecto apaga el spinner, asi
     // que la pantalla cae en su estado vacio en vez de colgarse o crashear.
@@ -125,6 +131,7 @@ export default function OfferDetailScreen() {
 
     if (!id) return;
     const o = await offerRepository.getWithRequirements(id);
+    if (!signal.active) return;
     // Do not abort for closed/expired offers — they may have existing applications that need to be shown as history.
     if (!o) {
       setOffer(null);
@@ -144,9 +151,10 @@ export default function OfferDetailScreen() {
       offerRequestRepository.getForTechnician(technicianId),
     ]);
 
+    if (!signal.active) return;
     setCompany(c);
 
-    if (techWithRelations) {
+    if (catalogState === 'success' && techWithRelations) {
       const matchScore = calculateOfferTechnicianMatch(o, techWithRelations, ratingIndex);
       setScore(matchScore);
     }
@@ -161,18 +169,27 @@ export default function OfferDetailScreen() {
 
     if (app && app.status === 'accepted') {
       const rooms = await chatRepository.getRoomsForTechnician(technicianId);
+      if (!signal.active) return;
       setChatRoom(rooms.find((r) => r.offerApplicationId === app.id) ?? null);
     } else {
       setChatRoom(null);
     }
-  }, [id, technicianId, ratingIndex]);
+  }, [id, technicianId, ratingIndex, catalogState]);
+
+  // Señal de cancelacion compartida por el efecto de foco y las acciones que
+  // recargan. load() la comprueba ANTES de cada setState, no solo en el
+  // .finally: cuando llega el catalogo, `load` cambia de identidad y el efecto
+  // relanza; sin esta señal habria dos load() en vuelo (uno con el indice
+  // vacio, otro lleno) y ganaria el que terminase el ultimo, no determinista.
+  const loadSignal = useRef<{ active: boolean }>({ active: false });
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
+      const signal = { active: true };
+      loadSignal.current = signal;
       setLoading(true);
-      load().finally(() => { if (active) setLoading(false); });
-      return () => { active = false; };
+      load(signal).finally(() => { if (signal.active) setLoading(false); });
+      return () => { signal.active = false; };
     }, [load]),
   );
 
@@ -221,13 +238,16 @@ export default function OfferDetailScreen() {
     if (!confirmed) return;
     try {
       await offerApplicationRepository.withdraw(existingApp.id, technicianId);
-      await load();
+      await load(loadSignal.current);
     } catch (e: any) {
       notify('Error', e?.message ?? 'Could not withdraw.');
     }
   }
 
-  if (loading) {
+  // Mismo gate que app/technician/offers/index.tsx: mientras el catalogo
+  // carga no se pinta nada, para no enseñar el bloque Match con un score
+  // calculado sobre un indice vacio ni un UUID crudo como nombre de rating.
+  if (loading || catalogState === 'loading') {
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
