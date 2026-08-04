@@ -37,9 +37,6 @@ import {
 } from '../../src/components/admin/AdminUI';
 import type { AdminTone } from '../../src/components/admin/AdminUI';
 import { spacing } from '../../src/theme';
-import { useAircraftTypeRatingsCatalog } from '../../src/state/useAircraftTypeRatingsCatalog';
-import { resolveFamilyKeyLabels } from '../../src/constants/aircraftTypeRatingViews';
-import type { AircraftTypeRatingCatalog } from '../../src/types/catalog';
 
 type StatusFilter = 'all' | OfferStatus;
 
@@ -129,7 +126,6 @@ function formatDate(value: string): string {
 export default function AdminOffersScreen() {
   const router = useRouter();
   const { offers, loading, refresh, updateOfferStatus, companyMap } = useAdminDashboard();
-  const { ratings } = useAircraftTypeRatingsCatalog();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
@@ -210,7 +206,6 @@ export default function AdminOffersScreen() {
           <OfferCard
             offer={item}
             companyName={companyMap[item.companyId]?.companyName ?? item.companyId}
-            ratings={ratings}
             onAction={handleAction}
           />
         )}
@@ -222,12 +217,10 @@ export default function AdminOffersScreen() {
 function OfferCard({
   offer,
   companyName,
-  ratings,
   onAction,
 }: {
   offer: OfferWithRequirements;
   companyName: string;
-  ratings: AircraftTypeRatingCatalog[];
   onAction: (offerId: string, status: OfferStatus) => Promise<void>;
 }) {
   const [loadingStatus, setLoadingStatus] = useState<OfferStatus | null>(null);
@@ -235,8 +228,6 @@ function OfferCard({
   const requirementChips = [
     ...offer.requiredTechnicianTypes.map(technicianTypeLabel),
     ...offer.requiredLicenses,
-    // Nunca la family key cruda — identificador interno. Ver resolveFamilyKeyLabels().
-    ...resolveFamilyKeyLabels(ratings, offer.requiredAircraftTypes),
     `${offer.minYearsExperience}+ years`,
   ];
 

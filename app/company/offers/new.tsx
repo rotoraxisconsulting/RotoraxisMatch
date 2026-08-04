@@ -23,7 +23,7 @@ import {
   companyUi,
 } from '../../../src/components/company/CompanyUI';
 import { TypeRatingRequirementsEditor, ExactHabilitationRow } from '../../../src/components/company/TypeRatingRequirementsEditor';
-import { ApproximateFilterSection } from '../../../src/components/company/ApproximateFilterSection';
+import { RequiredLicensesSection } from '../../../src/components/company/RequiredLicensesSection';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../../src/constants/technicianTypes';
@@ -45,7 +45,6 @@ interface FormState {
   minYearsExperience: number;
   requiredTechnicianTypes: TechnicianTypeCode[];
   requiredLicenses: LicenseCode[];
-  requiredAircraftTypes: string[];
   requiredHabilitations: ExactHabilitationRow[];
 }
 
@@ -78,7 +77,6 @@ export default function NewOfferScreen() {
     minYearsExperience: 0,
     requiredTechnicianTypes: [],
     requiredLicenses: [],
-    requiredAircraftTypes: [],
     requiredHabilitations: [],
   });
   const [saving, setSaving] = useState(false);
@@ -95,7 +93,7 @@ export default function NewOfferScreen() {
       current: form.requiredTechnicianTypes,
       code,
       part66RequirementCount:
-        form.requiredHabilitations.length + form.requiredLicenses.length + form.requiredAircraftTypes.length,
+        form.requiredHabilitations.length + form.requiredLicenses.length,
     });
     if (error) {
       notify('Technician types', error);
@@ -133,7 +131,6 @@ export default function NewOfferScreen() {
         status,
         requiredTechnicianTypes: form.requiredTechnicianTypes,
         requiredLicenses: form.requiredLicenses,
-        requiredAircraftTypes: form.requiredAircraftTypes,
         requiredHabilitations: form.requiredHabilitations,
       });
       router.back();
@@ -278,11 +275,9 @@ export default function NewOfferScreen() {
         </ChoiceSection>
 
         {targetsLicensedProfiles && (
-          <ApproximateFilterSection
+          <RequiredLicensesSection
             requiredLicenses={form.requiredLicenses}
             onChangeLicenses={(next) => set('requiredLicenses', next)}
-            requiredAircraftTypes={form.requiredAircraftTypes}
-            onChangeAircraftTypes={(next) => set('requiredAircraftTypes', next)}
             hasExactRequirements={form.requiredHabilitations.length > 0}
           />
         )}

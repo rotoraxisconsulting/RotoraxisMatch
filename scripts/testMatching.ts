@@ -94,7 +94,6 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     updatedAt: '2026-01-01T00:00:00.000Z',
     requiredTechnicianTypes: [],
     requiredLicenses: [],
-    requiredAircraftTypes: [],
     requiredHabilitations: [],
     ...overrides,
   };
@@ -327,68 +326,17 @@ async function main() {
     }
   });
 
-  // requiredAircraftTypes holds family keys since migration 022 (2026-07-22)
-  // — "<manufacturer>::<aircraftFamily>" from aircraft_type_ratings, never a
-  // bare legacy code. 'A320' resolves (inclusively) to this one family in
-  // the fixture catalog.
-  const A320_FAMILY_KEY = 'Airbus::A318/A319/A320/A321';
-
-  await test('Matching — Case 5: legacy broad requirement does not combine independent license/aircraft rows', () => {
-    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const technician = makeTechnician({
-      licenses: [makeLicense('B1.1')],
-      // A320 habilitation exists, but only under B2 — never under B1.1.
-      habilitations: [makeHab('B2', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
-    });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.notEqual(result.level, 'legacy', 'must not report a full legacy match from two unrelated rows');
-    assert.equal(result.breakdown.habilitation, 0);
-    assert.equal(result.breakdown.license, 0);
-  });
-
-  await test('Matching — Case 5b: broad aircraft requirement matches a technician holding a different engine variant in the same family', () => {
-    // Migration 022's whole point: ONE family-key selection covers every
-    // engine variant in that family, not just the specific alias string a
-    // company happened to type.
-    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const technician = makeTechnician({
-      licenses: [makeLicense('B1.1')],
-      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
-    });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.equal(result.level, 'legacy', 'a V2500-variant A320-family rating must satisfy an A320-family broad requirement');
-  });
-
-  await test('Matching — Case 5c: a habilitation with no rating id contributes nothing to a broad aircraft requirement', () => {
-    // Fase 5.3 (2026-07-28): this case used to assert the opposite — that a
-    // bare legacy aircraftTypeCode resolved inclusively to the family and
-    // satisfied the requirement. That path is gone with the aircraft_types
-    // catalog. A row without a rating id now names no aircraft at all, so
-    // the requirement is simply unmet. Kept (rather than deleted) as the
-    // explicit regression guard against re-introducing code-based
-    // resolution through some other door.
-    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const technician = makeTechnician({
-      licenses: [makeLicense('B1.1')],
-      habilitations: [makeHab('B1.1')],
-    });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.notEqual(result.level, 'legacy', 'a rating-less habilitation cannot satisfy an aircraft requirement');
-    assert.equal(result.breakdown.habilitation, 0);
-  });
-
-  await test('Matching — Case 5d: sin habilitaciones no hay forma de satisfacer un requisito de aeronave', () => {
-    // Este caso probaba que technician_aircraft_experience no podia satisfacer
-    // un requisito de familia. Esa tabla ya no existe (migracion 031), asi que
-    // la unica fuente posible son las habilitaciones. Se conserva como guarda
-    // de regresion: sin habilitaciones, un requisito de aeronave NUNCA se da
-    // por satisfecho por ninguna otra via.
-    const offer = makeOffer({ requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const technician = makeTechnician({ habilitations: [] });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.notEqual(result.level, 'legacy', 'sin habilitaciones no puede resolverse ninguna familia');
-    assert.equal(result.breakdown.habilitation, 0);
-  });
+  // Fase 5 (2026-08-04) — Cases 5, 5b, 5c and 5d lived here and are gone with
+  // offer.requiredAircraftTypes (the approximate by-family requirement). All
+  // four exercised evaluateLegacyBroadMatch's two aircraft-bearing branches,
+  // which no longer exist: an offer cannot state an aircraft requirement
+  // approximately anymore, only exactly as a license+rating pair.
+  //
+  // The same-row invariant Case 5 guarded (a license and an aircraft only
+  // count when held in the SAME technician_habilitations row — see CLAUDE.md)
+  // is NOT left uncovered: it now lives exclusively in the exact path, where
+  // "Matching — Case 2: no false combination across categories" above asserts
+  // exactly that, and Case 5b's family-vs-engine coverage is Case 3's job.
 
   await test('Matching — Case 6: preferred requirement mismatch stays related, never excluded', () => {
     const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
@@ -624,40 +572,45 @@ async function main() {
     assert.equal(result.label, 'Excellent match');
   });
 
-  await test('Fase 5.3 — broad match with a confirmed aircraft row scores at the T2 fraction, never full credit', () => {
-    const offer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const technician = makeTechnician({
-      licenses: [makeLicense('B1.1')],
-      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
-    });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.equal(result.level, 'legacy');
-    assert.equal(result.breakdown.habilitation, 26, 'round(45 * 0.57) — same fraction as T2, not the full 45');
-    assert.equal(result.breakdown.license, 20);
-    assert.ok(
-      result.clarifications.includes('Approximate requirement — engine not specified.'),
-      'the reduced score must be explained, not appear as an unexplained number',
-    );
-  });
+  // Fase 5 (2026-08-04) — the sibling test that asserted the
+  // 'legacy_aircraft_confirmed' tier scored 26 (round(45 * 0.57)) is gone with
+  // that tier: it could only ever be reached through requiredAircraftTypes.
+  // 0.29 below and BROAD_ONLY_CAP are deliberately unchanged.
 
-  await test('Fase 5.3 — a license-only broad requirement (no aircraft asked for) scores lower than one with a confirmed aircraft, with its own clarification', () => {
+  await test('Fase 5 — a license-only requirement scores at the category fraction, with its own clarification', () => {
     const licenseOnlyOffer = makeOffer({ requiredLicenses: ['B1.1'] as any });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const licenseOnly = calculateOfferTechnicianMatch(licenseOnlyOffer, technician, RATING_INDEX);
+    assert.equal(licenseOnly.level, 'legacy');
     assert.equal(licenseOnly.breakdown.habilitation, 13, 'round(45 * 0.29) — BROAD_TIER_FRACTIONS.legacy_category_only');
+    assert.equal(licenseOnly.breakdown.license, 20);
     assert.ok(
       licenseOnly.clarifications.includes('Category-only match — no specific aircraft requirement to verify.'),
-      'the weaker sub-case must say why it is weaker',
+      'the reduced score must be explained, not appear as an unexplained number',
     );
+  });
 
-    const withAircraftOffer = makeOffer({ requiredLicenses: ['B1.1'] as any, requiredAircraftTypes: [A320_FAMILY_KEY] });
-    const withAircraft = calculateOfferTechnicianMatch(withAircraftOffer, technician, RATING_INDEX);
+  await test('Fase 5 — holding the category alone stays far below a confirmed exact rating for the same weight', () => {
+    // The ordering the mission's business principle demands, now that the
+    // approximate middle tier is gone: category-only (0.29) must never come
+    // close to an exact rating (1.0) on the habilitation axis.
+    const technician = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
+    });
+    const categoryOnly = calculateOfferTechnicianMatch(
+      makeOffer({ requiredLicenses: ['B1.1'] as any }), technician, RATING_INDEX,
+    );
+    const exact = calculateOfferTechnicianMatch(
+      makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] }), technician, RATING_INDEX,
+    );
+    assert.equal(exact.breakdown.habilitation, 45);
     assert.ok(
-      withAircraft.breakdown.habilitation > licenseOnly.breakdown.habilitation,
-      'confirming a real aircraft row must be worth more than holding the category alone',
+      exact.breakdown.habilitation > categoryOnly.breakdown.habilitation * 3,
+      `an exact rating must dominate a category-only match, got ${exact.breakdown.habilitation} vs ${categoryOnly.breakdown.habilitation}`,
     );
   });
 
@@ -666,7 +619,6 @@ async function main() {
       contractType: 'permanent',
       minYearsExperience: 1,
       requiredLicenses: ['B1.1'] as any,
-      requiredAircraftTypes: [A320_FAMILY_KEY],
     });
     const technician = makeTechnician({
       verificationStatus: 'verified',
@@ -678,7 +630,7 @@ async function main() {
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.ok(result.total <= 79, `a broad-only match must never reach Excellent, got ${result.total}`);
     assert.notEqual(result.label, 'Excellent match');
-    assert.ok(result.clarifications.includes('Approximate requirement — engine not specified.'));
+    assert.ok(result.clarifications.includes('Category-only match — no specific aircraft requirement to verify.'));
   });
 
   await test('Fase 5.3 — applyScoreCeilings: most restrictive ceiling always wins, in any combination', () => {
@@ -714,13 +666,16 @@ async function main() {
       contractType: 'permanent',
       minYearsExperience: 1,
       requiredLicenses: ['B1.1'] as any,
-      requiredAircraftTypes: [A320_FAMILY_KEY],
     });
     const technician = makeTechnician({
+      // Fase 5: the fixture used to hold B1.1 and fail on a separate aircraft
+      // requirement. With the aircraft half gone, holding B1.1 would now be a
+      // category match — so the technician holds a DIFFERENT category, which
+      // is what "cannot satisfy" has to mean for a license-only offer.
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      licenses: [makeLicense('B1.1')],
-      habilitations: [], // holds the license but no habilitation row at all
+      licenses: [makeLicense('B2')],
+      habilitations: [],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.breakdown.habilitation, 0);

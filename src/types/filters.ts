@@ -18,7 +18,6 @@ export interface TechnicianSearchFilters {
 export interface OfferSearchFilters {
   contractTypes?: ContractTypeCode[];
   requiredLicenses?: LicenseCode[];
-  requiredAircraftTypes?: string[];
   technicianTypes?: TechnicianTypeCode[];
   country?: string;
   city?: string;

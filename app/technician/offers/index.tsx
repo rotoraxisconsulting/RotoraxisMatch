@@ -32,7 +32,6 @@ import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { CompanyProfileView } from '../../../src/types/company';
 import { OfferApplication } from '../../../src/types/offerRequest';
 import { ContractTypeCode } from '../../../src/types/catalog';
-import { resolveAircraftCategoryForFamilyKeys, resolveFamilyKeyLabels, ApproximateAircraftCategory } from '../../../src/constants/aircraftTypeRatingViews';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 
 function formatPublishedDate(iso: string): string {
@@ -80,13 +79,21 @@ function appStatusInfo(status: string): { label: string; tone: 'success' | 'warn
 }
 
 type ContractFilter = ContractTypeCode | 'all';
-type AircraftCategoryFilter = ApproximateAircraftCategory | 'all';
 
-const AIRCRAFT_CAT_BADGE: Record<string, { label: string; tone: 'info' | 'warning' | 'muted' }> = {
-  airplane:   { label: 'Airplane',   tone: 'info' },
-  helicopter: { label: 'Helicopter', tone: 'info' },
-  mixed:      { label: 'Mixed',      tone: 'warning' },
-};
+// TODO (Fase 5, 2026-08-04) — RESTAURAR el filtro Airplane/Helicopter y el
+// badge de categoría en cada tarjeta de oferta.
+//
+// Ambos se derivaban de offer.requiredAircraftTypes (las family keys del
+// filtro aproximado) vía resolveAircraftCategoryForFamilyKeys(). Ese campo se
+// retiró con offer_required_aircraft_types, así que se quedaron sin fuente de
+// datos y se eliminan aquí — regresión aceptada y temporal, decidida
+// explícitamente.
+//
+// NO los re-derives de requiredHabilitations: la fuente correcta es
+// offers.product_type (NOT NULL, 'Aeroplane' | 'Helicopter', declarado por la
+// empresa), que añade la siguiente tarea. Un helper derivado ahora se
+// borraría al aplicarla. Cuando exista esa columna, el filtro vuelve a ser un
+// chip sobre offer.productType y el badge un TechnicianBadge con su label.
 
 export default function BrowseOffersScreen() {
   const router = useRouter();
@@ -94,7 +101,7 @@ export default function BrowseOffersScreen() {
   const technicianId = technicianSession?.technicianId;
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const { ratings, state: catalogState } = useAircraftTypeRatingsCatalog();
+  const { state: catalogState } = useAircraftTypeRatingsCatalog();
 
   const [matches, setMatches] = useState<OfferMatchResult[]>([]);
   const [companyMap, setCompanyMap] = useState<Record<string, CompanyProfileView>>({});
@@ -104,7 +111,6 @@ export default function BrowseOffersScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [contractFilter, setContractFilter] = useState<ContractFilter>('all');
-  const [aircraftCatFilter, setAircraftCatFilter] = useState<AircraftCategoryFilter>('all');
   const [searchText, setSearchText] = useState('');
 
   const load = useCallback(async () => {
@@ -161,12 +167,6 @@ export default function BrowseOffersScreen() {
   const filtered = matches
     .filter(({ offer }) => {
       if (contractFilter !== 'all' && offer.contractType !== contractFilter) return false;
-      if (aircraftCatFilter !== 'all') {
-        const cat = resolveAircraftCategoryForFamilyKeys(ratings, offer.requiredAircraftTypes);
-        if (cat === null) return false;
-        if (aircraftCatFilter === 'airplane' && cat === 'helicopter') return false;
-        if (aircraftCatFilter === 'helicopter' && cat === 'airplane') return false;
-      }
       if (searchText.trim()) {
         const q = searchText.trim().toLowerCase();
         const haystack = [offer.title, offer.locationCity, offer.locationCountry, offer.locationBaseAirport ?? '']
@@ -233,22 +233,6 @@ export default function BrowseOffersScreen() {
           ))}
         </ScrollView>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterRow}
-          contentContainerStyle={styles.filterContent}
-        >
-          {(['all', 'airplane', 'helicopter'] as AircraftCategoryFilter[]).map((f) => (
-            <TechnicianChip
-              key={f}
-              label={f === 'all' ? 'All aircraft' : f === 'airplane' ? 'Airplanes' : 'Helicopters'}
-              selected={aircraftCatFilter === f}
-              onPress={() => setAircraftCatFilter(f)}
-            />
-          ))}
-        </ScrollView>
-
         {filtered.length === 0 && (
           <EmptyPanel
             title="No offers found"
@@ -264,8 +248,6 @@ export default function BrowseOffersScreen() {
           const accent = scoreColor(score.total);
           const unread = isOfferUnread(offer.id);
           const status = appStatus ? appStatusInfo(appStatus) : null;
-          const aircraftCat = offer.requiredAircraftTypes.length > 0 ? resolveAircraftCategoryForFamilyKeys(ratings, offer.requiredAircraftTypes) : null;
-          const aircraftCatBadge = aircraftCat ? AIRCRAFT_CAT_BADGE[aircraftCat] : null;
 
           return (
             <TouchableOpacity
@@ -300,22 +282,16 @@ export default function BrowseOffersScreen() {
                   {offer.minYearsExperience > 0 && (
                     <TechnicianBadge label={`${offer.minYearsExperience}+ yrs exp`} tone="muted" small />
                   )}
-                  {aircraftCatBadge && (
-                    <TechnicianBadge label={aircraftCatBadge.label} tone={aircraftCatBadge.tone} small />
-                  )}
                   <TechnicianBadge label={getMatchDisplayLabel(offer, score)} tone={scoreTone(score.total)} small />
                 </View>
 
-                {(offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0) && (
+                {offer.requiredLicenses.length > 0 && (
                   <View style={styles.reqRow}>
-                    {offer.requiredLicenses.slice(0, 3).map((l, i) => (
+                    {offer.requiredLicenses.slice(0, 6).map((l, i) => (
                       <TechnicianChip key={i} label={l} />
                     ))}
-                    {resolveFamilyKeyLabels(ratings, offer.requiredAircraftTypes).slice(0, 3).map((a, i) => (
-                      <TechnicianChip key={`a${i}`} label={a} />
-                    ))}
-                    {(offer.requiredLicenses.length + offer.requiredAircraftTypes.length) > 6 && (
-                      <TechnicianChip label={`+${offer.requiredLicenses.length + offer.requiredAircraftTypes.length - 6} more`} />
+                    {offer.requiredLicenses.length > 6 && (
+                      <TechnicianChip label={`+${offer.requiredLicenses.length - 6} more`} />
                     )}
                   </View>
                 )}

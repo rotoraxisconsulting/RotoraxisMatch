@@ -497,13 +497,11 @@ export default function OfferDetailScreen() {
           <SectionTitle title="Requirements" />
           <RequirementRow label="Technician types" items={offer.requiredTechnicianTypes} />
           <RequirementRow label="Licenses" items={offer.requiredLicenses} />
-          <RequirementRow label="Aircraft types" items={offer.requiredAircraftTypes} />
           {offer.requiredHabilitations.length > 0 ? (
             <TypeRatingRequirementsRow habilitations={offer.requiredHabilitations} ratingIndex={ratingIndex} />
           ) : null}
           {offer.requiredTechnicianTypes.length === 0 &&
           offer.requiredLicenses.length === 0 &&
-          offer.requiredAircraftTypes.length === 0 &&
           offer.requiredHabilitations.length === 0 ? (
             <Text style={styles.noRequirementsText}>No specific requirements — open to all technicians.</Text>
           ) : null}

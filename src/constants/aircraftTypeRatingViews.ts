@@ -66,10 +66,16 @@ export function getFamilies(ratings: AircraftTypeRatingCatalog[]): AircraftFamil
 }
 
 /**
- * Family keys persistidas → etiquetas mostrables.
+ * Family keys → etiquetas mostrables.
  *
- * `offer_required_aircraft_types` guarda la family key cruda
- * (`"<manufacturer>::<aircraftFamily>"`, migración 022). Esa key es un
+ * ⚠ Fase 5 (2026-08-04) — SIN CONSUMIDORES DE APP. Sus cuatro llamadores
+ * (listado de ofertas de empresa y de admin, detalle de oferta de técnico,
+ * browse de ofertas) resolvían `offer.requiredAircraftTypes`, retirado con
+ * offer_required_aircraft_types. Misma nota que
+ * resolveAircraftCategoryForFamilyKeys() más abajo: candidata a borrarse en
+ * la limpieza de exports muertos, conservada para no ampliar el alcance.
+ *
+ * Una family key (`"<manufacturer>::<aircraftFamily>"`, migración 022) es un
  * identificador interno y **nunca debe llegar al usuario final** — decisión
  * registrada con la migración 023, donde se dejó constancia de que
  * `displayName` no hereda el formato repetitivo de la key
@@ -107,13 +113,19 @@ export function getByProductType(
 
 // Fase 5.3 — replaces the deleted constants/aircraftTypes.ts's
 // inferAircraftCategory(), which looked codes up against the legacy
-// 33-entry catalog. offer.requiredAircraftTypes (the approximate/broad
-// filter, migration 022) now stores family keys
-// ("<manufacturer>::<aircraftFamily>"), never legacy codes, so the
-// replacement resolves against the real 606-endorsement catalog's
-// productType instead. Same return shape (airplane/helicopter/mixed/null)
-// so the one screen that used this (app/technician/offers/index.tsx) only
-// had to change its data source, not its branching.
+// 33-entry catalog. Resolves family keys
+// ("<manufacturer>::<aircraftFamily>", migration 022) against the real
+// 606-endorsement catalog's productType.
+//
+// ⚠ Fase 5 (2026-08-04) — SIN CONSUMIDORES DE APP. Su único llamador era el
+// filtro/badge Airplane-Helicopter de app/technician/offers/index.tsx, que se
+// alimentaba de offer.requiredAircraftTypes; ese campo se retiró con
+// offer_required_aircraft_types y el filtro se eliminó con él. La fuente que
+// lo sustituye es offers.product_type (declarado por la empresa), no esta
+// función, así que probablemente no vuelva a tener llamadores: candidata a
+// borrarse junto con resolveFamilyKeyLabels() en la limpieza de exports
+// muertos. Se conserva de momento, con sus tests, para no ampliar el alcance
+// de esta fase.
 //
 // A family key whose ratings have no productType backfilled, or that
 // isn't found in the loaded catalog at all, contributes nothing — never

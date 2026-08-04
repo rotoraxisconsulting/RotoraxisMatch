@@ -39,7 +39,6 @@ import { activityRepository } from '../../../src/repositories/v2/activityReposit
 import { calculateOfferTechnicianMatch, getMatchScoreWeights, getMatchDisplayLabel } from '../../../src/utils/matchingV2';
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
-import { resolveFamilyKeyLabels } from '../../../src/constants/aircraftTypeRatingViews';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { CompanyProfileView } from '../../../src/types/company';
 import { MatchScore } from '../../../src/types/matching';
@@ -121,7 +120,7 @@ export default function OfferDetailScreen() {
   // del real (ademas getAircraftTypeRatingLabel() cae al fallback y pinta el
   // UUID). Por eso no se puntua hasta state === 'success': un score erroneo
   // es peor que ningun score.
-  const { ratingIndex, ratings, state: catalogState } = useAircraftTypeRatingsCatalog();
+  const { ratingIndex, state: catalogState } = useAircraftTypeRatingsCatalog();
 
   const load = useCallback(async (signal: { active: boolean }) => {
     // Fase 5.4 — sesion sin resolver: no se dispara ninguna query con un id
@@ -333,15 +332,11 @@ export default function OfferDetailScreen() {
 
         {(offer.requiredTechnicianTypes.length > 0 ||
           offer.requiredLicenses.length > 0 ||
-          offer.requiredAircraftTypes.length > 0 ||
           offer.requiredHabilitations.length > 0) && (
           <TechnicianCard style={styles.section}>
             <Text style={styles.sectionTitle}>Requirements</Text>
             {offer.requiredTechnicianTypes.length > 0 && <ReqRow label="Technician types" items={offer.requiredTechnicianTypes} />}
             {offer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={offer.requiredLicenses} />}
-            {offer.requiredAircraftTypes.length > 0 && (
-              <ReqRow label="Aircraft types" items={resolveFamilyKeyLabels(ratings, offer.requiredAircraftTypes)} />
-            )}
             {offer.requiredHabilitations.length > 0 && (
               <ReqRow
                 label="Type rating requirements"

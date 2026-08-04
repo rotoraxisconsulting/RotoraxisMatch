@@ -45,7 +45,7 @@ import {
 } from '../types/matching';
 import { resolveLocationSnapshot } from '../constants/locationCities';
 import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../constants/technicianTypes';
-import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel, getAircraftFamilyKey, habilitationCoversFamilyKey } from '../constants/aircraftTypeRatings';
+import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
 
 // Qualification (habilitation + license) dominates the score whenever the
@@ -97,7 +97,7 @@ export interface MatchScoreWeights {
 // change here.
 export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWeights {
   const hasQualificationRequirements =
-    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0;
+    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0;
   return hasQualificationRequirements ? QUALIFICATION_WEIGHTS : NO_REQUIREMENTS_WEIGHTS;
 }
 
@@ -113,15 +113,17 @@ export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWe
 // aircraft through the rating catalog or not at all.
 const HABILITATION_TIER_FRACTIONS = { exact: 1, related_family: 0.57, not_met: 0 } as const;
 
-// The broad/approximate requirement branch (evaluateLegacyBroadMatch) keeps
-// its own two fractions, unchanged and deliberately equal to the numbers T2
-// and the old T3 used: 0.57 when a real habilitation row confirms the
-// required family, 0.29 when only the license category is confirmed. This
-// branch is PRODUCT (the approximate offer filter, Fase 3b), not legacy —
-// it survives the aircraft_types retirement untouched, which is why these
-// live in their own map instead of borrowing a tier fraction that no longer
-// has a matching tier.
-const BROAD_TIER_FRACTIONS = { legacy_aircraft_confirmed: 0.57, legacy_category_only: 0.29 } as const;
+// The license-category branch (evaluateLicenseCategoryMatch) keeps its own
+// fraction: 0.29 when the technician holds a required license category and
+// the offer never named a specific aircraft. Deliberately well below T2's
+// 0.57 — holding a category confirms no aircraft experience whatsoever.
+//
+// Fase 5 (2026-08-04): this map used to carry a second entry,
+// legacy_aircraft_confirmed (0.57), for an offer that required an aircraft
+// FAMILY approximately. That requirement is gone with
+// offer_required_aircraft_types, so the tier had no remaining input and was
+// removed with it. 0.29 and BROAD_ONLY_CAP below are untouched.
+const BROAD_TIER_FRACTIONS = { legacy_category_only: 0.29 } as const;
 
 // Fase 3 — vigencia: a SLIGHT cut, applied on top of whichever tier fraction
 // already applies, whenever the row that produced the winning match is
@@ -327,104 +329,59 @@ function evaluateHabilitationRequirement(
   return { tier: 'not_met' };
 }
 
-// Fase 5.3 (2026-07-27, checkpoint-confirmed): this used to be a flat
-// 'legacy' | 'not_met' outcome, scored at FULL habilitation+license credit
-// whenever ANY sub-case matched — the exact "scores like an exact match"
-// bug the mission's own confirmed-facts list flagged. Now split by
-// evidence strength:
-//   - 'legacy_aircraft_confirmed': a REAL technician_habilitations row
-//     covers the required aircraft family — whether or not a license was
-//     also required (both the "license+aircraft same row" and
-//     "aircraft only" sub-cases below confirm a real row for that
-//     aircraft). Scored at the same fraction as T2 (related_family, 0.57)
-//     — same-row/real-row evidence, still never as strong as a confirmed
-//     exact rating.
-//   - 'legacy_category_only': the offer asked for a license category with
-//     NO aircraft requirement at all — nothing here confirms the
-//     technician has ANY relevant aircraft experience, only that they
-//     hold the license. Weaker evidence, scored at 0.29
-//     (BROAD_TIER_FRACTIONS), with its own clarification saying so.
+// The fallback branch, used only when an offer states NO exact
+// category+rating requirement. Two outcomes:
+//   - 'legacy_category_only': the technician holds one of the license
+//     categories the offer asks for. Nothing here confirms they have ANY
+//     relevant aircraft experience, only the category — so it scores at
+//     0.29 (BROAD_TIER_FRACTIONS) and carries its own clarification.
 //   - 'not_met': no evidence at all.
 interface BroadOutcome {
-  tier: 'legacy_aircraft_confirmed' | 'legacy_category_only' | 'not_met';
+  tier: 'legacy_category_only' | 'not_met';
   matchText?: string;
   clarificationText?: string;
 }
 
-// Legacy broad requirements (offer_required_licenses / offer_required_aircraft_types)
-// are two independent sets on the OFFER side, but they must never be checked
-// independently against the TECHNICIAN's data. When an offer requires both a
-// license and an aircraft type, only a single technician_habilitations row
-// that satisfies both at once counts as a match.
+// Fase 5 (2026-08-04) — this was evaluateLegacyBroadMatch, and it evaluated
+// TWO independent offer-side sets: required licenses and required aircraft
+// FAMILIES (offer_required_aircraft_types, the approximate filter). Its two
+// aircraft-bearing branches — "license + aircraft satisfied by the SAME
+// technician_habilitations row" and "aircraft only" — both scored
+// 'legacy_aircraft_confirmed' at 0.57.
 //
-// offer.requiredAircraftTypes holds FAMILY KEYS since migration 022
-// (2026-07-22) — "<manufacturer>::<aircraftFamily>" from the 606-row
-// aircraft_type_ratings catalog (see getAircraftFamilyKey), never a legacy
-// aircraft_types(code) value anymore. The ApproximateFilterSection picker
-// sources its options from getFamilies() over that same catalog, so the
-// values it writes always match this shape.
-function evaluateLegacyBroadMatch(
+// With the approximate filter retired, an offer can no longer express an
+// aircraft requirement approximately: aircraft is stated exactly, as a
+// license+rating pair in requiredHabilitations, which is evaluated by
+// evaluateHabilitationRequirement above and never reaches this function.
+// Both branches lost their only input and went with it, along with the
+// ratingIndex parameter they needed. What remains is purely a license-
+// category check, hence the name.
+//
+// The same-row rule the deleted branch enforced is NOT lost — it lives on
+// where it actually matters, in the exact path (see the "same row" contract
+// in evaluateHabilitationRequirement and CLAUDE.md). Nothing here combines
+// an independent license check with an independent aircraft check, because
+// there is no aircraft check left to combine.
+function evaluateLicenseCategoryMatch(
   offer: OfferWithRequirements,
   technician: TechnicianWithRelations,
-  ratingIndex: AircraftRatingIndex,
 ): BroadOutcome {
-  const needsLicense = offer.requiredLicenses.length > 0;
-  const needsAircraft = offer.requiredAircraftTypes.length > 0;
-  const APPROXIMATE_NOTE = 'Approximate requirement — engine not specified.';
+  if (offer.requiredLicenses.length === 0) return { tier: 'not_met' };
 
-  // habilitationCoversFamilyKey se importa de constants/aircraftTypeRatings:
-  // implementacion UNICA compartida con technicianRepositoryV2 (antes estaba
-  // duplicada literalmente en ambos). Aqui se envuelve solo para no repetir
-  // ratingIndex en cada llamada.
-  const coversFamily = (h: TechnicianHabilitation, familyKey: string) =>
-    habilitationCoversFamilyKey(h, familyKey, ratingIndex);
+  // The offer never asked for a specific aircraft, so there is nothing to
+  // confirm beyond the license category itself — the technician could hold
+  // this license with zero aircraft experience on record.
+  const holds =
+    technician.licenses.some((l) => offer.requiredLicenses.includes(l.licenseCode)) ||
+    technician.habilitations.some((h) => offer.requiredLicenses.includes(h.licenseCode));
 
-  if (needsLicense && needsAircraft) {
-    const row = technician.habilitations.find((h) => {
-      if (!offer.requiredLicenses.includes(h.licenseCode)) return false;
-      return offer.requiredAircraftTypes.some((key) => coversFamily(h, key));
-    });
-    return row
-      ? {
-          tier: 'legacy_aircraft_confirmed',
-          matchText: `${row.licenseCode} + required aircraft in the same habilitation`,
-          clarificationText: APPROXIMATE_NOTE,
-        }
-      : { tier: 'not_met' };
-  }
-
-  if (needsAircraft) {
-    // Solo las filas de technician_habilitations satisfacen esta rama. La
-    // otra fuente que hubo (technician_aircraft_experience) se retiro con su
-    // tabla en la migracion 031: no tenia vinculo con el catalogo de ratings,
-    // asi que nunca pudo resolver una familia sin adivinar.
-    const covers = technician.habilitations.some((h) =>
-      offer.requiredAircraftTypes.some((key) => coversFamily(h, key)),
-    );
-    return covers
-      ? { tier: 'legacy_aircraft_confirmed', matchText: 'Required aircraft present in profile', clarificationText: APPROXIMATE_NOTE }
-      : { tier: 'not_met' };
-  }
-
-  if (needsLicense) {
-    // License-only: the offer never asked for a specific aircraft, so
-    // there is nothing here to confirm beyond the license category itself
-    // — the technician could hold this license with zero aircraft
-    // experience on record. Weaker than the two cases above, which both
-    // require a real technician_habilitations row for a specific family.
-    const holds =
-      technician.licenses.some((l) => offer.requiredLicenses.includes(l.licenseCode)) ||
-      technician.habilitations.some((h) => offer.requiredLicenses.includes(h.licenseCode));
-    return holds
-      ? {
-          tier: 'legacy_category_only',
-          matchText: 'Required license category present in profile',
-          clarificationText: 'Category-only match — no specific aircraft requirement to verify.',
-        }
-      : { tier: 'not_met' };
-  }
-
-  return { tier: 'not_met' };
+  return holds
+    ? {
+        tier: 'legacy_category_only',
+        matchText: 'Required license category present in profile',
+        clarificationText: 'Category-only match — no specific aircraft requirement to verify.',
+      }
+    : { tier: 'not_met' };
 }
 
 const TIER_RANK: Record<HabilitationTier, number> = { not_met: 0, related_family: 1, exact: 2 };
@@ -447,7 +404,7 @@ export function calculateOfferTechnicianMatch(
   now: Date = new Date(),
 ): MatchScore {
   const hasQualificationRequirements =
-    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0 || offer.requiredAircraftTypes.length > 0;
+    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0;
   const weights = getMatchScoreWeights(offer);
   const today = localDateToIso(now);
 
@@ -533,39 +490,26 @@ export function calculateOfferTechnicianMatch(
     habilitation = Math.round(weights.habilitation * HABILITATION_TIER_FRACTIONS[bestTier] * vigenciaFraction);
     license = licenseHeldForAll ? weights.license : 0;
   } else if (hasQualificationRequirements) {
-    // No exact requirements — fall back to the broad (legacy-compatible)
-    // requirement sets, still resolved through a single joint habilitation
-    // row whenever both a license and an aircraft are required together.
-    const broad = evaluateLegacyBroadMatch(offer, technician, ratingIndex);
+    // No exact requirements — the offer only names license categories, so
+    // fall back to the category check.
+    const broad = evaluateLicenseCategoryMatch(offer, technician);
     if (broad.tier !== 'not_met') {
       level = 'legacy';
       isBroadOnlyMatch = true;
       if (broad.matchText) matches.push(broad.matchText);
       if (broad.clarificationText) clarifications.push(broad.clarificationText);
-      // Never full/exact credit (Fase 5.3 fix) — a broad match is real
-      // evidence but never a confirmed exact rating. 'legacy_aircraft_
-      // confirmed' (a real technician_habilitations row for the required
-      // family) scores at 0.57, the same fraction as T2;
-      // 'legacy_category_only' (license held, no aircraft ever asked for or
-      // confirmed) is weaker at 0.29. See applyScoreCeilings() for the
-      // label ceiling this also imposes (never "Excellent"). Both numbers
-      // unchanged by the aircraft_types retirement — see
-      // BROAD_TIER_FRACTIONS.
-      const fraction = BROAD_TIER_FRACTIONS[broad.tier];
-      habilitation = Math.round(weights.habilitation * fraction);
+      // Never full/exact credit (Fase 5.3 fix) — holding the category is
+      // real evidence but never a confirmed exact rating, so it scores at
+      // 0.29 (BROAD_TIER_FRACTIONS.legacy_category_only). See
+      // applyScoreCeilings() for the label ceiling this also imposes
+      // (never "Excellent").
+      habilitation = Math.round(weights.habilitation * BROAD_TIER_FRACTIONS[broad.tier]);
       license = weights.license;
     } else {
       level = 'not_met';
       habilitation = 0;
       license = 0;
-      if (offer.requiredLicenses.length > 0 && offer.requiredAircraftTypes.length > 0) {
-        mandatoryMissing.push(`${offer.requiredLicenses.join('/')} + ${offer.requiredAircraftTypes.join('/')}`);
-        clarifications.push('No technician habilitation was found that combines the required license and aircraft in the same row.');
-      } else if (offer.requiredLicenses.length > 0) {
-        mandatoryMissing.push(`Required license: ${offer.requiredLicenses.join(', ')}`);
-      } else if (offer.requiredAircraftTypes.length > 0) {
-        mandatoryMissing.push(`Required aircraft: ${offer.requiredAircraftTypes.join(', ')}`);
-      }
+      mandatoryMissing.push(`Required license: ${offer.requiredLicenses.join(', ')}`);
     }
   } else {
     // The offer specifies no qualification requirement at all — habilitation

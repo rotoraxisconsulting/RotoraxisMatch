@@ -24,7 +24,7 @@ import {
   companyUi,
 } from '../../../src/components/company/CompanyUI';
 import { TypeRatingRequirementsEditor, ExactHabilitationRow } from '../../../src/components/company/TypeRatingRequirementsEditor';
-import { ApproximateFilterSection } from '../../../src/components/company/ApproximateFilterSection';
+import { RequiredLicensesSection } from '../../../src/components/company/RequiredLicensesSection';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../../src/constants/technicianTypes';
 import { planOfferTechnicianTypeToggle } from '../../../src/utils/offerTechnicianTypePlan';
@@ -47,7 +47,6 @@ interface FormState {
   minYearsExperience: number;
   requiredTechnicianTypes: TechnicianTypeCode[];
   requiredLicenses: LicenseCode[];
-  requiredAircraftTypes: string[];
   requiredHabilitations: ExactHabilitationRow[];
   status: OfferStatus;
 }
@@ -91,7 +90,6 @@ export default function EditOfferScreen() {
           minYearsExperience: o.minYearsExperience,
           requiredTechnicianTypes: o.requiredTechnicianTypes as TechnicianTypeCode[],
           requiredLicenses: o.requiredLicenses as LicenseCode[],
-          requiredAircraftTypes: o.requiredAircraftTypes,
           requiredHabilitations: o.requiredHabilitations.map((h) => ({
             licenseCode: h.licenseCode,
             aircraftTypeRatingId: h.aircraftTypeRatingId,
@@ -119,7 +117,7 @@ export default function EditOfferScreen() {
       current: form.requiredTechnicianTypes,
       code,
       part66RequirementCount:
-        form.requiredHabilitations.length + form.requiredLicenses.length + form.requiredAircraftTypes.length,
+        form.requiredHabilitations.length + form.requiredLicenses.length,
     });
     if (error) {
       notify('Technician types', error);
@@ -158,7 +156,6 @@ export default function EditOfferScreen() {
       await offerRepository.replaceRequirements(id, {
         technicianTypes: form.requiredTechnicianTypes,
         licenses: form.requiredLicenses,
-        aircraftTypes: form.requiredAircraftTypes,
         habilitations: form.requiredHabilitations,
       });
       router.back();
@@ -320,11 +317,9 @@ export default function EditOfferScreen() {
         </ChoiceSection>
 
         {targetsLicensedProfiles && (
-          <ApproximateFilterSection
+          <RequiredLicensesSection
             requiredLicenses={form.requiredLicenses}
             onChangeLicenses={(next) => setField('requiredLicenses', next)}
-            requiredAircraftTypes={form.requiredAircraftTypes}
-            onChangeAircraftTypes={(next) => setField('requiredAircraftTypes', next)}
             hasExactRequirements={form.requiredHabilitations.length > 0}
           />
         )}

@@ -143,7 +143,7 @@ export function mapOfferRow(row: DbRow): Offer {
 
 type OfferRequirementsPick = Pick<
   OfferWithRequirements,
-  'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredAircraftTypes' | 'requiredHabilitations'
+  'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredHabilitations'
 >;
 
 export function mapOfferRequiredHabilitationRow(row: DbRow): OfferRequiredHabilitation {
@@ -161,19 +161,22 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   const uniqueIds = [...new Set(offerIds)].filter(Boolean);
   const empty: Record<string, OfferRequirementsPick> = {};
   for (const id of uniqueIds) {
-    empty[id] = { requiredTechnicianTypes: [], requiredLicenses: [], requiredAircraftTypes: [], requiredHabilitations: [] };
+    empty[id] = { requiredTechnicianTypes: [], requiredLicenses: [], requiredHabilitations: [] };
   }
   if (uniqueIds.length === 0) return empty;
 
-  const [typesRes, licensesRes, aircraftRes, habilitationsRes] = await Promise.all([
+  // Fase 5 (2026-08-04): aquí se leía también offer_required_aircraft_types
+  // (el requisito aproximado por familia). Ese SELECT tenía un throwIfError
+  // debajo, así que dropear la tabla con el lector vivo habría tumbado el
+  // listado de ofertas entero — por eso el lector se va AQUÍ y el DROP va
+  // después, en la migración 045.
+  const [typesRes, licensesRes, habilitationsRes] = await Promise.all([
     supabase.from('offer_required_technician_types').select('offer_id, technician_type_code').in('offer_id', uniqueIds),
     supabase.from('offer_required_licenses').select('offer_id, license_code').in('offer_id', uniqueIds),
-    supabase.from('offer_required_aircraft_types').select('offer_id, aircraft_type_code').in('offer_id', uniqueIds),
     supabase.from('offer_required_habilitations').select('offer_id, license_code, aircraft_type_rating_id, requirement_level, notes, created_at').in('offer_id', uniqueIds),
   ]);
   throwIfError(typesRes.error);
   throwIfError(licensesRes.error);
-  throwIfError(aircraftRes.error);
   throwIfError(habilitationsRes.error);
 
   for (const row of (typesRes.data ?? []) as DbRow[]) {
@@ -181,9 +184,6 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   }
   for (const row of (licensesRes.data ?? []) as DbRow[]) {
     empty[row.offer_id]?.requiredLicenses.push(row.license_code as LicenseCode);
-  }
-  for (const row of (aircraftRes.data ?? []) as DbRow[]) {
-    empty[row.offer_id]?.requiredAircraftTypes.push(row.aircraft_type_code);
   }
   for (const row of (habilitationsRes.data ?? []) as DbRow[]) {
     empty[row.offer_id]?.requiredHabilitations.push(mapOfferRequiredHabilitationRow(row));
@@ -196,7 +196,6 @@ export function withRequirements(offer: Offer, reqs?: OfferRequirementsPick): Of
     ...offer,
     requiredTechnicianTypes: reqs?.requiredTechnicianTypes ?? [],
     requiredLicenses: reqs?.requiredLicenses ?? [],
-    requiredAircraftTypes: reqs?.requiredAircraftTypes ?? [],
     requiredHabilitations: reqs?.requiredHabilitations ?? [],
   };
 }

@@ -88,13 +88,11 @@ export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible
 function assertRequirementsMatchTechnicianTypes(requirements: {
   technicianTypes: readonly TechnicianTypeCode[];
   licenses: readonly LicenseCode[];
-  aircraftTypes: readonly string[];
   habilitations?: readonly unknown[];
 }): void {
   if (offerTargetsLicensedProfiles({ requiredTechnicianTypes: requirements.technicianTypes })) return;
 
-  const part66 =
-    requirements.licenses.length + requirements.aircraftTypes.length + (requirements.habilitations?.length ?? 0);
+  const part66 = requirements.licenses.length + (requirements.habilitations?.length ?? 0);
   if (part66 === 0) return;
 
   const targeted = requirements.technicianTypes
@@ -219,7 +217,6 @@ export const offerRepository = {
     status?: OfferStatus;
     requiredTechnicianTypes?: TechnicianTypeCode[];
     requiredLicenses?: LicenseCode[];
-    requiredAircraftTypes?: string[];
     requiredHabilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
   }): Promise<OfferWithRequirements> {
     // Checked BEFORE the insert: failing after it would leave an orphan
@@ -227,7 +224,6 @@ export const offerRepository = {
     assertRequirementsMatchTechnicianTypes({
       technicianTypes: data.requiredTechnicianTypes ?? [],
       licenses: data.requiredLicenses ?? [],
-      aircraftTypes: data.requiredAircraftTypes ?? [],
       habilitations: data.requiredHabilitations ?? [],
     });
     const status = data.status ?? 'draft';
@@ -255,14 +251,12 @@ export const offerRepository = {
     const requirements = {
       technicianTypes: data.requiredTechnicianTypes ?? [],
       licenses: data.requiredLicenses ?? [],
-      aircraftTypes: data.requiredAircraftTypes ?? [],
       habilitations: data.requiredHabilitations ?? [],
     };
     await this.replaceRequirements(offer.id, requirements);
     return withRequirements(offer, {
       requiredTechnicianTypes: requirements.technicianTypes,
       requiredLicenses: requirements.licenses,
-      requiredAircraftTypes: requirements.aircraftTypes,
       requiredHabilitations: requirements.habilitations.map((h) => ({ ...h, offerId: offer.id, createdAt: offer.createdAt })),
     });
   },
@@ -335,7 +329,6 @@ export const offerRepository = {
   async replaceRequirements(offerId: string, requirements: {
     technicianTypes: TechnicianTypeCode[];
     licenses: LicenseCode[];
-    aircraftTypes: string[];
     // Optional — omit to leave existing exact habilitation requirements
     // untouched (callers that only manage the broad requirement chips don't
     // need to know about this table).
@@ -348,7 +341,6 @@ export const offerRepository = {
     const deletes = await Promise.all([
       supabase.from('offer_required_technician_types').delete().eq('offer_id', offerId),
       supabase.from('offer_required_licenses').delete().eq('offer_id', offerId),
-      supabase.from('offer_required_aircraft_types').delete().eq('offer_id', offerId),
     ]);
     deletes.forEach((result) => throwIfError(result.error));
 
@@ -367,13 +359,11 @@ export const offerRepository = {
         ),
       );
     }
-    if (requirements.aircraftTypes.length > 0) {
-      inserts.push(
-        supabase.from('offer_required_aircraft_types').insert(
-          requirements.aircraftTypes.map((code) => ({ offer_id: offerId, aircraft_type_code: code })),
-        ),
-      );
-    }
+    // Fase 5 (2026-08-04): aquí se escribía también offer_required_aircraft_types
+    // (el requisito aproximado por familia). Se retiró con el resto del filtro
+    // aproximado; la tabla se dropea en la migración 045, DESPUÉS de este
+    // cambio de código, nunca antes.
+    //
     // Los DELETE de arriba no llevan comprobación de filas a propósito: una
     // oferta sin requisitos borra cero filas legítimamente. Los INSERT sí,
     // porque sólo se encolan cuando hay algo que escribir — cero filas ahí
