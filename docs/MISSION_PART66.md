@@ -423,6 +423,25 @@ alcance real de esta fase.
    - JSON seeds huérfanos de src/data/seeds/ confirmados sin consumidores
    - Docs obsoletos de docs/ → ARCHIVAR en docs/archive/, no borrar
    - ts-prune o similar para exports muertos
+   - **Bloque de la Fase 6 tanda C (10/08/2026), verificado por grep sin ni
+     un llamador vivo.** Los cuatro se van juntos o no se va ninguno: son
+     una sola cadena, `requires_license` -> `isLicensedTechnicianType` ->
+     `offerTargetsLicensedProfiles` -> (nadie).
+     - `isLicensedTechnicianType` (src/constants/technicianTypes.ts)
+     - `offerTargetsLicensedProfiles` (idem)
+     - `TechnicianTypeCatalog.requiresLicense` (src/types/catalog.ts) — su
+       único lector era `isLicensedTechnicianType`
+     - `technician_types.requires_license` **la columna en Postgres**
+       (verificada en vivo, existe). Al caer el campo del tipo TS la columna
+       se queda sin ningún lector; dropearla o no es decisión de este
+       barrido, pero tiene que decidirse aquí y no quedarse olvidada como
+       una tercera fuente de verdad sin dueño.
+
+     La pregunta que respondía toda la cadena — "¿esta oferta tiene eje
+     Part-66?" — la contesta desde la tanda C `offers.requires_certification`.
+     Sus tests siguen verdes marcados `[SIN CONSUMIDORES]` en
+     scripts/testMatching.ts: consérvalos hasta el barrido, borralos con la
+     cadena.
    - useTechnicianDashboard.updateProfile() — código muerto V1, cero call
      sites, eliminar
    - src/components/TechnicianCard.tsx — código muerto, cero call sites,
@@ -2797,6 +2816,90 @@ helicópteros a la vez → OK · NULL en años sigue siendo NULL, no 0 · duplic
 sigue con 0 filas. Rollback confirmado.
 
 `tsc` 0 · `test:matching` 154/154 (+3) · `test:url-validation` PASS ·
+`validate:state-machine` PASS · `validate:auth-hooks` PASS ·
+`validate:aircraft-ratings` PASS.
+
+### Tanda C — HECHA (10/08/2026)
+
+**Migración 051** (aplicada): `offers.requires_certification BOOLEAN NOT NULL
+DEFAULT true` y `offers.technician_type TEXT NOT NULL` con FK al catálogo. El
+DEFAULT true no es comodidad: conserva el significado previo a la columna, que
+es lo que hace que ningún score se mueva al desplegar. Sin backfill (0 ofertas
+y 0 filas puente, verificado), y con guardas que **abortan** si eso deja de ser
+cierto en vez de inventar un tipo.
+
+**Migración 052 escrita y SIN APLICAR**: `DROP TABLE
+offer_required_technician_types`. Contracción del expand-contract, va después
+del despliegue. El riesgo no es teórico — `loadOfferRequirements` leía esa
+tabla en un `Promise.all` con `throwIfError` debajo, exactamente la forma que
+documenta la 045: dropearla con el lector vivo no degrada, tumba el listado de
+ofertas entero.
+
+**La idea única de la tanda**: lo que exige un puesto es propiedad del PUESTO,
+no de la etiqueta de quien lo ocupa. `isLicensedTechnicianType` deducía "¿hace
+falta licencia?" del tipo de perfil, lo que hacía imposible publicar "ayudante
+para el A320, sin licencia" y convertía al tipo en portero. Ahora lo declara la
+empresa. Y una oferta afirma **una sola cosa**: un tipo, un producto
+(migración 047), una licencia, un interruptor.
+
+**Orden del formulario** (idéntico en crear y editar): 1) tipo de perfil,
+2) ¿necesita certificar?, 3) avión o helicóptero, 4) licencia, 5) aeronaves.
+El interruptor va en el 2 porque decide si los pasos 4 y 5 existen siquiera.
+
+**Cambiar el interruptor**: creando repinta sobre la marcha sin avisos;
+editando avisa antes de limpiar y, si cancela, el selector no se mueve —
+`form` no se toca hasta después del await. Mismo patrón que `product_type` en
+la 047. Encenderlo nunca pregunta: no destruye nada.
+
+`offerRepository.update()` limpia los requisitos Part-66 al apagar el
+interruptor. Aquí **no hay ninguna FK que fuerce el orden**, al contrario que
+con `product_type`: lo fuerza la INVARIANTE, para que un llamante que actualice
+la columna y no llame después a `replaceRequirements` no deje guardado un
+estado que el propio repositorio rechaza.
+
+**El scorer no se ha tocado.** El cambio es de forma: donde comparaba el tipo
+del técnico contra el array de la oferta, ahora comprueba si el tipo único de
+la oferta está entre los del técnico. Desaparece el caso "array vacío = sin
+restricción" porque la columna es NOT NULL: toda oferta nombra su puesto, así
+que siempre hay línea de match o blocker, nunca silencio. Hay test de que el
+interruptor no mueve total, desglose, matches ni blockers.
+
+**`getMatchDisplayLabel` sí cambia de fuente**, y es deliberado: la etiqueta
+"General compatibility" la decide ahora el interruptor, no el tipo de perfil.
+Es copy, no scoring, y era la única forma de que `isLicensedTechnicianType`
+dejara de tener consumidores — que es justo lo que la tanda perseguía.
+
+**Retirado**: `offerTechnicianTypePlan.ts` entero con sus 5 tests. Impedía
+mezclar tipos licenciados y no licenciados en una oferta; con un solo tipo la
+mezcla no es ilegal, es **inexpresable**.
+
+De paso, el hallazgo **I6** de la auditoría (el listado de ofertas pintaba el
+código crudo, `sheet_metal_worker`): la línea cambiaba igualmente al pasar a un
+solo tipo, y dejarla cruda sabiendo que existe el helper habría sido conservar
+el bug a mano.
+
+#### Exports que quedan sin consumidores (para el barrido, NO borrados aquí)
+
+Verificado por grep tras el cambio: `isLicensedTechnicianType`,
+`offerTargetsLicensedProfiles` y `TechnicianTypeCatalog.requiresLicense` no
+tienen ni un solo llamador vivo. Anotados en su propio fichero con un bloque de
+aviso, y en la **lista canónica del barrido** (sección "LIMPIEZA" de este
+documento, junto a `resolveFamilyKeyLabels` y
+`resolveAircraftCategoryForFamilyKeys`), donde va también
+`technician_types.requires_license` — la columna de Postgres, que existe
+(verificado en vivo) y se queda sin lectores al caer el campo del tipo TS.
+
+Los cuatro son una sola cadena y se van juntos o no se va ninguno. Sus tests se
+conservan marcados `[SIN CONSUMIDORES]` hasta el barrido, para que quien lo
+haga vea qué hacían antes de retirarlos.
+
+**Sonda en transacción con rollback** (4 casos): oferta con
+`requires_certification = false` → se guarda · omitir la columna → DEFAULT true
+· omitir el tipo → NOT NULL lo rechaza (una oferta no puede quedarse sin tipo,
+y tampoco puede tener dos: la columna es escalar) · tipo fuera del catálogo →
+FK. Rollback confirmado (0 ofertas).
+
+`tsc` 0 · `test:matching` 151/151 · `test:url-validation` PASS ·
 `validate:state-machine` PASS · `validate:auth-hooks` PASS ·
 `validate:aircraft-ratings` PASS.
 

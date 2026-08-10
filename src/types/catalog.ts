@@ -23,6 +23,20 @@ export type CompanyTypeCode =
 export interface TechnicianTypeCatalog {
   code: TechnicianTypeCode;
   label: string;
+  /**
+   * ⚠ SIN CONSUMIDORES desde la Fase 6 tanda C (2026-08-10). Su único lector
+   * era `isLicensedTechnicianType`, que también quedó huérfano: ahora es la
+   * OFERTA la que declara si hace falta certificar
+   * (`offers.requires_certification`), en vez de deducirse del tipo de perfil.
+   * Pendiente del barrido de exports muertos; se retira con esos dos o con
+   * ninguno.
+   *
+   * Ojo al barrerlo: `technician_types.requires_license` SÍ existe en
+   * Postgres (verificado en vivo), así que retirar el campo de este tipo
+   * deja la columna en la base sin ningún lector — decidir si también se
+   * dropea es parte del mismo barrido, no algo que ocurra solo. Las dos
+   * están en la lista canónica: docs/MISSION_PART66.md, sección "LIMPIEZA".
+   */
   requiresLicense: boolean;
   isActive: boolean;
   sortOrder: number;

@@ -36,6 +36,7 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
 import { OfferWithRequirements } from '../../../src/types/offer';
+import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
 import { useCompanySession, useSession } from '../../../src/state/SessionContext';
 import { canManageOffers } from '../../../src/utils/companyPermissionsV2';
 
@@ -74,10 +75,15 @@ function formatPublishedDate(iso: string): string {
 
 function compactRequirements(offer: OfferWithRequirements): string[] {
   return [
-    // NOTA: requiredTechnicianTypes sigue mostrando el código crudo
-    // ("avionic", "sheet_metal_worker") — es el hallazgo I6 del informe de
-    // auditoría, fuera del alcance de esta tanda. No tocado a propósito.
-    ...offer.requiredTechnicianTypes,
+    // El hallazgo I6 de la auditoría (aquí se pintaba el código crudo,
+    // "avionic" / "sheet_metal_worker") queda arreglado de paso: la línea
+    // cambiaba igualmente al pasar a un solo tipo, y dejarla cruda sabiendo
+    // que hay un helper de labels habría sido conservar el bug a mano.
+    technicianTypeLabel(offer.technicianType),
+    // Fase 6 tanda C: el interruptor solo se anuncia cuando dice algo que el
+    // técnico no da por supuesto. "Licence required" es el caso normal y
+    // llenaría la tira de ruido en todas las tarjetas.
+    ...(offer.requiresCertification ? [] : ['No licence needed']),
     ...offer.requiredLicenses,
   ].slice(0, 5);
 }
@@ -201,9 +207,11 @@ export default function OffersListScreen() {
         {offers.map((offer) => {
           const offerCounts = counts[offer.id] ?? { applications: 0, directOffers: 0 };
           const requirements = compactRequirements(offer);
+          // 1 = el tipo de perfil, que toda oferta tiene. Se cuenta igual que
+          // se pinta arriba, o el "+N más" mentiría.
           const hiddenReqs = Math.max(
             0,
-            offer.requiredTechnicianTypes.length + offer.requiredLicenses.length - requirements.length,
+            1 + (offer.requiresCertification ? 0 : 1) + offer.requiredLicenses.length - requirements.length,
           );
 
           return (

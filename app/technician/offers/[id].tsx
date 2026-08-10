@@ -15,6 +15,7 @@ import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-rou
 import { colors, spacing } from '../../../src/theme';
 import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
 import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
+import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
 import { MatchExplanation } from '../../../src/components/MatchExplanation';
@@ -332,12 +333,17 @@ export default function OfferDetailScreen() {
           <Text style={styles.description}>{offer.description}</Text>
         </TechnicianCard>
 
-        {(offer.requiredTechnicianTypes.length > 0 ||
-          offer.requiredLicenses.length > 0 ||
-          offer.requiredHabilitations.length > 0) && (
+        {/* La tarjeta se muestra SIEMPRE desde la Fase 6 tanda C: el tipo de
+            perfil y el interruptor de certificación existen en toda oferta, y
+            el técnico tiene que ver si le exigen licencia ANTES de aplicar. */}
+        {(
           <TechnicianCard style={styles.section}>
             <Text style={styles.sectionTitle}>Requirements</Text>
-            {offer.requiredTechnicianTypes.length > 0 && <ReqRow label="Technician types" items={offer.requiredTechnicianTypes} />}
+            <ReqRow label="Profile type" items={[technicianTypeLabel(offer.technicianType)]} />
+            <ReqRow
+              label="Certified work"
+              items={[offer.requiresCertification ? 'Licence required' : 'No licence needed']}
+            />
             {offer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={offer.requiredLicenses} />}
             {offer.requiredHabilitations.length > 0 && (
               <ReqRow

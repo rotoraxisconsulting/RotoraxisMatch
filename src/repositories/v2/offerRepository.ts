@@ -3,7 +3,6 @@ import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequiremen
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
-import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../constants/technicianTypes';
 import {
   loadOfferRequirements,
   mapOfferRow,
@@ -18,7 +17,7 @@ import {
 // con `productType` undefined y NADA lo señala hasta que la UI pinta el badge
 // vacío o el guardado escribe basura.
 const OFFER_COLUMNS =
-  'id, company_id, title, description, contract_type, product_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at';
+  'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at';
 
 type OfferLocationInput = {
   locationCityId?: string;
@@ -63,6 +62,8 @@ function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.contractType !== undefined ? { contract_type: patch.contractType } : {}),
     ...(patch.productType !== undefined ? { product_type: patch.productType } : {}),
+    ...(patch.technicianType !== undefined ? { technician_type: patch.technicianType } : {}),
+    ...(patch.requiresCertification !== undefined ? { requires_certification: patch.requiresCertification } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.locationCountry !== undefined ? { location_country: patch.locationCountry } : {}),
     ...(patch.locationCity !== undefined ? { location_city: patch.locationCity } : {}),
@@ -79,14 +80,20 @@ export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible
 }
 
 /**
- * An offer aimed at non-licensed technician types (sheet metal worker,
- * painter, composite) has no Part-66 axis: those profiles hold no licence
- * and no aircraft type rating, so a licence/rating/habilitation requirement
- * on such an offer can only ever be unsatisfiable.
+ * Una oferta que NO exige certificar el trabajo no tiene eje Part-66: pedir
+ * una licencia o un type rating en ella es una contradicción con lo que la
+ * propia oferta declara.
+ *
+ * Fase 6 tanda C: antes esta regla se deducía del TIPO de perfil buscado
+ * (`offerTargetsLicensedProfiles`, sobre un array de tipos). Ahora la
+ * gobierna el interruptor que la empresa marca explícitamente, que es de
+ * quien siempre debió depender — un mecánico puede no tener licencia y
+ * seguir siendo mecánico, así que deducirlo del tipo impedía publicar
+ * "ayudante para el A320, sin licencia".
  *
  * This runs in the repository, not only in the form, on purpose. Hiding the
  * sections on screen stops the ONE path a user clicks through; it does
- * nothing about a stale form state, a screen that sets the types after the
+ * nothing about a stale form state, a screen that flips the switch after the
  * requirements, or any future caller. The rule belongs where every write
  * passes through.
  *
@@ -94,22 +101,19 @@ export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible
  * quietly would tell the company "saved" while discarding what it typed —
  * the same class of false success `throwIfNoRows` exists to prevent.
  */
-function assertRequirementsMatchTechnicianTypes(requirements: {
-  technicianTypes: readonly TechnicianTypeCode[];
+function assertRequirementsMatchCertification(requirements: {
+  requiresCertification: boolean;
   licenses: readonly LicenseCode[];
   habilitations?: readonly unknown[];
 }): void {
-  if (offerTargetsLicensedProfiles({ requiredTechnicianTypes: requirements.technicianTypes })) return;
+  if (requirements.requiresCertification) return;
 
   const part66 = requirements.licenses.length + (requirements.habilitations?.length ?? 0);
   if (part66 === 0) return;
 
-  const targeted = requirements.technicianTypes
-    .map((code) => TECHNICIAN_TYPES.find((t) => t.code === code)?.label ?? code)
-    .join(', ');
   throw new Error(
-    `This offer targets ${targeted}, which do not hold maintenance licences or aircraft type ratings. ` +
-      'Remove the licence, aircraft and type rating requirements, or target a licensed technician type.',
+    'This offer does not require certified work, so it cannot require a licence or a type rating. ' +
+      'Remove those requirements, or turn certification back on.',
   );
 }
 
@@ -212,6 +216,23 @@ export const offerRepository = {
       await this.replaceRequiredHabilitations(id, []);
     }
 
+    // Apagar la certificación con requisitos Part-66 vivos (Fase 6 tanda C).
+    // Aquí NO hay ninguna FK que fuerce el orden, al contrario que arriba: lo
+    // que lo fuerza es la INVARIANTE — una oferta que declara no necesitar
+    // certificación no puede exigir licencia ni rating, y
+    // assertRequirementsMatchCertification lo rechaza. Sin esta limpieza, un
+    // llamante que actualizara la columna y no llamara después a
+    // replaceRequirements dejaría la oferta en un estado que el repositorio
+    // se niega a aceptar pero que la base ya tiene guardado.
+    //
+    // Acotado a un cambio REAL de true -> false: guardar sin tocar el
+    // interruptor no borra nada, y encenderlo no borra nada tampoco.
+    if (patch.requiresCertification === false && existing.requiresCertification) {
+      await this.replaceRequiredHabilitations(id, []);
+      const { error } = await supabase.from('offer_required_licenses').delete().eq('offer_id', id);
+      throwIfError(error);
+    }
+
     const locationPatch = hasOfferLocationPatch(patch)
       ? controlledOfferLocation({ ...existing, ...patch })
       : {};
@@ -236,20 +257,21 @@ export const offerRepository = {
     description: string;
     contractType: ContractTypeCode;
     productType: OfferProductType;
+    technicianType: TechnicianTypeCode;
+    requiresCertification: boolean;
     locationCityId: string;
     locationCountry?: string;
     locationCity?: string;
     locationBaseAirport?: string;
     minYearsExperience: number;
     status?: OfferStatus;
-    requiredTechnicianTypes?: TechnicianTypeCode[];
     requiredLicenses?: LicenseCode[];
     requiredHabilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
   }): Promise<OfferWithRequirements> {
     // Checked BEFORE the insert: failing after it would leave an orphan
     // offer row behind for a save the caller was told had failed.
-    assertRequirementsMatchTechnicianTypes({
-      technicianTypes: data.requiredTechnicianTypes ?? [],
+    assertRequirementsMatchCertification({
+      requiresCertification: data.requiresCertification,
       licenses: data.requiredLicenses ?? [],
       habilitations: data.requiredHabilitations ?? [],
     });
@@ -263,6 +285,8 @@ export const offerRepository = {
         description: data.description,
         contract_type: data.contractType,
         product_type: data.productType,
+        technician_type: data.technicianType,
+        requires_certification: data.requiresCertification,
         location_city_id: location.locationCityId,
         location_country: location.locationCountry,
         location_city: location.locationCity,
@@ -277,13 +301,13 @@ export const offerRepository = {
 
     const offer = mapOfferRow(inserted as any);
     const requirements = {
-      technicianTypes: data.requiredTechnicianTypes ?? [],
       licenses: data.requiredLicenses ?? [],
       habilitations: data.requiredHabilitations ?? [],
     };
-    await this.replaceRequirements(offer.id, requirements);
+    // `offer.requiresCertification` y no `data.`: lo que vale es lo que la
+    // base acaba de guardar, no lo que el llamante creía estar mandando.
+    await this.replaceRequirements(offer.id, { ...requirements, requiresCertification: offer.requiresCertification });
     return withRequirements(offer, {
-      requiredTechnicianTypes: requirements.technicianTypes,
       requiredLicenses: requirements.licenses,
       requiredHabilitations: requirements.habilitations.map((h) => ({ ...h, offerId: offer.id, createdAt: offer.createdAt })),
     });
@@ -355,7 +379,11 @@ export const offerRepository = {
   },
 
   async replaceRequirements(offerId: string, requirements: {
-    technicianTypes: TechnicianTypeCode[];
+    // Fase 6 tanda C: ya no se recibe `technicianTypes`. El tipo es una
+    // columna de `offers` y lo escribe update()/create(), no este método.
+    // Lo que sí llega es el interruptor, porque es lo que decide si estos
+    // requisitos son legales siquiera.
+    requiresCertification: boolean;
     licenses: LicenseCode[];
     // Optional — omit to leave existing exact habilitation requirements
     // untouched (callers that only manage the broad requirement chips don't
@@ -364,22 +392,15 @@ export const offerRepository = {
   }): Promise<void> {
     // Before the deletes, never after: a rejected save must leave the offer's
     // existing requirements exactly as they were.
-    assertRequirementsMatchTechnicianTypes(requirements);
+    assertRequirementsMatchCertification(requirements);
 
-    const deletes = await Promise.all([
-      supabase.from('offer_required_technician_types').delete().eq('offer_id', offerId),
-      supabase.from('offer_required_licenses').delete().eq('offer_id', offerId),
-    ]);
-    deletes.forEach((result) => throwIfError(result.error));
+    const { error: deleteError } = await supabase
+      .from('offer_required_licenses')
+      .delete()
+      .eq('offer_id', offerId);
+    throwIfError(deleteError);
 
     const inserts = [];
-    if (requirements.technicianTypes.length > 0) {
-      inserts.push(
-        supabase.from('offer_required_technician_types').insert(
-          requirements.technicianTypes.map((code) => ({ offer_id: offerId, technician_type_code: code })),
-        ),
-      );
-    }
     if (requirements.licenses.length > 0) {
       inserts.push(
         supabase.from('offer_required_licenses').insert(

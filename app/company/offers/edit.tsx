@@ -26,8 +26,7 @@ import {
 import { TypeRatingRequirementsEditor, ExactHabilitationRow } from '../../../src/components/company/TypeRatingRequirementsEditor';
 import { RequiredLicensesSection } from '../../../src/components/company/RequiredLicensesSection';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
-import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../../src/constants/technicianTypes';
-import { planOfferTechnicianTypeToggle } from '../../../src/utils/offerTechnicianTypePlan';
+import { TECHNICIAN_TYPES } from '../../../src/constants/technicianTypes';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
 import { OFFER_PRODUCT_TYPES, getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { isLicenseCompatibleWithProductType } from '../../../src/utils/licenseCategoryProductType';
@@ -48,7 +47,8 @@ interface FormState {
   locationCity: string;
   locationBaseAirport: string;
   minYearsExperience: number;
-  requiredTechnicianTypes: TechnicianTypeCode[];
+  technicianType: TechnicianTypeCode;
+  requiresCertification: boolean;
   requiredLicenses: LicenseCode[];
   requiredHabilitations: ExactHabilitationRow[];
   status: OfferStatus;
@@ -92,7 +92,8 @@ export default function EditOfferScreen() {
           locationCity: o.locationCity,
           locationBaseAirport: o.locationBaseAirport ?? '',
           minYearsExperience: o.minYearsExperience,
-          requiredTechnicianTypes: o.requiredTechnicianTypes as TechnicianTypeCode[],
+          technicianType: o.technicianType,
+          requiresCertification: o.requiresCertification,
           requiredLicenses: o.requiredLicenses as LicenseCode[],
           requiredHabilitations: o.requiredHabilitations.map((h) => ({
             licenseCode: h.licenseCode,
@@ -107,27 +108,56 @@ export default function EditOfferScreen() {
     });
   }, [id]);
 
-  // Non-licensed trades (sheet metal, paint, composite) hold no EASA Part-66
-  // licence and no aircraft type rating, so the whole qualification axis is
-  // empty for them and its sections are hidden below. offerRepository
-  // enforces the same rule on write — hiding a section is not a guarantee.
-  const targetsLicensedProfiles = offerTargetsLicensedProfiles({
-    requiredTechnicianTypes: form?.requiredTechnicianTypes ?? [],
-  });
+  // Fase 6 tanda C: el eje Part-66 lo abre o lo cierra el INTERRUPTOR de
+  // certificación, no el tipo de perfil. offerRepository impone la misma
+  // regla al escribir — esconder una sección no es una garantía.
+  //
+  // `?? true` mientras el formulario carga: es el valor por defecto de la
+  // columna y el lado seguro: enseña las secciones un instante de más antes
+  // que esconder requisitos que la oferta sí tiene.
+  const requiresCertification = form?.requiresCertification ?? true;
 
-  function onToggleTechnicianType(code: TechnicianTypeCode) {
-    if (!form) return;
-    const { next, error } = planOfferTechnicianTypeToggle({
-      current: form.requiredTechnicianTypes,
-      code,
-      part66RequirementCount:
-        form.requiredHabilitations.length + form.requiredLicenses.length,
-    });
-    if (error) {
-      notify('Technician types', error);
-      return;
+  /**
+   * Editando una oferta que YA existe, apagar la certificación avisa antes de
+   * limpiar: lo que se descarta está guardado en la base, no es un borrador a
+   * medias como en la pantalla de creación. Mismo patrón que
+   * `onSelectProductType` de aquí abajo (migración 047).
+   *
+   * Si la empresa cancela, el interruptor NO se mueve — no se toca `form`
+   * hasta después del await. Y solo se pregunta cuando hay algo que perder.
+   *
+   * Encenderla nunca pregunta: no destruye nada.
+   */
+  async function onToggleCertification(next: boolean) {
+    if (!form || next === form.requiresCertification) return;
+
+    if (!next) {
+      const dropped: string[] = [];
+      if (form.requiredLicenses.length > 0) {
+        dropped.push(`the ${form.requiredLicenses.join(', ')} licence requirement${form.requiredLicenses.length !== 1 ? 's' : ''}`);
+      }
+      if (form.requiredHabilitations.length > 0) {
+        dropped.push(`${form.requiredHabilitations.length} type rating requirement${form.requiredHabilitations.length !== 1 ? 's' : ''}`);
+      }
+
+      if (dropped.length > 0) {
+        const confirmed = await confirmAction({
+          title: 'Drop the licence requirements?',
+          message:
+            `An offer that does not need certified work cannot require a licence or a type rating, so this clears ${dropped.join(' and ')}.\n\n` +
+            'The offer stays open to technicians who have done the work without holding the licence.',
+          confirmLabel: 'Drop and continue',
+          destructive: true,
+        });
+        if (!confirmed) return;
+      }
     }
-    setField('requiredTechnicianTypes', next);
+
+    setForm((prev) => prev ? {
+      ...prev,
+      requiresCertification: next,
+      ...(next ? {} : { requiredLicenses: [], requiredHabilitations: [] }),
+    } : prev);
   }
 
   /**
@@ -200,13 +230,19 @@ export default function EditOfferScreen() {
         // (orh_matches_offer lo impone), y hace justo eso cuando ve que
         // cambia.
         productType: form.productType,
+        technicianType: form.technicianType,
+        // Igual que productType: va en el update() y no en
+        // replaceRequirements(), y el repositorio limpia los requisitos
+        // Part-66 si ve que se apaga — la invariante lo exige aunque aquí no
+        // haya ninguna FK que fuerce el orden.
+        requiresCertification: form.requiresCertification,
         locationCityId: form.locationCityId,
         minYearsExperience: form.minYearsExperience,
         status,
         visible: status === 'published',
       });
       await offerRepository.replaceRequirements(id, {
-        technicianTypes: form.requiredTechnicianTypes,
+        requiresCertification: form.requiresCertification,
         licenses: form.requiredLicenses,
         habilitations: form.requiredHabilitations,
       });
@@ -253,6 +289,35 @@ export default function EditOfferScreen() {
           subtitle={offer.title}
           onBack={() => router.back()}
         />
+
+        {/* Mismo orden que la pantalla de creación (Fase 6 tanda C):
+            1) tipo de perfil, 2) ¿certificar?, 3) avión o helicóptero,
+            4) licencia, 5) aeronaves. */}
+        <ChoiceSection
+          title="Profile type"
+          helper="One per offer. Two types in one advert are two jobs — publish them separately."
+        >
+          {TECHNICIAN_TYPES.filter((t) => t.isActive).map((t) => (
+            <CompanyChip
+              key={t.code}
+              label={t.label}
+              selected={form.technicianType === t.code}
+              onPress={() => setField('technicianType', t.code as TechnicianTypeCode)}
+            />
+          ))}
+        </ChoiceSection>
+
+        <ChoiceSection
+          title="Does this job need certified work?"
+          helper={
+            requiresCertification
+              ? 'Yes — the technician must hold a valid EASA licence to sign off the work. You can require a licence and type ratings below.'
+              : 'No — you are hiring for hands-on work, not for signing it off. No licence or type rating can be required.'
+          }
+        >
+          <CompanyChip label="Yes, licence required" selected={requiresCertification} onPress={() => { void onToggleCertification(true); }} />
+          <CompanyChip label="No licence needed" selected={!requiresCertification} onPress={() => { void onToggleCertification(false); }} />
+        </ChoiceSection>
 
         <FormSection
           title="Airplanes or helicopters?"
@@ -360,37 +425,20 @@ export default function EditOfferScreen() {
           </FormField>
         </FormSection>
 
-        {targetsLicensedProfiles && (
-          <TypeRatingRequirementsEditor
-            value={form.requiredHabilitations}
-            onChange={(next) => setField('requiredHabilitations', next)}
-            productType={form.productType}
-          />
-        )}
-
-        <ChoiceSection
-          title="Required technician types"
-          helper={
-            targetsLicensedProfiles
-              ? 'Leave empty to accept any type.'
-              : 'These trades hold no maintenance licence, so this offer has no qualification requirements.'
-          }
-        >
-          {TECHNICIAN_TYPES.filter((t) => t.isActive).map((t) => (
-            <CompanyChip
-              key={t.code}
-              label={t.label}
-              selected={form.requiredTechnicianTypes.includes(t.code as TechnicianTypeCode)}
-              onPress={() => onToggleTechnicianType(t.code as TechnicianTypeCode)}
-            />
-          ))}
-        </ChoiceSection>
-
-        {targetsLicensedProfiles && (
+        {/* 4) licencia y 5) aeronaves, solo si la oferta exige certificar. */}
+        {requiresCertification && (
           <RequiredLicensesSection
             requiredLicenses={form.requiredLicenses}
             onChangeLicenses={(next) => setField('requiredLicenses', next)}
             hasExactRequirements={form.requiredHabilitations.length > 0}
+            productType={form.productType}
+          />
+        )}
+
+        {requiresCertification && (
+          <TypeRatingRequirementsEditor
+            value={form.requiredHabilitations}
+            onChange={(next) => setField('requiredHabilitations', next)}
             productType={form.productType}
           />
         )}

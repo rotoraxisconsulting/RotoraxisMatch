@@ -43,7 +43,6 @@ import {
 import { canHold, getCompatiblePropulsion } from '../src/utils/habilitationScope';
 import { HabilitationScope } from '../src/types/habilitationScope';
 import { isLicensedTechnicianType, offerTargetsLicensedProfiles } from '../src/constants/technicianTypes';
-import { planOfferTechnicianTypeToggle } from '../src/utils/offerTechnicianTypePlan';
 import { findOrphanedLicenses } from '../src/constants/licenses';
 import { getMatchDisplayLabel } from '../src/utils/offerMatchExplain';
 import { GENERAL_COMPATIBILITY_LABEL } from '../src/types/matching';
@@ -82,6 +81,12 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     // cómo se puntúa); está aquí porque el tipo lo exige, no porque estos
     // tests dependan de su valor.
     productType: 'Aeroplane',
+    // Fase 6 tanda C: toda oferta nombra UN tipo y declara si exige
+    // certificar. `mechanic` + `true` reproducen el comportamiento previo a
+    // que existieran las dos columnas, que es lo que fijan los tests de
+    // invariancia de más abajo.
+    technicianType: 'mechanic',
+    requiresCertification: true,
     locationCityId: 'airport:XXXX',
     locationCountry: 'Nowhere',
     locationCity: 'Nowhere City',
@@ -91,7 +96,6 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     visible: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    requiredTechnicianTypes: [],
     requiredLicenses: [],
     requiredHabilitations: [],
     ...overrides,
@@ -1637,7 +1641,7 @@ async function main() {
 
   await test('Blockers — Case 1: right technician type + exact rating produces no blocker at all', () => {
     const offer = makeOffer({
-      requiredTechnicianTypes: ['mechanic'],
+      technicianType: 'mechanic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
@@ -1653,7 +1657,7 @@ async function main() {
 
   await test('Blockers — Case 2: wrong technician type blocks even with an exact rating, and caps the total at 19', () => {
     const offer = makeOffer({
-      requiredTechnicianTypes: ['avionic'],
+      technicianType: 'avionic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
@@ -1672,25 +1676,43 @@ async function main() {
     assert.equal(result.mandatoryMissing.length, 0, 'a type blocker is not a missing qualification');
   });
 
-  await test('Blockers — Case 3: an empty requiredTechnicianTypes does not restrict the type and leaves the score untouched', () => {
+  await test('Blockers — Case 3: toda oferta nombra su tipo, así que siempre hay match o blocker', () => {
+    // Fase 6 tanda C: aquí se fijaba el caso "requiredTechnicianTypes vacío =
+    // sin restricción". Ese estado YA NO EXISTE — `offers.technician_type` es
+    // NOT NULL, una oferta siempre dice para qué puesto es. Lo que se fija
+    // ahora es que no queda ningún tercer camino: o casa (línea de match) o
+    // no casa (blocker), nunca silencio.
+    const base = { requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] };
+    const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
+
+    const met = calculateOfferTechnicianMatch(makeOffer({ ...base, technicianType: 'mechanic' }), technician, RATING_INDEX);
+    assert.deepEqual(met.blockers, []);
+    assert.ok(met.matches.some((m) => m.startsWith('Technician type:')), 'el tipo satisfecho se nombra');
+    assert.equal(met.label, 'Excellent match');
+
+    const unmet = calculateOfferTechnicianMatch(makeOffer({ ...base, technicianType: 'painter' }), technician, RATING_INDEX);
+    assert.equal(unmet.blockers.length, 1, 'un tipo que no casa sigue siendo blocker');
+    assert.ok(!unmet.matches.some((m) => m.startsWith('Technician type:')));
+  });
+
+  await test('Certificación — el interruptor NO mueve el score, solo la etiqueta', () => {
+    // Criterio de verificación de la tanda: "ningún score cambia respecto a
+    // hoy". El booleano se guarda y se muestra; que el scorer elija la fuente
+    // de evidencia según él es la Tanda E.
     const base = {
+      contractType: 'permanent' as const,
+      technicianType: 'mechanic' as const,
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     };
     const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
-    const unrestricted = calculateOfferTechnicianMatch(makeOffer({ ...base, requiredTechnicianTypes: [] }), technician, RATING_INDEX);
-    const restrictedAndMet = calculateOfferTechnicianMatch(
-      makeOffer({ ...base, requiredTechnicianTypes: ['mechanic'] }),
-      technician,
-      RATING_INDEX,
-    );
 
-    assert.deepEqual(unrestricted.blockers, [], 'an offer that never named a type cannot disqualify one');
-    assert.equal(unrestricted.total, restrictedAndMet.total, 'not restricting the type must score exactly like satisfying it');
-    assert.equal(unrestricted.label, 'Excellent match');
-    assert.ok(
-      !unrestricted.matches.some((m) => m.startsWith('Technician type:')),
-      'no match line either — claiming a match for a requirement the offer never stated is noise',
-    );
+    const exige = calculateOfferTechnicianMatch(makeOffer({ ...base, requiresCertification: true }), technician, RATING_INDEX);
+    const noExige = calculateOfferTechnicianMatch(makeOffer({ ...base, requiresCertification: false }), technician, RATING_INDEX);
+
+    assert.equal(exige.total, noExige.total, 'el total no puede moverse');
+    assert.deepEqual(exige.breakdown, noExige.breakdown, 'ni un componente del desglose');
+    assert.deepEqual(exige.blockers, noExige.blockers);
+    assert.deepEqual(exige.matches, noExige.matches);
   });
 
   // ── Fase 6 tanda B: la experiencia declarada NO puntúa (todavía) ──────
@@ -1701,7 +1723,7 @@ async function main() {
   await test('Experiencia sin licencia — declararla no mueve NI UN PUNTO del score', () => {
     const offer = makeOffer({
       contractType: 'permanent',
-      requiredTechnicianTypes: ['mechanic'],
+      technicianType: 'mechanic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const base = { technicianTypes: ['mechanic' as const], verificationStatus: 'verified' as const, ...EXACT_A320 };
@@ -1733,7 +1755,7 @@ async function main() {
     // que antes de existir la tabla. Si este número se mueve, la tanda B ha
     // tocado el scorer sin querer.
     const offer = makeOffer({
-      requiredTechnicianTypes: ['mechanic'],
+      technicianType: 'mechanic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const sinNada = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified' });
@@ -1782,7 +1804,7 @@ async function main() {
 
     for (const wanted of ['mechanic', 'avionic'] as const) {
       const result = calculateOfferTechnicianMatch(
-        makeOffer({ ...base, requiredTechnicianTypes: [wanted] }),
+        makeOffer({ ...base, technicianType: wanted }),
         dual,
         RATING_INDEX,
       );
@@ -1796,7 +1818,7 @@ async function main() {
     // Y la otra mitad de la intersección: un tipo que NO tiene sigue
     // bloqueando. "Varios tipos" no puede degenerar en "casa con todo".
     const unrelated = calculateOfferTechnicianMatch(
-      makeOffer({ ...base, requiredTechnicianTypes: ['painter'] }),
+      makeOffer({ ...base, technicianType: 'painter' }),
       dual,
       RATING_INDEX,
     );
@@ -1808,7 +1830,7 @@ async function main() {
     // segundo tipo IRRELEVANTE para la oferta no puede mover ni un punto.
     const base = {
       contractType: 'permanent' as const,
-      requiredTechnicianTypes: ['mechanic' as const],
+      technicianType: 'mechanic' as const,
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     };
     const single = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
@@ -1867,7 +1889,7 @@ async function main() {
   await test('Blockers — Case 7: a blocker plus zero qualification lands on the tightest ceiling (19), not the qualification one (39)', () => {
     const offer = makeOffer({
       contractType: 'permanent',
-      requiredTechnicianTypes: ['avionic'],
+      technicianType: 'avionic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const technician = makeTechnician({
@@ -1899,7 +1921,7 @@ async function main() {
     // of in a wrapper: a rule added to one wrapper would apply to one
     // direction and to none of the ~12 direct call sites in app/.
     const offer = makeOffer({
-      requiredTechnicianTypes: ['avionic'],
+      technicianType: 'avionic',
       minYearsExperience: 5,
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
@@ -1922,7 +1944,7 @@ async function main() {
     // technician with zero qualification, whose own ceiling is 39.
     const offer = makeOffer({
       contractType: 'permanent',
-      requiredTechnicianTypes: ['avionic'],
+      technicianType: 'avionic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const blockedButPerfectlyQualified = makeTechnician({
@@ -1968,11 +1990,18 @@ async function main() {
     assert.equal(isLicensedTechnicianType('not_in_the_catalog'), true);
   });
 
-  await test('Licensed types — an offer with no declared type does not restrict the Part-66 axis (current behaviour)', () => {
+  // Fase 6 tanda C: `offerTargetsLicensedProfiles` se quedó SIN NINGÚN
+  // CONSUMIDOR — la pregunta que respondía la contesta ahora
+  // `offers.requires_certification`. La función (y con ella
+  // isLicensedTechnicianType y TechnicianTypeCatalog.requiresLicense) no se
+  // borra aquí: queda anotada para el barrido de exports muertos. Estos dos
+  // tests se conservan hasta entonces para que quien haga el barrido vea qué
+  // hacía exactamente antes de retirarla.
+  await test('Licensed types [SIN CONSUMIDORES] — an offer with no declared type does not restrict the Part-66 axis', () => {
     assert.equal(offerTargetsLicensedProfiles({ requiredTechnicianTypes: [] }), true);
   });
 
-  await test('Licensed types — an offer for non-licensed trades has no Part-66 axis; one licensed type is enough to keep it', () => {
+  await test('Licensed types [SIN CONSUMIDORES] — an offer for non-licensed trades has no Part-66 axis; one licensed type is enough to keep it', () => {
     assert.equal(offerTargetsLicensedProfiles({ requiredTechnicianTypes: ['painter', 'composite'] }), false);
     assert.equal(offerTargetsLicensedProfiles({ requiredTechnicianTypes: ['mechanic'] }), true);
     assert.equal(
@@ -1982,45 +2011,23 @@ async function main() {
     );
   });
 
-  await test('Type selection — mixing a licensed and a non-licensed type is refused with a message, selection unchanged', () => {
-    const plan = planOfferTechnicianTypeToggle({ current: ['mechanic'], code: 'painter', part66RequirementCount: 0 });
-    assert.deepEqual(plan.next, ['mechanic'], 'a refused tap must not alter the selection');
-    assert.ok(plan.error && plan.error.includes('Painter') && plan.error.includes('Mechanic'), plan.error ?? 'expected an error');
-  });
+  // Los cinco tests de `planOfferTechnicianTypeToggle` vivían aquí. Se van con
+  // el módulo (Fase 6 tanda C): impedían mezclar tipos licenciados y no
+  // licenciados en una oferta, y con UN SOLO tipo por oferta no queda nada que
+  // planificar — la mezcla es inexpresable, no ilegal.
 
-  await test('Type selection — going non-licensed with Part-66 requirements still on the form is refused, not silently cleared', () => {
-    const plan = planOfferTechnicianTypeToggle({ current: [], code: 'painter', part66RequirementCount: 2 });
-    assert.deepEqual(plan.next, []);
-    assert.ok(plan.error && plan.error.includes('2'), 'the message must say how many requirements are in the way');
-
-    const clean = planOfferTechnicianTypeToggle({ current: [], code: 'painter', part66RequirementCount: 0 });
-    assert.deepEqual(clean.next, ['painter']);
-    assert.equal(clean.error, undefined);
-  });
-
-  await test('Type selection — deselecting is always allowed, even when it would otherwise be refused', () => {
-    // Otherwise a company that reached a mixed state (older data) could
-    // never get out of it: every tap refused, including the undo.
-    const plan = planOfferTechnicianTypeToggle({ current: ['painter', 'mechanic'], code: 'painter', part66RequirementCount: 5 });
-    assert.deepEqual(plan.next, ['mechanic']);
-    assert.equal(plan.error, undefined);
-  });
-
-  await test('Type selection — several types of the same family stack normally', () => {
-    const first = planOfferTechnicianTypeToggle({ current: ['mechanic'], code: 'avionic', part66RequirementCount: 3 });
-    assert.deepEqual(first.next, ['mechanic', 'avionic']);
-    const second = planOfferTechnicianTypeToggle({ current: ['painter'], code: 'composite', part66RequirementCount: 0 });
-    assert.deepEqual(second.next, ['painter', 'composite']);
-  });
-
-  await test('Copy — a non-licensed offer reads "General compatibility", never a technical match label', () => {
+  await test('Copy — una oferta que no exige certificar lee "General compatibility", nunca una etiqueta técnica', () => {
+    // Fase 6 tanda C: lo decide el INTERRUPTOR, no el tipo de perfil. Antes un
+    // "painter" salía en esta rama por ser un oficio sin licencia; ahora sale
+    // porque la oferta declara que no hace falta certificar — que es lo que la
+    // fase entera persigue.
     const score = calculateOfferTechnicianMatch(
-      makeOffer({ requiredTechnicianTypes: ['painter'] }),
+      makeOffer({ technicianType: 'painter', requiresCertification: false }),
       makeTechnician({ technicianTypes: ['painter'], verificationStatus: 'verified' }),
       RATING_INDEX,
     );
     assert.equal(
-      getMatchDisplayLabel({ requiredTechnicianTypes: ['painter'] }, score),
+      getMatchDisplayLabel({ requiresCertification: false }, score),
       GENERAL_COMPATIBILITY_LABEL,
       'nothing about the technician\'s qualification was confirmed, because there was nothing to confirm',
     );
@@ -2033,7 +2040,7 @@ async function main() {
 
   await test('Copy — a licensed offer keeps its real band label', () => {
     const offer = makeOffer({
-      requiredTechnicianTypes: ['mechanic'],
+      technicianType: 'mechanic',
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const score = calculateOfferTechnicianMatch(

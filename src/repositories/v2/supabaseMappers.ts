@@ -130,6 +130,13 @@ export function mapOfferRow(row: DbRow): Offer {
     description: row.description,
     contractType: row.contract_type as ContractTypeCode,
     productType: row.product_type as OfferProductType,
+    technicianType: row.technician_type as TechnicianTypeCode,
+    // `Boolean(...)` y no `?? true`: la columna es NOT NULL DEFAULT true, así
+    // que una fila siempre trae un valor real. Un `?? true` escondería un
+    // SELECT que se hubiera olvidado de pedir la columna, y la escondería en
+    // la dirección peligrosa — haciendo pasar por "exige certificar" a una
+    // oferta que declaró lo contrario.
+    requiresCertification: Boolean(row.requires_certification),
     locationCityId: row.location_city_id,
     locationCountry: row.location_country,
     locationCity: row.location_city,
@@ -145,7 +152,7 @@ export function mapOfferRow(row: DbRow): Offer {
 
 type OfferRequirementsPick = Pick<
   OfferWithRequirements,
-  'requiredTechnicianTypes' | 'requiredLicenses' | 'requiredHabilitations'
+  'requiredLicenses' | 'requiredHabilitations'
 >;
 
 export function mapOfferRequiredHabilitationRow(row: DbRow): OfferRequiredHabilitation {
@@ -163,7 +170,7 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   const uniqueIds = [...new Set(offerIds)].filter(Boolean);
   const empty: Record<string, OfferRequirementsPick> = {};
   for (const id of uniqueIds) {
-    empty[id] = { requiredTechnicianTypes: [], requiredLicenses: [], requiredHabilitations: [] };
+    empty[id] = { requiredLicenses: [], requiredHabilitations: [] };
   }
   if (uniqueIds.length === 0) return empty;
 
@@ -172,18 +179,18 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   // debajo, así que dropear la tabla con el lector vivo habría tumbado el
   // listado de ofertas entero — por eso el lector se va AQUÍ y el DROP va
   // después, en la migración 045.
-  const [typesRes, licensesRes, habilitationsRes] = await Promise.all([
-    supabase.from('offer_required_technician_types').select('offer_id, technician_type_code').in('offer_id', uniqueIds),
+  //
+  // Fase 6 tanda C (2026-08-10): y aquí se leía offer_required_technician_types,
+  // exactamente con la misma forma y el mismo riesgo. Lo sustituye la columna
+  // `offers.technician_type` (migración 051), que llega ya en mapOfferRow; el
+  // DROP de la tabla va en la 052, después de este cambio.
+  const [licensesRes, habilitationsRes] = await Promise.all([
     supabase.from('offer_required_licenses').select('offer_id, license_code').in('offer_id', uniqueIds),
     supabase.from('offer_required_habilitations').select('offer_id, license_code, aircraft_type_rating_id, requirement_level, notes, created_at').in('offer_id', uniqueIds),
   ]);
-  throwIfError(typesRes.error);
   throwIfError(licensesRes.error);
   throwIfError(habilitationsRes.error);
 
-  for (const row of (typesRes.data ?? []) as DbRow[]) {
-    empty[row.offer_id]?.requiredTechnicianTypes.push(row.technician_type_code as TechnicianTypeCode);
-  }
   for (const row of (licensesRes.data ?? []) as DbRow[]) {
     empty[row.offer_id]?.requiredLicenses.push(row.license_code as LicenseCode);
   }
@@ -196,7 +203,6 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
 export function withRequirements(offer: Offer, reqs?: OfferRequirementsPick): OfferWithRequirements {
   return {
     ...offer,
-    requiredTechnicianTypes: reqs?.requiredTechnicianTypes ?? [],
     requiredLicenses: reqs?.requiredLicenses ?? [],
     requiredHabilitations: reqs?.requiredHabilitations ?? [],
   };

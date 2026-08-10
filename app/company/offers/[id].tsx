@@ -56,7 +56,7 @@ import { canManageOffers, canSendDirectOffers } from '../../../src/utils/company
 import { resolveTypeRatingLabels } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
-import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
+import { technicianTypeLabel, technicianTypeLabels } from '../../../src/constants/technicianTypes';
 import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
@@ -491,15 +491,23 @@ export default function OfferDetailScreen() {
 
         <CompanyCard style={styles.sectionCard}>
           <SectionTitle title="Requirements" />
-          <RequirementRow label="Technician types" items={offer.requiredTechnicianTypes} />
+          <RequirementRow label="Profile type" items={[technicianTypeLabel(offer.technicianType)]} />
+          {/* Fase 6 tanda C: se dice SIEMPRE, no solo cuando exige licencia.
+              "No licence needed" es información, no ausencia de requisito. */}
+          <RequirementRow
+            label="Certified work"
+            items={[offer.requiresCertification ? 'Licence required' : 'No licence needed']}
+          />
           <RequirementRow label="Licenses" items={offer.requiredLicenses} />
           {offer.requiredHabilitations.length > 0 ? (
             <TypeRatingRequirementsRow habilitations={offer.requiredHabilitations} ratingIndex={ratingIndex} />
           ) : null}
-          {offer.requiredTechnicianTypes.length === 0 &&
-          offer.requiredLicenses.length === 0 &&
-          offer.requiredHabilitations.length === 0 ? (
-            <Text style={styles.noRequirementsText}>No specific requirements — open to all technicians.</Text>
+          {offer.requiredLicenses.length === 0 && offer.requiredHabilitations.length === 0 ? (
+            <Text style={styles.noRequirementsText}>
+              {offer.requiresCertification
+                ? 'No licence or type rating required beyond the profile type.'
+                : 'This job does not need certified work — no licence or type rating applies.'}
+            </Text>
           ) : null}
         </CompanyCard>
 

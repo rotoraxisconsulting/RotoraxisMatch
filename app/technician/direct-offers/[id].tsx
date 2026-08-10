@@ -38,6 +38,7 @@ import { calculateOfferTechnicianMatch, getMatchScoreWeights, getMatchDisplayLab
 import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
+import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
 import { OfferRequest } from '../../../src/types/offerRequest';
 import { OfferWithRequirements } from '../../../src/types/offer';
 import { CompanyProfileView } from '../../../src/types/company';
@@ -313,11 +314,15 @@ export default function DirectOfferDetailScreen() {
               <TechnicianBadge label={`${visibleOffer.minYearsExperience} yrs min`} tone="muted" />
             </View>
 
-            {(visibleOffer.requiredTechnicianTypes.length > 0 ||
-              visibleOffer.requiredLicenses.length > 0 ||
-              visibleOffer.requiredHabilitations.length > 0) && (
+            {/* Siempre visible desde la Fase 6 tanda C: el técnico tiene que
+                ver si el puesto exige licencia antes de aceptar. */}
+            {(
               <View style={styles.reqBlock}>
-                {visibleOffer.requiredTechnicianTypes.length > 0 && <ReqRow label="Types" items={visibleOffer.requiredTechnicianTypes} />}
+                <ReqRow label="Profile type" items={[technicianTypeLabel(visibleOffer.technicianType)]} />
+                <ReqRow
+                  label="Certified work"
+                  items={[visibleOffer.requiresCertification ? 'Licence required' : 'No licence needed']}
+                />
                 {visibleOffer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={visibleOffer.requiredLicenses} />}
                 {visibleOffer.requiredHabilitations.length > 0 && (
                   <ReqRow

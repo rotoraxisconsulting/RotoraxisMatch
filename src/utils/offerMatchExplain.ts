@@ -33,7 +33,7 @@
 // queries Supabase directly. An id missing from the index (e.g. a pending
 // catalog request, never a real catalog row) simply resolves to no match,
 // never a crash.
-import { OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer';
+import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer';
 import { TechnicianHabilitation, TechnicianLicense, TechnicianWithRelations } from '../types/technician';
 import {
   MatchScore,
@@ -44,7 +44,7 @@ import {
   GENERAL_COMPATIBILITY_LABEL,
 } from '../types/matching';
 import { resolveLocationSnapshot } from '../constants/locationCities';
-import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../constants/technicianTypes';
+import { TECHNICIAN_TYPES } from '../constants/technicianTypes';
 import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
 
@@ -581,20 +581,23 @@ export function calculateOfferTechnicianMatch(
   // un perfil de un solo tipo el resultado es idéntico al de antes.
   //
   // Que el tipo deje de puntuar y de bloquear del todo es la Tanda E.
-  if (offer.requiredTechnicianTypes.length > 0) {
-    const held = technician.technicianTypes.filter((t) => offer.requiredTechnicianTypes.includes(t));
-    if (held.length > 0) {
-      // Se nombra SOLO lo que casa, no la lista entera del técnico: la línea
-      // responde "¿cumple lo que pedí?", y sus otros tipos no son parte de
-      // esa respuesta.
-      matches.push(`Technician type: ${held.map(technicianTypeLabel).join(', ')}`);
-    } else {
-      const accepted = offer.requiredTechnicianTypes.map(technicianTypeLabel).join(' or ');
-      const profileIs = technician.technicianTypes.map(technicianTypeLabel).join(', ');
-      blockers.push(
-        `The offer is for ${accepted}; this profile is ${profileIs || 'of no declared type'}.`,
-      );
-    }
+  //
+  // Fase 6 tanda C (2026-08-10): la oferta declara UN SOLO tipo
+  // (`offers.technician_type`), así que la comprobación pasa de "intersección
+  // con el array de la oferta" a "¿está el tipo de la oferta entre los del
+  // técnico?". Misma semántica para todo perfil que antes casaba, sin tocar
+  // pesos ni caps: la oferta seguía siendo un OR y ahora es un OR de uno.
+  //
+  // Ya no hay caso "lista vacía = sin restricción": la columna es NOT NULL,
+  // así que toda oferta nombra su tipo. El técnico sí puede llevar varios
+  // (tanda A) y basta con que uno encaje.
+  if (technician.technicianTypes.includes(offer.technicianType)) {
+    matches.push(`Technician type: ${technicianTypeLabel(offer.technicianType)}`);
+  } else {
+    const profileIs = technician.technicianTypes.map(technicianTypeLabel).join(', ');
+    blockers.push(
+      `The offer is for ${technicianTypeLabel(offer.technicianType)}; this profile is ${profileIs || 'of no declared type'}.`,
+    );
   }
 
   // Minimum declared experience. `yearsExperience` absent (undefined/NULL)
@@ -651,9 +654,14 @@ export function getMatchLabel(total: number): MatchLabel {
 // own (topping out at 75, never "Excellent"); this only decides what the
 // resulting number is CALLED on screen. See GENERAL_COMPATIBILITY_LABEL in
 // types/matching.ts for why non-licensed offers get their own wording.
+//
+// Fase 6 tanda C: lo decide el interruptor que la empresa marca, no el TIPO
+// de perfil buscado. Antes se deducía con offerTargetsLicensedProfiles() y
+// eso arrastraba el problema de fondo de toda la fase — que la etiqueta del
+// puesto gobernara si hacía falta licencia.
 export function getMatchDisplayLabel(
-  offer: Pick<OfferWithRequirements, 'requiredTechnicianTypes'>,
+  offer: Pick<Offer, 'requiresCertification'>,
   score: Pick<MatchScore, 'label'>,
 ): MatchDisplayLabel {
-  return offerTargetsLicensedProfiles(offer) ? score.label : GENERAL_COMPATIBILITY_LABEL;
+  return offer.requiresCertification ? score.label : GENERAL_COMPATIBILITY_LABEL;
 }

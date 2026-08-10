@@ -38,6 +38,28 @@ export function technicianTypeLabels(codes: readonly string[], fallback = '—')
     .join(', ');
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// ⚠ TODO LO QUE VIENE DEBAJO ESTÁ SIN CONSUMIDORES desde la Fase 6 tanda C
+// (2026-08-10). Pendiente del BARRIDO DE EXPORTS MUERTOS, junto a
+// `resolveFamilyKeyLabels` y `resolveAircraftCategoryForFamilyKeys`.
+//
+// La pregunta que respondían — "¿esta oferta tiene eje Part-66?" — la
+// contesta ahora `offers.requires_certification`, un booleano que la empresa
+// marca explícitamente. Deducirla del TIPO de perfil era el problema de
+// fondo de toda la Fase 6: hacía imposible publicar "ayudante para el A320,
+// sin licencia" y convertía la etiqueta del puesto en portero.
+//
+// Arrastran a `TechnicianTypeCatalog.requiresLicense` (types/catalog.ts),
+// cuyo único lector es `isLicensedTechnicianType`, y con él a la columna
+// `technician_types.requires_license` de Postgres, que existe y se queda sin
+// lectores. Los CUATRO son una sola cadena y se van juntos o no se va
+// ninguno. Lista canónica: docs/MISSION_PART66.md, sección "LIMPIEZA".
+//
+// No se borran en la tanda C a propósito: retirar exports es un barrido
+// propio, con su propia verificación por dirección entrante, no una nota al
+// pie de una tanda que ya toca doce ficheros.
+// ══════════════════════════════════════════════════════════════════════
+
 // ── Licensed vs non-licensed profiles ───────────────────────────────────
 // EASA Part-66 licences and aircraft type ratings only exist for the
 // technician types that CERTIFY work (mechanic, avionics, pilot). A sheet

@@ -40,6 +40,37 @@ export interface Offer {
    * en el scoring — el scorer no lo mira.
    */
   productType: OfferProductType;
+  /**
+   * UN SOLO tipo de perfil por oferta (Fase 6 tanda C, migración 051).
+   *
+   * Antes era `requiredTechnicianTypes: TechnicianTypeCode[]` en
+   * `OfferWithRequirements`, alimentado por la tabla puente
+   * `offer_required_technician_types`. Pedir mecánico Y pintor a la vez eran
+   * dos puestos en un anuncio; misma regla que ya rige la licencia (una), el
+   * producto (aviones o helicópteros, migración 047) y la certificación de
+   * aquí abajo: **una oferta afirma una sola cosa**.
+   *
+   * Vive en `Offer` y no en `OfferWithRequirements` porque ya es una columna
+   * de `offers`, no una relación.
+   */
+  technicianType: TechnicianTypeCode;
+  /**
+   * ¿El puesto exige poder CERTIFICAR el trabajo — es decir, licencia EASA en
+   * vigor — o basta con saber hacerlo?
+   *
+   * Es propiedad del PUESTO, no del tipo de perfil de quien lo ocupe. Antes
+   * esto se deducía del tipo (`isLicensedTechnicianType`), lo que hacía
+   * imposible publicar "ayudante para el A320, sin licencia" y convertía al
+   * tipo en portero. Un mecánico puede no tener licencia y seguir siendo
+   * mecánico.
+   *
+   * En la tanda C se guarda y se muestra pero NO cambia el scoring: con
+   * `true` el comportamiento es idéntico al de antes de existir la columna
+   * (de ahí el DEFAULT true de la migración). Que el scorer elija la fuente
+   * de evidencia según este booleano —habilitaciones con licencia vs.
+   * experiencia declarada— es la Tanda E.
+   */
+  requiresCertification: boolean;
   locationCityId: string;
   // Controlled snapshot copied from the canonical location catalog at create/update time.
   locationCountry: string;
@@ -54,7 +85,9 @@ export interface Offer {
 }
 
 export interface OfferWithRequirements extends Offer {
-  requiredTechnicianTypes: TechnicianTypeCode[];
+  // Fase 6 tanda C: aquí vivía `requiredTechnicianTypes: TechnicianTypeCode[]`.
+  // Ahora es `Offer.technicianType`, un valor único y una columna de `offers`.
+  // La tabla puente `offer_required_technician_types` se retira en la 052.
   requiredLicenses: LicenseCode[];
   // Fase 5 (2026-08-04): requiredAircraftTypes — the approximate by-family
   // requirement — was retired with offer_required_aircraft_types. Aircraft is

@@ -222,7 +222,11 @@ function OfferCard({
   const [loadingStatus, setLoadingStatus] = useState<OfferStatus | null>(null);
   const nextActions = NEXT_ACTIONS[offer.status];
   const requirementChips = [
-    ...offer.requiredTechnicianTypes.map(technicianTypeLabel),
+    technicianTypeLabel(offer.technicianType),
+    // El moderador necesita ver el interruptor SIEMPRE, en los dos sentidos:
+    // aquí se revisa si la oferta es coherente, y "exige licencia" es tan
+    // revisable como "no la exige".
+    offer.requiresCertification ? 'Licence required' : 'No licence needed',
     ...offer.requiredLicenses,
     `${offer.minYearsExperience}+ years`,
   ];

@@ -430,8 +430,11 @@ export default function TechnicianProfileScreen() {
   // que un pintor puede tener una B1.1 perfectamente real — y con el gate
   // puesto no tendria donde meterla salvo marcandose "mechanic" para
   // desbloquear el formulario, que es un rodeo absurdo y ademas falsea sus
-  // tipos. No se toca `isLicensedTechnicianType`, que sigue viva y en uso en
-  // el lado de las ofertas hasta la Tanda C.
+  // tipos.
+  //
+  // `isLicensedTechnicianType` se quedo SIN NINGUN CONSUMIDOR en la Tanda C,
+  // cuando el lado de la oferta paso a declarar `requiresCertification`. No
+  // se borra todavia: anotada para el barrido de exports muertos.
 
   function updateField<K extends keyof Technician>(key: K, value: Technician[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
