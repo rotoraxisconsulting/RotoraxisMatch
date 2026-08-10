@@ -86,7 +86,7 @@ export function canRevealIdentity(params: AcceptanceCheckParams): boolean {
 /**
  * Builds a SafeTechnicianPreview — the anonymous company view before acceptance.
  *
- * Includes: id, anonymousCode, technicianType, country, city,
+ * Includes: id, anonymousCode, technicianTypes, country, city,
  *           baseAirport, location coordinates, licenses, habilitations,
  *           yearsExperience, availability, verificationStatus.
  *
@@ -98,7 +98,7 @@ export function getSafeTechnicianPreview(technician: TechnicianWithRelations): S
   return {
     id: technician.id,
     anonymousCode: technician.anonymousCode,
-    technicianType: technician.technicianType,
+    technicianTypes: technician.technicianTypes,
     locationCityId: location?.locationCityId ?? technician.locationCityId,
     country: location?.country ?? '',
     city: location?.city ?? '',

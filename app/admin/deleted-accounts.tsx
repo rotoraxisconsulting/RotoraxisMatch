@@ -25,7 +25,7 @@ import { useDeletedAccounts } from '../../src/state/useDeletedAccounts';
 import type { DeletionFeedbackSummary } from '../../src/state/useDeletedAccounts';
 import type { DeletedAccount } from '../../src/repositories/v2/deletedAccountRepository';
 import { deletionReasonAdminLabel, isSuccessfulExit } from '../../src/constants/deletionReasons';
-import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
+import { technicianTypeLabel as sharedTechnicianTypeLabel } from '../../src/constants/technicianTypes';
 import {
   AdminBadge,
   AdminCard,
@@ -64,9 +64,13 @@ function lifetimeLabel(account: DeletedAccount): string {
   return `Lasted ${Math.round(account.lifetimeDays / 30)} months`;
 }
 
+// Lápidas: el tipo es el CONGELADO en el momento del borrado, un único
+// código de la columna legacy. No pasa por la tabla puente a propósito — las
+// filas del técnico ya no existen (ON DELETE CASCADE), y una lápida describe
+// lo que había, no lo que habría hoy.
 function technicianTypeLabel(code: string | null): string {
   if (!code) return 'Technician';
-  return TECHNICIAN_TYPES.find((type) => type.code === code)?.label ?? code;
+  return sharedTechnicianTypeLabel(code);
 }
 
 function displayName(account: DeletedAccount): string {

@@ -10,7 +10,7 @@ import {
 import { BriefcaseBusiness, Cake, CheckCircle, Clock, Mail, MapPin, UserRound, XCircle } from 'lucide-react-native';
 import type { LucideProps } from 'lucide-react-native';
 import type { Technician, TechnicianWithRelations, UserStatus, VerificationStatus } from '../types';
-import { TECHNICIAN_TYPES } from '../constants/technicianTypes';
+import { technicianTypeLabels } from '../constants/technicianTypes';
 import {
   AdminBadge,
   AdminCard,
@@ -60,9 +60,13 @@ function statusLabel(status: VerificationStatus): string {
   return 'Unverified';
 }
 
-function technicianTypeLabel(details?: TechnicianWithRelations): string {
+// Fase 6 tanda A: varios tipos por perfil. El mapa de labels local que había
+// aquí se sustituye por el helper compartido — era una de las cuatro copias
+// del mismo `find()` sobre TECHNICIAN_TYPES, y cuatro copias son cuatro
+// sitios donde la lista se puede quedar desordenada de forma distinta.
+function technicianTypesLabel(details?: TechnicianWithRelations): string {
   if (!details) return 'Technician profile';
-  return TECHNICIAN_TYPES.find((type) => type.code === details.technicianType)?.label ?? details.technicianType;
+  return technicianTypeLabels(details.technicianTypes, 'Technician profile');
 }
 
 // Fecha de nacimiento tal cual, no la edad derivada: para cotejar una
@@ -195,7 +199,7 @@ export function AdminTechnicianCard({ technician, details, typeRatingLabels, acc
           <View style={styles.metaGrid}>
             <InfoPill icon={Mail} label={details?.email ?? '—'} />
             <InfoPill icon={Cake} label={birthDateLabel(details)} />
-            <InfoPill icon={BriefcaseBusiness} label={technicianTypeLabel(details)} />
+            <InfoPill icon={BriefcaseBusiness} label={technicianTypesLabel(details)} />
             <InfoPill icon={MapPin} label={`${technician.city}, ${technician.country}`} />
             <InfoPill icon={Clock} label={waitingLabel(details)} />
           </View>
@@ -206,7 +210,7 @@ export function AdminTechnicianCard({ technician, details, typeRatingLabels, acc
       ) : (
         <>
           <View style={styles.metaGrid}>
-            <InfoPill icon={BriefcaseBusiness} label={technicianTypeLabel(details)} />
+            <InfoPill icon={BriefcaseBusiness} label={technicianTypesLabel(details)} />
             <InfoPill icon={MapPin} label={`${technician.city}, ${technician.country}`} />
             <InfoPill icon={UserRound} label={`${technician.yearsExperience} years exp. - ${technician.profileCompleteness}% profile`} />
           </View>

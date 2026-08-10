@@ -19,6 +19,25 @@ export function technicianTypeLabel(code: string): string {
   return TECHNICIAN_TYPES.find((t) => t.code === code)?.label ?? code;
 }
 
+// Los tipos de un técnico, en una línea (Fase 6 tanda A: ahora son varios).
+//
+// Ordenados por `sortOrder` del catálogo y NO por el orden de llegada: la
+// lista viaja desde Postgres y desde el estado de un formulario, y sin esto
+// el mismo técnico se pintaría con los tipos permutados según la pantalla.
+//
+// `fallback` en vez de cadena vacía porque hay un caso real en el que la
+// lista llega vacía: una vista de empresa construida sin las relaciones
+// cargadas. Un guion es honesto; una línea en blanco parece un fallo de
+// maquetación.
+export function technicianTypeLabels(codes: readonly string[], fallback = '—'): string {
+  if (codes.length === 0) return fallback;
+  const order = new Map<string, number>(TECHNICIAN_TYPES.map((t) => [t.code, t.sortOrder]));
+  return [...codes]
+    .sort((a, b) => (order.get(a) ?? Number.MAX_SAFE_INTEGER) - (order.get(b) ?? Number.MAX_SAFE_INTEGER))
+    .map(technicianTypeLabel)
+    .join(', ');
+}
+
 // ── Licensed vs non-licensed profiles ───────────────────────────────────
 // EASA Part-66 licences and aircraft type ratings only exist for the
 // technician types that CERTIFY work (mechanic, avionics, pilot). A sheet

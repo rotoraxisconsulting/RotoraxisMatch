@@ -2615,6 +2615,126 @@ Fase 6 debe colapsarlo a UNA sola fuente. Es el momento natural, porque
 no licenciado — el catálogo se queda con `code`, `label`, `isActive` y
 `sortOrder`, es decir, exactamente las columnas que ya viven en la tabla.
 
+### Tanda A — HECHA (10/08/2026)
+
+**Migración 048** — `technician_profile_types (technician_id, type_code)`, PK
+compuesta, FK a `technician_profiles` ON DELETE CASCADE y a `technician_types`.
+Backfill de los 8 perfiles con DOS guardas (ninguno sin fila, y ninguno que
+haya perdido su tipo original). `technician_profiles.technician_type` NO se
+borra: sigue NOT NULL y sigue escribiéndose en el alta con el primer tipo, en
+espera de la migración que la retire. Ningún código la lee ya.
+
+RLS calcada de `technician_habilitations`, no de `technician_licenses`: son
+idénticas salvo que licenses tiene un UPDATE, y esta tabla no puede tenerlo —
+sus dos únicas columnas son la PK, así que cambiar un tipo es borrar e
+insertar.
+
+**La vista pública no cambia.** `technician_type` es campo PÚBLICO del
+contrato, igual que licencias y habilitaciones, y esas dos ya viajan FUERA de
+`technician_public_view`, por su propia tabla con su policy de empresa. La
+vista sólo existe para anular los 5 campos de IDENTIDAD con
+`offer_accepted_between()`. Un campo público multivaluado por la vía de las
+relaciones es el patrón ya establecido; recrear la vista habría significado
+reescribir sus cinco CASE WHEN de privacidad por un campo que no es privado.
+
+**`signup_technician()` gana `p_technician_types text[]`** (séptimo, DEFAULT
+NULL), con el mismo create-then-drop de la 044: un bundle ya cargado que llame
+con 6 argumentos cae en `ARRAY[p_technician_type]` y guarda lo que guardaba
+antes. `AuthContext.ensureRoleProfile` pasa el array desde el metadata, con
+`?? null` para las cuentas creadas antes de este despliegue.
+
+**profileCompleteness: la rama la decide el DATO, no el tipo.** Las dos tablas
+de pesos se conservan intactas; lo que cambia es quién elige entre ellas —
+antes `isLicensedTechnicianType(technicianType)`, que se queda sin argumento
+único en cuanto hay varios tipos; ahora `t.licenseCategories.length > 0`,
+derivado dentro de la función y no recibido como parámetro para que no pueda
+ser incoherente con el cálculo. El 4º parámetro desaparece de la firma.
+
+Propiedad que hace correcta la versión nueva: **el techo de 100 es alcanzable
+por construcción en las dos ramas**. Con licencias, la rama licenciada se
+activa PORQUE el campo está relleno, así que sus 20 puntos ya están ganados —
+la condición de la rama ES el campo. Sin licencias, el eje vale 0. El bug de
+2026-07-29 (35 puntos inalcanzables, perfil perfecto clavado en 65%) no es que
+esté arreglado: es que ya no se puede escribir.
+
+Dos efectos aceptados a propósito:
+1. Un "mechanic" sin licencia deja de topar en 65% y puede llegar a 100. Es la
+   tesis de la fase, y el aviso no se pierde: lo da el match, con
+   `ZERO_QUALIFICATION_CAP` (39).
+2. Declarar la PRIMERA licencia BAJA el porcentaje (100 → 85), porque aparecen
+   los 15 de type ratings sin rellenar. Es inherente a que la licencia abra
+   una pregunta nueva — con denominador dinámico pasaría igual (65/65 →
+   85/100). La pantalla de perfil lo dice con todas las letras para que no
+   parezca un castigo por declarar más.
+
+**El gate de tipo se retira de la pantalla de perfil.** Las secciones de
+Licenses y Habilitations se muestran SIEMPRE. Su premisa ("son datos que no
+existen para él") ya no se sostiene: un pintor puede tener una B1.1 real, y con
+el gate puesto no tendría dónde meterla salvo marcándose "mechanic" para
+desbloquear el formulario. `isLicensedTechnicianType` sigue viva y en uso en el
+lado de las ofertas hasta la Tanda C.
+
+**Selección múltiple con UN componente compartido**
+(`src/components/TechnicianTypeSelector.tsx`) en alta y perfil, leyendo los dos
+del mismo catálogo Postgres. El mínimo de uno vive DENTRO del componente, no en
+cada pantalla, para que no pueda divergir — que es exactamente lo que pasó
+cuando cada una tenía su propio control.
+
+**Licencias huérfanas al quitar un tipo**: se pregunta, no se decide. Sólo
+entran las que ningún tipo conservado reclama (quita "mechanic" pero sigue
+siendo "avionic" → B1.3 entra, B2 no). "Keep them" es respuesta legítima: un
+técnico PUEDE tener licencias sin el tipo marcado, y como el score no depende
+del tipo, no falsea nada.
+
+⚠ `LICENSES_BY_TECHNICIAN_TYPE` es **heurística de UI, no invariante**. Cada
+código tiene su rama menos uno:
+
+- `mechanic`: A1–A4, B1.1–B1.4, B3, L. Las A van con su B1 correspondiente
+  (misma célula y motor, no una categoría aparte), B3 es mecánico de pistón, y
+  L (light aircraft) es trabajo de célula y motor.
+- `avionic`: B2, B2L.
+- `C` **sin rama, y no por prudencia**: es supervisión de mantenimiento base y
+  la sostienen tanto perfiles B1 como B2. Con rama asignada, quitar esa rama la
+  declararía huérfana mientras la otra sigue sosteniéndola. Sin ninguna, no
+  puede quedar huérfana con NINGUNA combinación de tipos — que es el
+  comportamiento correcto. Hay test que lo fija sobre 5 combinaciones.
+
+(Corrección del 2026-08-10 sobre un primer reparto que dejaba A1–A4, B3 y L sin
+rama por prudencia mal aplicada.)
+
+Que el mapa no es norma lo desmienten los datos vivos: hay un `avionic` con
+A2/B1.1/B1.2/B1.3 y un `mechanic` con una B2. La respuesta "keep them" del
+diálogo es siempre legítima.
+
+**Sin tocar**: el scorer (sólo pasa de igualdad a intersección no vacía; pesos,
+caps y `HABILITATION_TIER_FRACTIONS` intactos — hay test de que un perfil de un
+solo tipo puntúa idéntico), `isLicensedTechnicianType`, `requiresLicense`,
+habilitaciones, licencias y ofertas.
+
+**Sonda en transacción con rollback** (5 casos, todos por control de flujo):
+aviónico + pintor a la vez → aceptado · columna legacy intacta · duplicado →
+PK · código fuera de catálogo → FK · aparece en las búsquedas de AMBOS tipos.
+Rollback confirmado (8 filas, 0 residuales).
+
+`tsc` 0 · `test:matching` 160/160 (+10) · `test:url-validation` PASS ·
+`validate:state-machine` PASS · `validate:auth-hooks` PASS ·
+`validate:aircraft-ratings` PASS.
+
+#### Pendiente que deja la tanda A: el filtro de búsqueda por tipo
+
+FUERA DE ALCANCE por decisión explícita, anotado para que no se pierda.
+
+La mitad de abajo ya está: `technicianRepositoryV2.search()` acepta
+`technicianTypes: string[]` y `matchesSearchFilters` los cruza por
+INTERSECCIÓN. Lo que falta es el control en la UI — `TechnicianFilters`
+(`src/types/filters.ts`) nunca tuvo campo de tipo de técnico, así que ni
+`useTechnicianSearch` ni `useMapTechnicians` pasan nada y no hay nada que
+pulsar. Añadirlo es UI nueva, no parte de "cambiar igualdad por intersección".
+
+Ojo al hacerlo: `TechnicianSearchFilters.technicianTypes` (el contrato V2 de
+`filters.ts`) ya existe y NO tiene ningún lector. No es el camino vivo; el que
+se usa de verdad es el `TechnicianFilters` V1 de una sola selección.
+
 ### Pendiente de validar con usuarios reales
 El buscador de aeronaves usa el catálogo de 606 endorsements EASA. Un jefe
 de taller piensa "los A320 nuestros", no "Airbus A320 family — V2500".

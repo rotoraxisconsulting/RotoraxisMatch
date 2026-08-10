@@ -15,6 +15,7 @@ import { Stack, useRouter } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
 import { useTechnicianTypes, useAirports, AirportOption } from '../../../src/auth/useCatalogOptions';
 import { AuthPickerField, PickerOption } from '../../../src/components/auth/AuthPickerField';
+import { TechnicianTypeSelector } from '../../../src/components/TechnicianTypeSelector';
 import { Button } from '../../../src/components/Button';
 import { parseYearsExperience, validateSignupYearsExperience } from '../../../src/utils/yearsExperienceValidation';
 import { colors, spacing } from '../../../src/theme';
@@ -49,18 +50,17 @@ export default function TechnicianSignupScreen() {
   const [birthDay, setBirthDay] = useState('');
   const [birthMonth, setBirthMonth] = useState('');
   const [birthYear, setBirthYear] = useState('');
-  const [technicianType, setTechnicianType] = useState('');
+  // Fase 6 tanda A: varios tipos, mínimo uno. El mínimo lo hace cumplir
+  // TechnicianTypeSelector para que alta y perfil no puedan discrepar;
+  // validate() lo vuelve a comprobar porque el estado inicial es [] y ahí
+  // todavía no ha intervenido el componente.
+  const [technicianTypes, setTechnicianTypes] = useState<string[]>([]);
   const [yearsExperience, setYearsExperience] = useState('');
   const [locationCityId, setLocationCityId] = useState('');
 
   const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const techTypeOptions: PickerOption[] = techTypes.map((t) => ({
-    value: t.code,
-    label: t.label,
-  }));
 
   const airportOptions: PickerOption[] = useMemo(
     () =>
@@ -80,7 +80,7 @@ export default function TechnicianSignupScreen() {
     if (password !== confirmPassword) return 'Passwords do not match.';
     if (!birthYear || !birthMonth || !birthDay) return 'Date of birth is required.';
     if (!buildDate(birthYear, birthMonth, birthDay)) return 'Enter a valid date of birth.';
-    if (!technicianType) return 'Select your technician type.';
+    if (technicianTypes.length === 0) return 'Select at least one profile type.';
     const yearsError = validateSignupYearsExperience(yearsExperience);
     if (yearsError) return yearsError;
     if (!locationCityId) return 'Select your base airport.';
@@ -114,7 +114,14 @@ export default function TechnicianSignupScreen() {
           first_name: firstName.trim(),
           last_name: lastName.trim(),
           birth_date: birthDate,
-          technician_type: technicianType,
+          // Ambas claves, a propósito. `technician_types` (plural) es la
+          // real; `technician_type` (singular) se sigue escribiendo porque
+          // la columna homónima es NOT NULL y porque el metadata de una
+          // cuenta ya creada es inmutable desde aquí: si alguien confirma el
+          // email con un bundle antiguo, ensureRoleProfile todavía encuentra
+          // el campo que espera. Se retira con la columna.
+          technician_type: technicianTypes[0],
+          technician_types: technicianTypes,
           // Stored as a NUMBER, not the raw input string: ensureRoleProfile
           // forwards this straight to the RPC's integer parameter when the
           // profile is created after email confirmation.
@@ -140,7 +147,8 @@ export default function TechnicianSignupScreen() {
         p_first_name: firstName.trim(),
         p_last_name: lastName.trim(),
         p_birth_date: birthDate,
-        p_technician_type: technicianType,
+        p_technician_type: technicianTypes[0],
+        p_technician_types: technicianTypes,
         p_location_city_id: locationCityId,
         p_years_experience: years,
       });
@@ -314,16 +322,25 @@ export default function TechnicianSignupScreen() {
               </View>
             </View>
 
-            {/* Technician type */}
-            <AuthPickerField
-              label="Technician type"
-              placeholder="Select your type..."
-              value={technicianType}
-              onChange={setTechnicianType}
-              options={techTypeOptions}
-              loading={typesLoading}
-              modalTitle="Select technician type"
-            />
+            {/* Tipos de perfil — varios, mínimo uno. Mismo componente y
+                mismo comportamiento que en la pantalla de perfil. */}
+            <FormField label="Profile types">
+              <TechnicianTypeSelector
+                options={techTypes}
+                selected={technicianTypes}
+                onChange={setTechnicianTypes}
+                loading={typesLoading}
+                palette={{
+                  text: colors.white,
+                  muted: colors.cyanLight,
+                  border: colors.cyanLight + '55',
+                  surface: 'transparent',
+                  accent: colors.cyan,
+                  accentText: colors.cyan,
+                  accentSurface: colors.cyan + '33',
+                }}
+              />
+            </FormField>
 
             {/* Years of experience — required here, unlike the profile
                 screen's optional-looking copy: this is the one moment the

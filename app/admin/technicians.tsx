@@ -82,7 +82,11 @@ function filterTechnicians(
         technician.city,
         technician.country,
         technician.baseAirport,
-        details?.technicianType,
+        // Fase 6 tanda A: TODOS los tipos, no el primero. Este buscador es
+        // texto libre, así que la "intersección" aquí es que la consulta
+        // aparezca en cualquiera de ellos — buscar "painter" tiene que
+        // encontrar a un aviónico que también pinta.
+        ...(details?.technicianTypes ?? []),
         ...technician.licenseCategories,
         ...technician.aircraftTypes,
       ]

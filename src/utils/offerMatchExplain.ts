@@ -573,13 +573,26 @@ export function calculateOfferTechnicianMatch(
   // there is nothing to evaluate — never a blocker, and no match line
   // either (claiming a match for a requirement the offer never stated would
   // be noise).
+  //
+  // Fase 6 tanda A (2026-08-10): un técnico lleva VARIOS tipos, así que la
+  // comprobación pasa de igualdad-contra-uno a INTERSECCIÓN NO VACÍA. Un
+  // "aviónico + mecánico" casa con una oferta de mecánicos, que es la razón
+  // de ser de la tanda. Pesos, caps y el resto del scorer, sin tocar: para
+  // un perfil de un solo tipo el resultado es idéntico al de antes.
+  //
+  // Que el tipo deje de puntuar y de bloquear del todo es la Tanda E.
   if (offer.requiredTechnicianTypes.length > 0) {
-    if (offer.requiredTechnicianTypes.includes(technician.technicianType)) {
-      matches.push(`Technician type: ${technicianTypeLabel(technician.technicianType)}`);
+    const held = technician.technicianTypes.filter((t) => offer.requiredTechnicianTypes.includes(t));
+    if (held.length > 0) {
+      // Se nombra SOLO lo que casa, no la lista entera del técnico: la línea
+      // responde "¿cumple lo que pedí?", y sus otros tipos no son parte de
+      // esa respuesta.
+      matches.push(`Technician type: ${held.map(technicianTypeLabel).join(', ')}`);
     } else {
       const accepted = offer.requiredTechnicianTypes.map(technicianTypeLabel).join(' or ');
+      const profileIs = technician.technicianTypes.map(technicianTypeLabel).join(', ');
       blockers.push(
-        `The offer is for ${accepted}; this profile is a ${technicianTypeLabel(technician.technicianType)}.`,
+        `The offer is for ${accepted}; this profile is ${profileIs || 'of no declared type'}.`,
       );
     }
   }

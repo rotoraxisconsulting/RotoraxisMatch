@@ -10,6 +10,7 @@ import { AircraftRatingIndex, buildAircraftRatingIndex, habilitationCoversFamily
 import { catalogRepository } from './catalogRepository';
 import {
   DbRow,
+  loadTechnicianProfileTypes,
   loadTechnicianRelations,
   mapPrivateTechnicianRow,
   mapPublicTechnicianRow,
@@ -21,14 +22,19 @@ import {
 import { documentRepositoryV2 } from './documentRepositoryV2';
 import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan';
 
+// `technician_type` (singular) NO se pide en ninguno de los dos SELECT desde
+// la Fase 6 tanda A: los tipos salen de `technician_profile_types` vía
+// loadTechnicianProfileTypes(). La columna sigue en la tabla y en la vista
+// hasta la migración que la retire, pero pedirla aquí sería mantener viva la
+// fuente que la tabla puente sustituye.
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
-  technician_type, location_city_id, availability, years_experience,
+  location_city_id, availability, years_experience,
   verification_status, profile_completeness, social_links, created_at, updated_at
 `;
 
 const PUBLIC_SELECT = `
-  id, anonymous_code, technician_type, location_city_id, country, city,
+  id, anonymous_code, location_city_id, country, city,
   base_airport, latitude, longitude, availability, years_experience,
   verification_status, profile_completeness, first_name, last_name, email,
   phone, social_links
@@ -82,7 +88,7 @@ function warnIfTruncated(context: string, fetched: number, total: number | null)
   );
 }
 
-function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId' | 'createdAt'>>): Record<string, unknown> {
+function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId' | 'createdAt' | 'technicianTypes'>>): Record<string, unknown> {
   return {
     ...(patch.anonymousCode !== undefined ? { anonymous_code: patch.anonymousCode } : {}),
     ...(patch.firstName !== undefined ? { first_name: patch.firstName } : {}),
@@ -90,7 +96,8 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
     ...(patch.email !== undefined ? { email: patch.email } : {}),
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
     ...(patch.birthDate !== undefined ? { birth_date: patch.birthDate } : {}),
-    ...(patch.technicianType !== undefined ? { technician_type: patch.technicianType } : {}),
+    // `technicianTypes` NO se escribe aquí: vive en la tabla puente, no en una
+    // columna de technician_profiles. Va por replaceProfileTypes().
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.availability !== undefined ? {
       // Sólo `immediately` y `contract_types`. `status` es etiqueta de UI y
@@ -116,10 +123,19 @@ function matchesAny<T>(selected: T[] | undefined, value: T | undefined): boolean
   return value !== undefined && selected.includes(value);
 }
 
+// Fase 6 tanda A: INTERSECCIÓN, no igualdad. Un técnico entra si comparte
+// AL MENOS UN tipo con los buscados — es la razón de ser de la tanda: quien
+// es aviónico y mecánico tiene que salir en las dos búsquedas. La igualdad
+// contra un único tipo era justo el portero que se retira.
+function intersects(selected: string[] | undefined, values: readonly string[]): boolean {
+  if (!selected || selected.length === 0) return true;
+  return selected.some((s) => values.includes(s));
+}
+
 function matchesSearchFilters(
   preview: SafeTechnicianPreview,
   filters: {
-    technicianType?: string;
+    technicianTypes?: string[];
     licenseCodes?: string[];
     aircraftFamilyKeys?: string[];
     country?: string;
@@ -130,7 +146,7 @@ function matchesSearchFilters(
   },
   ratingIndex: AircraftRatingIndex,
 ): boolean {
-  if (filters.technicianType && preview.technicianType !== filters.technicianType) return false;
+  if (!intersects(filters.technicianTypes, preview.technicianTypes)) return false;
   if (filters.country && preview.country !== filters.country) return false;
   if (filters.city && preview.city !== filters.city) return false;
   if (!matchesAny(filters.verificationStatuses, preview.verificationStatus)) return false;
@@ -171,10 +187,15 @@ export const technicianRepositoryV2 = {
       .order('created_at', { ascending: false });
     throwIfError(error);
     const rows = (data ?? []) as DbRow[];
+    // Un lote, no una consulta por técnico: estas tres rutas devuelven
+    // TechnicianProfile SIN relaciones, así que cargan los tipos por su
+    // cuenta en vez de arrastrar licencias y habilitaciones que después
+    // desechan.
+    const types = await loadTechnicianProfileTypes(rows.map((row) => row.id));
     return rows.map((row) => {
       const full = mapPrivateTechnicianRow(row);
       const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
-      return profile;
+      return { ...profile, technicianTypes: types[row.id] ?? [] };
     });
   },
 
@@ -189,10 +210,11 @@ export const technicianRepositoryV2 = {
     throwIfError(error);
     warnIfTruncated('getPublicProfiles', (data ?? []).length, count ?? null);
     const rows = (data ?? []) as DbRow[];
+    const types = await loadTechnicianProfileTypes(rows.map((row) => row.id));
     return rows.map((row) => {
       const full = publicRowToPrivateCompat(row);
       const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
-      return profile;
+      return { ...profile, technicianTypes: types[row.id] ?? [] };
     });
   },
 
@@ -206,14 +228,14 @@ export const technicianRepositoryV2 = {
     if (!error && data) {
       const full = mapPrivateTechnicianRow(data as DbRow);
       const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
-      return profile;
+      return { ...profile, technicianTypes: (await loadTechnicianProfileTypes([id]))[id] ?? [] };
     }
 
     const publicRow = await getPublicRow(id);
     if (!publicRow) return null;
     const full = publicRowToPrivateCompat(publicRow);
     const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
-    return profile;
+    return { ...profile, technicianTypes: (await loadTechnicianProfileTypes([id]))[id] ?? [] };
   },
 
   async getLicenses(technicianId: string) {
@@ -283,6 +305,60 @@ export const technicianRepositoryV2 = {
     const full = mapPrivateTechnicianRow(data as DbRow);
     const { licenses: _licenses, habilitations: _habilitations, ...profile } = full;
     return profile;
+  },
+
+  /**
+   * Reemplaza los tipos de perfil de un técnico (Fase 6 tanda A).
+   *
+   * Diferencial, NO borrar-e-insertar: se calcula qué sobra y qué falta y se
+   * tocan sólo esas filas. Un DELETE completo seguido de INSERT dejaría al
+   * técnico sin ningún tipo durante un instante, y como no hay transacción
+   * desde el cliente, un fallo de red entre las dos mitades lo dejaría así
+   * de forma permanente — sin tipos, que es un estado que el modelo prohíbe.
+   * Guardar sin cambiar nada no escribe.
+   *
+   * `codes` vacío se rechaza aquí y no en la pantalla: el mínimo de uno es
+   * regla del modelo, y la pantalla no puede ser el único sitio donde vive.
+   */
+  async replaceProfileTypes(technicianId: string, codes: string[]): Promise<void> {
+    const next = [...new Set(codes)].filter(Boolean);
+    if (next.length === 0) {
+      throw new Error('Select at least one technician type.');
+    }
+
+    const { data: existingRows, error: selectError } = await supabase
+      .from('technician_profile_types')
+      .select('type_code')
+      .eq('technician_id', technicianId);
+    throwIfError(selectError);
+    const existing = (existingRows ?? []).map((r: any) => r.type_code as string);
+
+    const toRemove = existing.filter((c) => !next.includes(c));
+    const toAdd = next.filter((c) => !existing.includes(c));
+
+    if (toAdd.length > 0) {
+      const { data, error } = await supabase
+        .from('technician_profile_types')
+        .insert(toAdd.map((code) => ({ technician_id: technicianId, type_code: code })))
+        .select('type_code');
+      throwIfError(error);
+      // Hay filas que insertar, así que 0 filas sólo puede ser RLS
+      // (tpt_insert_own) bloqueando — nunca un no-op legítimo.
+      throwIfNoRows(data, 'Could not save your profile types — your session may have expired. Sign in again and retry.');
+    }
+
+    // Los añadidos van ANTES que los borrados: si el INSERT falla, el técnico
+    // conserva los tipos que ya tenía en vez de quedarse sin ninguno.
+    if (toRemove.length > 0) {
+      const { data, error } = await supabase
+        .from('technician_profile_types')
+        .delete()
+        .eq('technician_id', technicianId)
+        .in('type_code', toRemove)
+        .select('type_code');
+      throwIfError(error);
+      throwIfNoRows(data, 'Could not remove the deselected profile types — your session may have expired.');
+    }
   },
 
   /**
@@ -432,7 +508,7 @@ export const technicianRepositoryV2 = {
   },
 
   async search(filters: {
-    technicianType?: string;
+    technicianTypes?: string[];
     licenseCodes?: string[];
     aircraftFamilyKeys?: string[];
     country?: string;

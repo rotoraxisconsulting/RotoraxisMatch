@@ -24,7 +24,7 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAdminDashboard } from '../../src/state/useAdminDashboard';
 import type { OfferWithRequirements } from '../../src/types/offer';
 import type { OfferStatus } from '../../src/types/enums';
-import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
+import { technicianTypeLabel } from '../../src/constants/technicianTypes';
 import {
   AdminBadge,
   AdminCard,
@@ -107,10 +107,6 @@ function filterOffers(offers: OfferWithRequirements[], status: StatusFilter): Of
     if (statusOrder !== 0) return statusOrder;
     return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
   });
-}
-
-function technicianTypeLabel(code: string): string {
-  return TECHNICIAN_TYPES.find((type) => type.code === code)?.label ?? code.replace(/_/g, ' ');
 }
 
 function contractLabel(code: string): string {

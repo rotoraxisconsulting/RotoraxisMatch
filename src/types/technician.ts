@@ -200,7 +200,16 @@ export interface TechnicianProfile {
   birthDate: string;
 
   // Public
-  technicianType: TechnicianTypeCode;
+  //
+  // Fase 6 tanda A (2026-08-10): un técnico puede tener VARIOS tipos, sin
+  // restricción de mezcla — se puede ser aviónico y pintor a la vez. Vive en
+  // la tabla puente `technician_profile_types` (migración 048), NO en la
+  // columna `technician_profiles.technician_type`, que sigue existiendo por
+  // compatibilidad y se retirará cuando no queden lectores.
+  //
+  // Invariante: NUNCA vacío para un perfil persistido. El signup exige al
+  // menos uno y la pantalla de perfil no deja guardar con cero.
+  technicianTypes: TechnicianTypeCode[];
   // Location FK only. Country, city, base airport and coordinates are derived
   // from the canonical location catalog when building views.
   // Required: every persisted technician profile must reference a valid location_airports entry.

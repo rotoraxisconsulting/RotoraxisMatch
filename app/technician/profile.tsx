@@ -30,8 +30,11 @@ import { Technician, AvailabilityStatus } from '../../src/types';
 import { SocialLinks } from '../../src/types/technician';
 import { isValidUrl, normalizeUrl } from '../../src/utils/urlValidation';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
-import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
-import { isLicensedTechnicianType } from '../../src/constants/technicianTypes';
+import { LICENSE_CATEGORIES, findOrphanedLicenses } from '../../src/constants/licenses';
+import { technicianTypeLabel } from '../../src/constants/technicianTypes';
+import { TechnicianTypeSelector } from '../../src/components/TechnicianTypeSelector';
+import { useTechnicianTypes } from '../../src/auth/useCatalogOptions';
+import { confirmAction } from '../../src/utils/platformAlert';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
 import { HabilitationsEditor, HabilitationRow as HabRow } from '../../src/components/technician/HabilitationsEditor';
 import { DateField } from '../../src/components/DateField';
@@ -75,7 +78,8 @@ type SupaTechRow = {
   last_name: string;
   email: string;
   phone: string | null;
-  technician_type: string;
+  // Sin `technician_type`: esta pantalla ya no lo pide en su SELECT. Los
+  // tipos vienen de `technician_profile_types` (Fase 6 tanda A).
   location_city_id: string;
   availability: {
     immediately?: boolean;
@@ -161,6 +165,9 @@ export default function TechnicianProfileScreen() {
   const { profile, loading: authLoading } = useAuth();
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  // Mismo catalogo que el alta (tabla `technician_types`), para que el
+  // selector compartido enseñe exactamente lo mismo en los dos sitios.
+  const { options: techTypeOptions, loading: techTypesLoading } = useTechnicianTypes();
 
   const [techId, setTechId] = useState<string | null>(null);
   const [form, setForm] = useState<Technician | null>(null);
@@ -189,12 +196,18 @@ export default function TechnicianProfileScreen() {
   // fue justo el bug de la primera version (el boton "Save changes" no se
   // activaba al cambiar los anios).
   const [yearsInput, setYearsInput] = useState('');
-  // El tipo de tecnico NO se edita en esta pantalla (se fija en el alta), pero
-  // decide si el eje Part-66 existe siquiera para este perfil: un chapista,
-  // pintor o tecnico de composite no tiene licencia ni type ratings, asi que
-  // las secciones de Licenses y Habilitations no se le muestran. Fuera de
-  // `form` porque el tipo V1 `Technician` no tiene este campo.
-  const [technicianType, setTechnicianType] = useState('');
+  // Fase 6 tanda A: varios tipos de perfil, EDITABLES aqui (antes se fijaban
+  // en el alta y no habia forma de cambiarlos). Ya NO deciden nada mas: el
+  // eje Part-66 se muestra siempre y la tabla de completitud la elige lo que
+  // el tecnico declara, no su etiqueta. Fuera de `form` porque el tipo V1
+  // `Technician` no tiene este campo.
+  //
+  // `typesLoaded` distingue "aun no ha llegado" de "llego vacio". Sin esa
+  // distincion, guardar antes de que responda la consulta mandaria [] a
+  // replaceProfileTypes y borraria los tipos del tecnico.
+  const [technicianTypes, setTechnicianTypes] = useState<string[]>([]);
+  const [typesLoaded, setTypesLoaded] = useState(false);
+  const [savedTechnicianTypes, setSavedTechnicianTypes] = useState<string[]>([]);
   // Enlaces sociales, EN CRUDO tal y como los teclea el tecnico (sin
   // normalizar): normalizar en cada pulsacion pelearia con el cursor. La
   // normalizacion pasa una sola vez, al guardar.
@@ -248,8 +261,9 @@ export default function TechnicianProfileScreen() {
     try {
       const { data: techRow, error: techErr } = await supabase
         .from('technician_profiles')
+        // Sin `technician_type`: los tipos salen de la tabla puente de abajo.
         .select(
-          'id, anonymous_code, first_name, last_name, email, phone, technician_type, location_city_id, availability, years_experience, verification_status, profile_completeness, social_links',
+          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, years_experience, verification_status, profile_completeness, social_links',
         )
         .eq('user_id', profile.id)
         .maybeSingle();
@@ -263,9 +277,8 @@ export default function TechnicianProfileScreen() {
       }
 
       setTechId(techRow.id);
-      setTechnicianType((techRow as SupaTechRow).technician_type ?? '');
 
-      const [licResult, habResult] = await Promise.all([
+      const [licResult, habResult, typeResult] = await Promise.all([
         supabase
           .from('technician_licenses')
           .select('license_code, issued_at, expires_at')
@@ -274,7 +287,21 @@ export default function TechnicianProfileScreen() {
           .from('technician_habilitations')
           .select('id, license_code, aircraft_type_rating_id, experience_years, issued_at, expires_at, is_current')
           .eq('technician_id', techRow.id),
+        supabase
+          .from('technician_profile_types')
+          .select('type_code')
+          .eq('technician_id', techRow.id)
+          .order('type_code'),
       ]);
+
+      // Un fallo aqui NO se traga: sin tipos cargados, guardar mandaria [] a
+      // replaceProfileTypes (que lo rechaza) o, peor, el selector enseñaria
+      // el perfil como si no tuviera ninguno. Mejor caer al banner de error.
+      if (typeResult.error) throw typeResult.error;
+      const loadedTypes = ((typeResult.data ?? []) as { type_code: string }[]).map((r) => r.type_code);
+      setTechnicianTypes(loadedTypes);
+      setSavedTechnicianTypes(loadedTypes);
+      setTypesLoaded(true);
 
       const licRows = (licResult.data ?? []) as { license_code: string; issued_at: string | null; expires_at: string | null }[];
       const licenses = licRows.map((r) => r.license_code);
@@ -365,12 +392,17 @@ export default function TechnicianProfileScreen() {
     }, [loadProfile]),
   );
 
-  // Las licencias y los type ratings solo existen para los tipos que
-  // certifican (mechanic, avionic, pilot). Para el resto no hay nada que
-  // declarar en ese eje — ver isLicensedTechnicianType. Mientras el perfil
-  // carga, technicianType es '' y el helper devuelve `true`: se muestran las
-  // secciones, que es el comportamiento previo y el lado seguro del error.
-  const holdsPart66Qualifications = isLicensedTechnicianType(technicianType);
+  // Fase 6 tanda A (2026-08-10): AQUI VIVIA `holdsPart66Qualifications`, que
+  // escondia las secciones de Licenses y Habilitations a los tipos que no
+  // certifican. Se retira: el eje Part-66 se muestra SIEMPRE.
+  //
+  // Su premisa original ("son datos que no existen para el") ya no se
+  // sostiene. Estar licenciado es propiedad de la PERSONA, no del tipo, asi
+  // que un pintor puede tener una B1.1 perfectamente real — y con el gate
+  // puesto no tendria donde meterla salvo marcandose "mechanic" para
+  // desbloquear el formulario, que es un rodeo absurdo y ademas falsea sus
+  // tipos. No se toca `isLicensedTechnicianType`, que sigue viva y en uso en
+  // el lado de las ofertas hasta la Tanda C.
 
   function updateField<K extends keyof Technician>(key: K, value: Technician[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -388,6 +420,13 @@ export default function TechnicianProfileScreen() {
   // estado): mantiene el flag de sucio en linea con el resto del formulario.
   function updateSocialLink(key: string, value: string) {
     setSocialInputs((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+  }
+
+  // Unico punto de edicion de technicianTypes desde la UI. El minimo de uno
+  // lo hace cumplir TechnicianTypeSelector, no esto.
+  function updateTechnicianTypes(next: string[]) {
+    setTechnicianTypes(next);
     setIsDirty(true);
   }
 
@@ -468,6 +507,18 @@ export default function TechnicianProfileScreen() {
   async function handleSave() {
     if (!form || !isDirty || !techId) return;
 
+    // Los tipos aun no han llegado: guardar ahora los borraria. No es un
+    // caso teorico — basta con pulsar Save mientras la consulta esta en
+    // vuelo.
+    if (!typesLoaded) {
+      setProfileError('Still loading your profile types. Try again in a moment.');
+      return;
+    }
+    if (technicianTypes.length === 0) {
+      setProfileError('Select at least one profile type.');
+      return;
+    }
+
     // Los anios declarados son OBLIGATORIOS desde que el alta los pide
     // (migracion 044). Aqui se revalida porque esta pantalla es el otro
     // camino de escritura del campo: sin esto, un tecnico podia vaciar la
@@ -515,6 +566,47 @@ export default function TechnicianProfileScreen() {
       return;
     }
 
+    // ── Licencias huerfanas al quitar un tipo (Fase 6 tanda A) ──────────
+    //
+    // Se PREGUNTA, no se decide. Un tecnico PUEDE tener licencias sin el tipo
+    // correspondiente marcado: es un estado valido, no una inconsistencia —
+    // el score no depende del tipo, asi que no rompe ni falsea nada. Por eso
+    // "No, keep them" no es la opcion de escape, es una respuesta legitima.
+    //
+    // Solo entran las que quedarian HUERFANAS: una licencia que sigue siendo
+    // de un tipo conservado no se pregunta (quita "mechanic" pero sigue
+    // siendo "avionic" -> B1.3 entra, B2 no). Ver findOrphanedLicenses, y
+    // sobre todo el aviso de LICENSES_BY_TECHNICIAN_TYPE: ese mapa es
+    // heuristica para preguntar mejor, jamas una invariante.
+    let licensesToSave = form.licenseCategories;
+    let habsToSave = habilitations;
+    let dropOrphanedHabs = false;
+
+    const orphaned = findOrphanedLicenses(form.licenseCategories, savedTechnicianTypes, technicianTypes);
+    if (orphaned.length > 0) {
+      const removedTypes = savedTechnicianTypes.filter((t) => !technicianTypes.includes(t));
+      const confirmed = await confirmAction({
+        title: `Remove ${orphaned.join(', ')} as well?`,
+        message:
+          `You are removing ${removedTypes.map(technicianTypeLabel).join(', ')} from your profile. ` +
+          `${orphaned.join(', ')} ${orphaned.length > 1 ? 'are licences' : 'is a licence'} of that work, ` +
+          'along with any type ratings declared under it.\n\n' +
+          'Keeping them is perfectly valid — your profile type does not decide which licences you hold, ' +
+          'and companies match you on your licences, not on your type.',
+        confirmLabel: 'Remove them',
+        cancelLabel: 'Keep them',
+        destructive: true,
+      });
+      if (confirmed) {
+        licensesToSave = form.licenseCategories.filter((c) => !orphaned.includes(c as any));
+        habsToSave = habilitations.filter((h) => !orphaned.includes(h.licenseCode as any));
+        // Las habilitaciones hay que reescribirlas aunque el tecnico no haya
+        // tocado esa seccion: sin esto, replaceHabilitations no correria y la
+        // FK compuesta bloquearia el borrado de la licencia.
+        dropOrphanedHabs = habsToSave.length !== habilitations.length;
+      }
+    }
+
     // Se persiste la forma normalizada y SIN claves vacias; las claves que no
     // tienen campo en esta pantalla se devuelven intactas. Objeto vacio -> NULL,
     // para no dejar `{}` en la columna.
@@ -544,20 +636,19 @@ export default function TechnicianProfileScreen() {
     // instead would destroy real technician data just to force the license
     // removal through.
     const derivedAircraftTypes = [...new Set(
-      habilitations
+      habsToSave
         .map((h) => ratingsById.get(h.aircraftTypeRatingId)?.aircraftFamily)
         .filter((v): v is string => Boolean(v)),
     )];
     const trimmedYears = yearsInput.trim();
     const yearsToSave = trimmedYears === '' ? null : Math.max(0, Math.min(70, parseInt(trimmedYears, 10) || 0));
+    // Se calcula sobre lo que SE VA A GUARDAR, no sobre lo que hay en
+    // pantalla: si el tecnico acaba de aceptar retirar sus licencias
+    // huerfanas, la tabla de pesos que le toca es la no licenciada.
     const newCompleteness = computeProfileCompleteness(
-      { ...form, aircraftTypes: derivedAircraftTypes },
+      { ...form, licenseCategories: licensesToSave, aircraftTypes: derivedAircraftTypes },
       yearsToSave !== null,
       socialDeclared,
-      // Decide la tabla de pesos: un tipo no licenciado no puede tener
-      // licencias ni type ratings, asi que esos 35 puntos se reparten entre
-      // lo que SI puede rellenar. Sin esto su maximo real era 65%.
-      technicianType,
     );
 
     setSaving(true);
@@ -593,27 +684,38 @@ export default function TechnicianProfileScreen() {
         throw new Error('Could not save your profile — your session may have expired. Sign in again and retry.');
       }
 
-      // 1) Upsert held licenses in place FIRST — never delete+reinsert (see
+      // 1) Tipos de perfil. Diferencial y con los añadidos antes que los
+      // borrados, para que un fallo a mitad nunca deje al tecnico sin
+      // ninguno — ver technicianRepositoryV2.replaceProfileTypes.
+      await technicianRepositoryV2.replaceProfileTypes(techId, technicianTypes);
+      setSavedTechnicianTypes(technicianTypes);
+
+      // 2) Upsert held licenses in place FIRST — never delete+reinsert (see
       // technicianRepositoryV2.upsertLicenses). Ensures any brand-new
       // license code already has a row before a habilitation below can
       // reference it.
       await technicianRepositoryV2.upsertLicenses(
         techId,
-        form.licenseCategories.map((code) => ({
+        licensesToSave.map((code) => ({
           code,
           issuedAt: licenseDetails[code]?.issuedAt,
           expiresAt: licenseDetails[code]?.expiresAt,
         })),
       );
 
-      // 2) Replace normalized habilitations — each row carries its own
+      // 3) Replace normalized habilitations — each row carries its own
       // explicit licenseCode, never a "default" license applied to every
       // aircraft. Legacy rows (aircraft_type_rating_id IS NULL) are left
       // untouched. The full local set is sent, unfiltered (see above).
-      if (habDirty) {
+      //
+      // `dropOrphanedHabs` fuerza la reescritura aunque el tecnico no haya
+      // tocado esta seccion: acaba de aceptar retirar licencias, y sus
+      // habilitaciones tienen que caer con ellas o la FK compuesta bloqueara
+      // el borrado de la licencia en el paso 4.
+      if (habDirty || dropOrphanedHabs) {
         await technicianRepositoryV2.replaceHabilitations(
           techId,
-          habilitations.map((h) => ({
+          habsToSave.map((h) => ({
             licenseCode: h.licenseCode,
             aircraftTypeRatingId: h.aircraftTypeRatingId,
             experienceYears: h.experienceYears,
@@ -623,14 +725,20 @@ export default function TechnicianProfileScreen() {
           })),
         );
         setHabDirty(false);
+        setHabilitations(habsToSave);
       }
 
-      // 3) Only now remove deselected licenses — AFTER habilitations are
+      // 4) Only now remove deselected licenses — AFTER habilitations are
       // saved, so the dependency check reflects the technician's actual
       // final state rather than a stale pre-save snapshot.
-      const { blocked } = await technicianRepositoryV2.removeUnreferencedLicenses(techId, form.licenseCategories);
+      const { blocked } = await technicianRepositoryV2.removeUnreferencedLicenses(techId, licensesToSave);
 
-      setForm((prev) => (prev ? { ...prev, profileCompleteness: newCompleteness, aircraftTypes: derivedAircraftTypes } : prev));
+      setForm((prev) => (prev ? {
+        ...prev,
+        profileCompleteness: newCompleteness,
+        licenseCategories: licensesToSave,
+        aircraftTypes: derivedAircraftTypes,
+      } : prev));
       setIsDirty(false);
 
       if (blocked.length > 0) {
@@ -881,6 +989,28 @@ export default function TechnicianProfileScreen() {
             ))}
           </TechnicianCard>
 
+          <SectionTitle
+            title="Profile types"
+            subtitle="What you work on. Pick as many as apply — you can change this any time."
+          />
+          <TechnicianCard style={styles.sectionCard}>
+            <TechnicianTypeSelector
+              options={techTypeOptions}
+              selected={technicianTypes}
+              onChange={updateTechnicianTypes}
+              loading={techTypesLoading}
+              palette={{
+                text: techUi.text,
+                muted: techUi.textMuted,
+                border: techUi.border,
+                surface: techUi.surfaceSoft,
+                accent: techUi.accent,
+                accentText: techUi.accent,
+                accentSurface: techUi.accent + '1A',
+              }}
+            />
+          </TechnicianCard>
+
           <SectionTitle title="Location" />
           <TechnicianCard style={styles.sectionCard}>
             <CountryPickerField
@@ -954,13 +1084,11 @@ export default function TechnicianProfileScreen() {
           </TechnicianCard>
 
           {/* Eje Part-66 completo (licencias + habilitaciones + peticion de
-              catalogo). Solo para tipos que certifican: un chapista, pintor o
-              tecnico de composite no tiene ninguna de las tres cosas, y
-              enseñarle secciones que nunca podra rellenar era pedirle datos
-              que no existen. Ver isLicensedTechnicianType. */}
-          {holdsPart66Qualifications && (
-          <>
-          <SectionTitle title="Licenses" subtitle="Select all licence categories you hold." />
+              catalogo). SIEMPRE visible desde la Fase 6 tanda A: tener
+              licencia es propiedad de la persona, no de la etiqueta que
+              eligio al registrarse, y esconder la seccion dejaba sin sitio a
+              un pintor con una B1.1 real. */}
+          <SectionTitle title="Licenses" subtitle="Select all licence categories you hold. Leave empty if you hold none." />
           <TechnicianCard style={styles.sectionCard}>
             <View style={styles.chipRow}>
               {LICENSE_CATEGORIES.map((lic) => (
@@ -972,6 +1100,22 @@ export default function TechnicianProfileScreen() {
                 />
               ))}
             </View>
+
+            {/* La nota del 100 -> 85 (decision del 2026-08-10). Declarar la
+                primera licencia CRUZA a la tabla de pesos licenciada y
+                aparecen los 15 puntos de type ratings, todavia sin rellenar,
+                asi que el porcentaje BAJA. Es honesto — se ha abierto una
+                pregunta nueva — pero sin decirlo parece un castigo por
+                declarar mas. Solo se enseña cuando aplica: con licencia y sin
+                ningun type rating. */}
+            {form.licenseCategories.length > 0 && habilitations.length === 0 ? (
+              <Text style={styles.privacyNote}>
+                Adding a licence opens a new question: which aircraft you are rated on. Until you
+                add a type rating below, your profile completeness goes DOWN — nothing has gone
+                wrong, there is simply one more thing to fill in, and it is the one companies
+                match you on.
+              </Text>
+            ) : null}
 
             {form.licenseCategories.length > 0 ? (
               <>
@@ -1078,8 +1222,6 @@ export default function TechnicianProfileScreen() {
                 />
               )}
             </TechnicianCard>
-          )}
-          </>
           )}
 
           {/* La seccion "Specialties" se retiro el 2026-07-29: no existe ni

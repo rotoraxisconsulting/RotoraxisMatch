@@ -74,6 +74,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             p_last_name: meta.last_name ?? '',
             p_birth_date: meta.birth_date ?? '',
             p_technician_type: meta.technician_type ?? '',
+            // Fase 6 tanda A. `?? null` y no `?? []`: una cuenta creada
+            // antes de que el alta preguntara por varios tipos sólo tiene el
+            // singular en su metadata, y NULL es justo lo que hace que el
+            // RPC caiga en ARRAY[p_technician_type] — el array vacío también
+            // caería ahí, pero NULL lo dice sin ambigüedad. Sin este
+            // parámetro, quien confirme el email después de este despliegue
+            // se crearía con un solo tipo aunque hubiese elegido tres.
+            p_technician_types: meta.technician_types ?? null,
             p_location_city_id: meta.location_city_id ?? '',
             // `?? null` rather than `?? 0`: an account created before the
             // signup form asked for this has no value in its metadata, and

@@ -46,7 +46,7 @@ import { AircraftRatingIndex } from '../../src/constants/aircraftTypeRatings';
 import { CollapsibleAircraftFilter } from '../../src/components/CollapsibleAircraftFilter';
 import { resolveTypeRatingLabels, resolveTechnicianProductTypes } from '../../src/utils/v2CompatAdapters';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
-import { TECHNICIAN_TYPES } from '../../src/constants/technicianTypes';
+import { technicianTypeLabels } from '../../src/constants/technicianTypes';
 import { OfferWithRequirements } from '../../src/types/offer';
 import { SafeTechnicianView } from '../../src/types';
 import { MatchScore } from '../../src/types/matching';
@@ -524,9 +524,9 @@ function TechnicianResultCard({
   ratingIndex: AircraftRatingIndex;
 }) {
   const displayName = technician.fullName ?? technician.anonymousCode;
-  const technicianType = preview?.technicianType
-    ? TECHNICIAN_TYPES.find((type) => type.code === preview.technicianType)?.label ?? labelize(preview.technicianType)
-    : 'Technician';
+  // Fase 6 tanda A: varios tipos por técnico, en una línea y en el orden del
+  // catálogo. 'Technician' como último recurso, igual que antes.
+  const technicianTypesText = technicianTypeLabels(preview?.technicianTypes ?? [], 'Technician');
   const licenseChips = preview?.licenses?.length ? preview.licenses : technician.licenseCategories;
   const typeRatingChips = preview?.habilitations?.length ? resolveTypeRatingLabels(preview.habilitations, ratingIndex) : [];
   const productTypes = preview?.habilitations?.length ? resolveTechnicianProductTypes(preview.habilitations, ratingIndex) : new Set<NonNullable<AircraftTypeRatingCatalog['productType']>>();
@@ -552,7 +552,7 @@ function TechnicianResultCard({
               />
             ) : null}
           </View>
-          <Text style={styles.techType}>{technicianType}</Text>
+          <Text style={styles.techType}>{technicianTypesText}</Text>
           <View style={styles.metaRow}>
             <View style={styles.metaItem}>
               <MapPin color={companyUi.textMuted} size={13} strokeWidth={2} />

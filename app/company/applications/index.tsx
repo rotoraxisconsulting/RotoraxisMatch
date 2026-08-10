@@ -38,7 +38,7 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { TechnicianWithRelations } from '../../../src/types/technician';
 import { SafeTechnicianPreview } from '../../../src/types/privacy';
 import { MatchScore } from '../../../src/types/matching';
-import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
+import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
 
 type StatusFilter = 'all' | 'pending' | 'accepted' | 'rejected';
 
@@ -252,7 +252,7 @@ export default function ApplicationsListScreen() {
                     <Text style={styles.offerTitle} numberOfLines={2}>{offer?.title ?? 'Unknown offer'}</Text>
                     {safePreview ? (
                       <Text style={styles.applicantLine} numberOfLines={1}>
-                        {safePreview.anonymousCode} - {technicianTypeLabel(safePreview.technicianType)}
+                        {safePreview.anonymousCode} - {technicianTypeLabels(safePreview.technicianTypes)}
                       </Text>
                     ) : isDeletedTechnician ? (
                       <Text style={styles.deletedLine} numberOfLines={1}>[Deleted user]</Text>

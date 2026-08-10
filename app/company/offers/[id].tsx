@@ -56,7 +56,7 @@ import { canManageOffers, canSendDirectOffers } from '../../../src/utils/company
 import { resolveTypeRatingLabels } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
-import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
+import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
 import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
@@ -601,7 +601,7 @@ export default function OfferDetailScreen() {
                 <View style={styles.techInfo}>
                   <Text style={styles.techCode}>{technician.anonymousCode}</Text>
                   <Text style={styles.techMeta}>
-                    {technicianTypeLabel(technician.technicianType)} - {technician.city}, {technician.country}
+                    {technicianTypeLabels(technician.technicianTypes)} - {technician.city}, {technician.country}
                   </Text>
                 </View>
                 <MatchBadge score={score.total} context="match for this offer" notEligible={score.blockers.length > 0} />

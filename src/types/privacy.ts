@@ -43,7 +43,11 @@ export interface SafeTechnicianPreview {
   // riesgo de discriminación, e incoherente con anonimizar el nombre justo para
   // reducir sesgo. No aporta al cribado — licencias, type ratings y años de
   // experiencia cubren lo relevante. `birthDate` nunca sale, ni derivada.
-  technicianType: TechnicianTypeCode;
+  // Varios tipos desde la Fase 6 tanda A. Llegan por la tabla puente
+  // `technician_profile_types`, con su propia policy de empresa, igual que
+  // `licenses` y `habilitations` de más abajo — no por technician_public_view,
+  // que sólo existe para anular los campos de IDENTIDAD.
+  technicianTypes: TechnicianTypeCode[];
   // Required: derived from the persisted locationCityId on the underlying TechnicianProfile.
   locationCityId: string;
   country: string;

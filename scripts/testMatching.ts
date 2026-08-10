@@ -44,6 +44,7 @@ import { canHold, getCompatiblePropulsion } from '../src/utils/habilitationScope
 import { HabilitationScope } from '../src/types/habilitationScope';
 import { isLicensedTechnicianType, offerTargetsLicensedProfiles } from '../src/constants/technicianTypes';
 import { planOfferTechnicianTypeToggle } from '../src/utils/offerTechnicianTypePlan';
+import { findOrphanedLicenses } from '../src/constants/licenses';
 import { getMatchDisplayLabel } from '../src/utils/offerMatchExplain';
 import { GENERAL_COMPATIBILITY_LABEL } from '../src/types/matching';
 import {
@@ -140,7 +141,7 @@ function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): Techn
     lastName: 'Technician',
     email: 'test@example.com',
     birthDate: '1990-01-01',
-    technicianType: 'mechanic',
+    technicianTypes: ['mechanic'],
     locationCityId: 'airport:YYYY',
     availability: { immediately: true, contractTypes: ['permanent'] },
     verificationStatus: 'pending',
@@ -1633,7 +1634,7 @@ async function main() {
       requiredTechnicianTypes: ['mechanic'],
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
-    const technician = makeTechnician({ technicianType: 'mechanic', ...EXACT_A320 });
+    const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.deepEqual(result.blockers, [], 'a matching type must never be a blocker');
     assert.equal(result.level, 'exact');
@@ -1649,7 +1650,7 @@ async function main() {
       requiredTechnicianTypes: ['avionic'],
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
-    const technician = makeTechnician({ technicianType: 'mechanic', ...EXACT_A320 });
+    const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
 
     assert.equal(result.blockers.length, 1, 'exactly one blocker — the type');
@@ -1669,7 +1670,7 @@ async function main() {
     const base = {
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     };
-    const technician = makeTechnician({ technicianType: 'mechanic', verificationStatus: 'verified', ...EXACT_A320 });
+    const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
     const unrestricted = calculateOfferTechnicianMatch(makeOffer({ ...base, requiredTechnicianTypes: [] }), technician, RATING_INDEX);
     const restrictedAndMet = calculateOfferTechnicianMatch(
       makeOffer({ ...base, requiredTechnicianTypes: ['mechanic'] }),
@@ -1684,6 +1685,61 @@ async function main() {
       !unrestricted.matches.some((m) => m.startsWith('Technician type:')),
       'no match line either — claiming a match for a requirement the offer never stated is noise',
     );
+  });
+
+  // ── Fase 6 tanda A: varios tipos por técnico ──────────────────────────
+  await test('Tipos múltiples — un técnico con dos tipos casa con las ofertas de AMBOS', () => {
+    const base = { requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] };
+    const dual = makeTechnician({
+      technicianTypes: ['avionic', 'mechanic'],
+      verificationStatus: 'verified',
+      ...EXACT_A320,
+    });
+
+    for (const wanted of ['mechanic', 'avionic'] as const) {
+      const result = calculateOfferTechnicianMatch(
+        makeOffer({ ...base, requiredTechnicianTypes: [wanted] }),
+        dual,
+        RATING_INDEX,
+      );
+      assert.deepEqual(result.blockers, [], `un perfil que incluye "${wanted}" no puede quedar bloqueado`);
+      assert.ok(
+        result.matches.some((m) => m.startsWith('Technician type:')),
+        `la línea de match del tipo debe aparecer para "${wanted}"`,
+      );
+    }
+
+    // Y la otra mitad de la intersección: un tipo que NO tiene sigue
+    // bloqueando. "Varios tipos" no puede degenerar en "casa con todo".
+    const unrelated = calculateOfferTechnicianMatch(
+      makeOffer({ ...base, requiredTechnicianTypes: ['painter'] }),
+      dual,
+      RATING_INDEX,
+    );
+    assert.equal(unrelated.blockers.length, 1, 'un tipo que no tiene sigue siendo blocker');
+  });
+
+  await test('Tipos múltiples — el score de un perfil de UN SOLO tipo no cambia respecto a hoy', () => {
+    // El criterio de verificación de la tanda, escrito como test: añadir un
+    // segundo tipo IRRELEVANTE para la oferta no puede mover ni un punto.
+    const base = {
+      contractType: 'permanent' as const,
+      requiredTechnicianTypes: ['mechanic' as const],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    };
+    const single = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
+    const withExtra = makeTechnician({
+      technicianTypes: ['mechanic', 'painter'],
+      verificationStatus: 'verified',
+      ...EXACT_A320,
+    });
+
+    const a = calculateOfferTechnicianMatch(makeOffer(base), single, RATING_INDEX);
+    const b = calculateOfferTechnicianMatch(makeOffer(base), withExtra, RATING_INDEX);
+    assert.equal(a.total, b.total, 'un tipo extra irrelevante no puede mover el total');
+    assert.deepEqual(a.breakdown, b.breakdown, 'ni el desglose');
+    // La línea de match nombra SOLO lo que casa, no la lista entera.
+    assert.deepEqual(a.matches, b.matches, 'la línea de match nombra sólo el tipo pedido, no los que sobran');
   });
 
   await test('Blockers — Case 4: fewer declared years than the offer minimum is a blocker (and exactly the minimum is not)', () => {
@@ -1731,7 +1787,7 @@ async function main() {
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
     const technician = makeTechnician({
-      technicianType: 'mechanic',
+      technicianTypes: ['mechanic'],
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
       licenses: [],
@@ -1763,7 +1819,7 @@ async function main() {
       minYearsExperience: 5,
       requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
     });
-    const technician = makeTechnician({ technicianType: 'mechanic', yearsExperience: 2, ...EXACT_A320 });
+    const technician = makeTechnician({ technicianTypes: ['mechanic'], yearsExperience: 2, ...EXACT_A320 });
 
     // Company side: one offer scored against a list of technicians.
     const companyDirection = [technician].map((t) => calculateOfferTechnicianMatch(offer, t, RATING_INDEX))[0];
@@ -1787,13 +1843,13 @@ async function main() {
     });
     const blockedButPerfectlyQualified = makeTechnician({
       id: 'tech-blocked',
-      technicianType: 'mechanic', // the offer is for avionics
+      technicianTypes: ['mechanic'], // the offer is for avionics
       verificationStatus: 'verified',
       ...EXACT_A320,
     });
     const eligibleButUnqualified = makeTechnician({
       id: 'tech-unqualified',
-      technicianType: 'avionic',
+      technicianTypes: ['avionic'],
       verificationStatus: 'verified',
       licenses: [],
       habilitations: [],
@@ -1876,7 +1932,7 @@ async function main() {
   await test('Copy — a non-licensed offer reads "General compatibility", never a technical match label', () => {
     const score = calculateOfferTechnicianMatch(
       makeOffer({ requiredTechnicianTypes: ['painter'] }),
-      makeTechnician({ technicianType: 'painter', verificationStatus: 'verified' }),
+      makeTechnician({ technicianTypes: ['painter'], verificationStatus: 'verified' }),
       RATING_INDEX,
     );
     assert.equal(
@@ -1898,7 +1954,7 @@ async function main() {
     });
     const score = calculateOfferTechnicianMatch(
       offer,
-      makeTechnician({ technicianType: 'mechanic', verificationStatus: 'verified', ...EXACT_A320 }),
+      makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 }),
       RATING_INDEX,
     );
     assert.equal(getMatchDisplayLabel(offer, score), score.label);
@@ -1967,23 +2023,79 @@ async function main() {
     return Object.values(w).reduce((sum, v) => sum + v, 0);
   }
 
-  await test('Completeness — a fully completed NON-LICENSED profile reaches 100 (was capped at 65)', () => {
-    // The bug: licences (20) + aircraft types (15) are unreachable for a
-    // painter/sheet metal/composite profile since the licensed split, so the
-    // single old table topped out at 65 for someone who had answered every
-    // question the app asks them.
-    const painter = makeCompleteProfile();
-    assert.equal(computeProfileCompleteness(painter, true, true, 'painter'), 100);
-    assert.equal(computeProfileCompleteness(painter, true, true, 'sheet_metal_worker'), 100);
-    assert.equal(computeProfileCompleteness(painter, true, true, 'composite'), 100);
+  // ── Fase 6 tanda A: licencias huérfanas al quitar un tipo ─────────────
+  await test('Huérfanas — quitar "mechanic" conservando "avionic": B1.3 entra, B2 no', () => {
+    // El ejemplo exacto de la decisión del 2026-08-10.
+    assert.deepEqual(
+      findOrphanedLicenses(['B1.3', 'B2'], ['mechanic', 'avionic'], ['avionic']),
+      ['B1.3'],
+    );
   });
 
-  await test('Completeness — the same non-licensed profile scored under the licensed table would only reach 65', () => {
+  await test('Huérfanas — C no tiene rama y NUNCA queda huérfana, con ninguna combinación de tipos', () => {
+    // C es supervisión de mantenimiento base: la sostienen tanto perfiles B1
+    // como B2. Asignarle una rama la declararía huérfana al quitar esa rama
+    // cuando la otra sigue sosteniéndola. Si alguien se la asigna "para
+    // completar el mapa", este test se cae — que es el punto.
+    const combinaciones: [string[], string[]][] = [
+      [['mechanic', 'avionic'], ['painter']],
+      [['mechanic'], ['avionic']],
+      [['avionic'], ['mechanic']],
+      [['mechanic', 'avionic'], ['mechanic']],
+      [['mechanic', 'avionic'], ['avionic']],
+    ];
+    for (const [previos, siguientes] of combinaciones) {
+      assert.deepEqual(
+        findOrphanedLicenses(['C'], previos, siguientes),
+        [],
+        `C no puede quedar huérfana pasando de ${previos} a ${siguientes}`,
+      );
+    }
+  });
+
+  await test('Huérfanas — A1–A4, B3 y L son rama mecánica y sí entran', () => {
+    // A1–A4 van con su B1 correspondiente, B3 es mecánico de pistón, y L
+    // (light aircraft) es trabajo de célula y motor. Corrección del
+    // 2026-08-10 sobre un primer reparto que los dejaba sin rama.
+    assert.deepEqual(
+      findOrphanedLicenses(['A1', 'A2', 'A3', 'A4', 'B3', 'L'], ['mechanic'], ['painter']),
+      ['A1', 'A2', 'A3', 'A4', 'B3', 'L'],
+    );
+  });
+
+  await test('Huérfanas — quitar el último tipo licenciado arrastra todo menos C', () => {
+    assert.deepEqual(
+      findOrphanedLicenses(['B1.1', 'B2', 'C', 'L'], ['mechanic', 'avionic'], ['painter']),
+      ['B1.1', 'B2', 'L'],
+    );
+  });
+
+  await test('Huérfanas — sin tipos quitados, o sin licencias afectadas, no se pregunta nada', () => {
+    // AÑADIR un tipo nunca dispara la pregunta.
+    assert.deepEqual(findOrphanedLicenses(['B1.1'], ['mechanic'], ['mechanic', 'painter']), []);
+    // Quitar un tipo que no reclama ninguna licencia tampoco.
+    assert.deepEqual(findOrphanedLicenses(['B1.1'], ['mechanic', 'painter'], ['mechanic']), []);
+    // Ni quitar un tipo cuando el técnico no tiene esas licencias.
+    assert.deepEqual(findOrphanedLicenses(['B2'], ['mechanic', 'avionic'], ['avionic']), []);
+  });
+
+  await test('Completeness — a fully completed profile WITHOUT licences reaches 100 (was capped at 65)', () => {
+    // The bug: licences (20) + aircraft types (15) were unreachable for a
+    // profile with no Part-66 axis, so the single old table topped out at 65
+    // for someone who had answered every question the app asks them.
+    const noLicences = makeCompleteProfile();
+    assert.equal(computeProfileCompleteness(noLicences, true, true), 100);
+  });
+
+  await test('Completeness — the same profile scored under the licensed table would only reach 65', () => {
     // Pins the regression itself, not just the fix: if the branch is ever
     // removed, this is the number that comes back.
-    const painter = makeCompleteProfile();
+    const noLicences = makeCompleteProfile();
+    const w = LICENSED_COMPLETENESS_WEIGHTS;
+    const underLicensedTable =
+      w.fullName + w.email + w.phone + w.city + w.country + w.baseAirport + w.social + w.availability + w.years;
     assert.equal(
-      computeProfileCompleteness(painter, true, true, 'mechanic'),
+      underLicensedTable,
       65,
       'no licences + no aircraft types under the licensed table = 65, the exact bug being fixed',
     );
@@ -1991,10 +2103,52 @@ async function main() {
 
   await test('Completeness — the licensed branch is untouched: a fully completed licensed profile still reaches 100', () => {
     const mechanic = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] });
-    assert.equal(computeProfileCompleteness(mechanic, true, true, 'mechanic'), 100);
-    assert.equal(computeProfileCompleteness(mechanic, true, true, 'avionic'), 100);
-    // An unknown type falls back to the licensed table — previous behaviour.
-    assert.equal(computeProfileCompleteness(mechanic, true, true, 'not_in_the_catalog'), 100);
+    assert.equal(computeProfileCompleteness(mechanic, true, true), 100);
+  });
+
+  // ── Fase 6 tanda A ────────────────────────────────────────────────────
+  await test('Completeness — la rama la decide lo DECLARADO, no el tipo de perfil', () => {
+    // El mismo perfil, con las dos ramas, y el tipo no aparece por ninguna
+    // parte: ya no es un argumento de la función. Antes esto era imposible de
+    // expresar — un "mechanic" sin licencias topaba en 65 por su etiqueta.
+    const withLicence = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] });
+    const withoutLicence = makeCompleteProfile();
+    assert.equal(computeProfileCompleteness(withLicence, true, true), 100);
+    assert.equal(computeProfileCompleteness(withoutLicence, true, true), 100);
+  });
+
+  await test('Completeness — el techo de 100 es alcanzable POR CONSTRUCCIÓN en las dos ramas', () => {
+    // La invariante que sustituye al par de casos sueltos: para CUALQUIER
+    // combinación de licencias/ratings declarados, un perfil por lo demás
+    // completo llega a 100. No existe entrada que deje puntos huérfanos.
+    const combos: Partial<Technician>[] = [
+      { licenseCategories: [], aircraftTypes: [] },
+      { licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] },
+      { licenseCategories: ['B1.1', 'B2'], aircraftTypes: ['A318/A319/A320/A321', 'B737'] },
+    ];
+    for (const combo of combos) {
+      assert.equal(
+        computeProfileCompleteness(makeCompleteProfile(combo), true, true),
+        100,
+        `un perfil completo con ${JSON.stringify(combo)} debe llegar a 100`,
+      );
+    }
+  });
+
+  await test('Completeness — declarar la primera licencia SIN ratings baja de 100 a 85, y es esperado', () => {
+    // Efecto aceptado a propósito el 2026-08-10: la licencia abre la pregunta
+    // de los type ratings, que aún no está contestada. La pantalla de perfil
+    // lo explica con todas las letras. Si este número cambia, o la nota de la
+    // UI se ha quedado mintiendo o alguien ha movido los pesos.
+    const noLicences = makeCompleteProfile();
+    const justAddedLicence = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: [] });
+    assert.equal(computeProfileCompleteness(noLicences, true, true), 100);
+    assert.equal(computeProfileCompleteness(justAddedLicence, true, true), 85);
+    assert.equal(
+      100 - 85,
+      LICENSED_COMPLETENESS_WEIGHTS.aircraftTypes,
+      'la caída es EXACTAMENTE el peso de los type ratings, ni un punto más',
+    );
   });
 
   await test('Completeness — both weight tables sum to exactly 100, so neither branch can silently become unreachable', () => {
@@ -2023,9 +2177,9 @@ async function main() {
       baseAirport: '',
       availability: { immediately: false, status: 'unavailable', contractTypes: [] },
     });
-    assert.equal(computeProfileCompleteness(empty, false, false, 'painter'), 0, 'redistributing weights must not hand out free points');
+    assert.equal(computeProfileCompleteness(empty, false, false), 0, 'redistributing weights must not hand out free points');
     // 0 declared years IS a declaration, and scores like one.
-    assert.equal(computeProfileCompleteness(empty, true, false, 'painter'), NON_LICENSED_COMPLETENESS_WEIGHTS.years);
+    assert.equal(computeProfileCompleteness(empty, true, false), NON_LICENSED_COMPLETENESS_WEIGHTS.years);
   });
 }
 

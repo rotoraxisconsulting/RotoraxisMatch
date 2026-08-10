@@ -4,7 +4,6 @@
 // silently could not reach 100, which is exactly the kind of thing a unit
 // test catches and a screen does not.
 import { Technician } from '../types';
-import { isLicensedTechnicianType } from '../constants/technicianTypes';
 
 export interface ProfileCompletenessWeights {
   fullName: number;
@@ -20,9 +19,13 @@ export interface ProfileCompletenessWeights {
   years: number;
 }
 
-// ── Licensed types (mechanic, avionics, pilot) ──────────────────────────
-// Unchanged. Every previously recorded decision about this table still
-// holds; see the notes on `social` and `availability` below.
+// ── Perfiles CON licencia declarada ─────────────────────────────────────
+// Valores sin tocar. Todas las decisiones registradas sobre esta tabla
+// siguen en pie; ver las notas de `social` y `availability` más abajo.
+//
+// Lo que cambió el 2026-08-10 (Fase 6 tanda A) NO son los pesos, es QUIÉN
+// elige entre las dos tablas: antes el TIPO de técnico, ahora si la persona
+// declara licencias. Ver getProfileCompletenessWeights().
 export const LICENSED_COMPLETENESS_WEIGHTS: ProfileCompletenessWeights = {
   fullName: 10,
   email: 10,
@@ -37,10 +40,9 @@ export const LICENSED_COMPLETENESS_WEIGHTS: ProfileCompletenessWeights = {
   years: 10,
 };
 
-// ── Non-licensed trades (sheet metal, paint, composite) ─────────────────
-// These profiles have no EASA Part-66 licence and no aircraft type rating —
-// since the licensed/non-licensed split, the two sections are not even shown
-// to them. Under the single old table that made 35 points permanently
+// ── Perfiles SIN licencia declarada ─────────────────────────────────────
+// These profiles have no EASA Part-66 licence and no aircraft type rating.
+// Under the single old table that made 35 points permanently
 // unreachable and pinned their completeness at 65%: a profile filled in
 // perfectly, by someone who had answered every question the app asked them,
 // displayed as a third empty. The percentage was measuring the app's own
@@ -77,8 +79,42 @@ export const NON_LICENSED_COMPLETENESS_WEIGHTS: ProfileCompletenessWeights = {
   years: 20,
 };
 
-export function getProfileCompletenessWeights(technicianType: string): ProfileCompletenessWeights {
-  return isLicensedTechnicianType(technicianType) ? LICENSED_COMPLETENESS_WEIGHTS : NON_LICENSED_COMPLETENESS_WEIGHTS;
+// ── Quién elige la tabla (Fase 6 tanda A, 2026-08-10) ───────────────────
+//
+// Lo decide LO QUE EL TÉCNICO DECLARA, no la etiqueta que eligió al
+// registrarse. Antes era `isLicensedTechnicianType(technicianType)`, y eso
+// deja de tener un único argumento en cuanto un técnico puede llevar varios
+// tipos a la vez: un "aviónico + pintor" no es ni una cosa ni la otra.
+//
+// La propiedad que hace correcta esta versión: EL TECHO DE 100 ES
+// ALCANZABLE POR CONSTRUCCIÓN EN LAS DOS RAMAS.
+//   - Con licencias, la rama licenciada se activa PORQUE el campo está
+//     relleno: sus 20 puntos ya están ganados. La condición de la rama ES
+//     el campo.
+//   - Sin licencias, el eje entero vale 0 y no hay nada que reclamar.
+// No existe entrada que deje puntos huérfanos. El bug de 2026-07-29 (35
+// puntos inalcanzables, perfil perfecto clavado en 65%) no es que esté
+// arreglado: es que ya no se puede escribir.
+//
+// Dos efectos ACEPTADOS a propósito (decisión del 2026-08-10):
+//
+//   1. Un "mechanic" sin licencia ya no topa en 65%: puede llegar a 100.
+//      Es la tesis de la Fase 6 — estar licenciado es propiedad de la
+//      persona, no del tipo, y la fase introduce ofertas que no exigen
+//      certificar. El aviso de que le falta la licencia no se pierde: lo da
+//      el match, donde una oferta que exige certificar lo deja en
+//      ZERO_QUALIFICATION_CAP (39). Completitud mide "¿has contestado lo
+//      que la app te pregunta?"; el match mide "¿estás cualificado?".
+//      Mezclar las dos cosas fue exactamente el error de 2026-07-29.
+//
+//   2. Declarar la PRIMERA licencia BAJA el porcentaje (100 -> 85): se
+//      cruza a la tabla licenciada y aparecen los 15 de type ratings, aún
+//      sin rellenar. No es un defecto de las dos tablas — con denominador
+//      dinámico pasaría igual (65/65 -> 85/100). Es inherente a que
+//      declarar una licencia ABRE UNA PREGUNTA NUEVA. La pantalla de perfil
+//      lo dice con todas las letras en vez de dejar que parezca un castigo.
+export function getProfileCompletenessWeights(holdsLicenses: boolean): ProfileCompletenessWeights {
+  return holdsLicenses ? LICENSED_COMPLETENESS_WEIGHTS : NON_LICENSED_COMPLETENESS_WEIGHTS;
 }
 
 // `yearsDeclared` en vez de `t.yearsExperience > 0`: declarar 0 anios ES
@@ -92,15 +128,15 @@ export function getProfileCompletenessWeights(technicianType: string): ProfileCo
 // con uno es deliberado: el objetivo es "hay una via de contacto profesional
 // verificable", no obligar a tener las tres.
 //
-// `technicianType` decide QUE tabla de pesos se aplica (ver arriba). Un tipo
-// desconocido cae en la licenciada, que es el comportamiento previo.
+// La rama sale de `t.licenseCategories`, la MISMA lista que doce líneas más
+// abajo otorga los 20 puntos. Derivarla aquí y no recibirla como parámetro
+// es deliberado: hace imposible pasar una rama incoherente con el cálculo.
 export function computeProfileCompleteness(
   t: Technician,
   yearsDeclared: boolean,
   socialDeclared: boolean,
-  technicianType: string,
 ): number {
-  const w = getProfileCompletenessWeights(technicianType);
+  const w = getProfileCompletenessWeights(t.licenseCategories.length > 0);
   let score = 0;
   if (t.fullName?.trim()) score += w.fullName;
   if (t.email?.trim()) score += w.email;

@@ -55,7 +55,7 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { MatchScore } from '../../../src/types/matching';
 import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
-import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
+import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -382,7 +382,7 @@ export default function DirectOfferDetailScreen() {
             </View>
 
             <View style={styles.badgeRow}>
-              <CompanyBadge label={technicianTypeLabel(techView.technicianType)} tone="cyan" small />
+              <CompanyBadge label={technicianTypeLabels(techView.technicianTypes)} tone="cyan" small />
               <CompanyBadge label={`${techView.city}, ${techView.country}`} tone="muted" small />
               <CompanyBadge
                 label={techView.verificationStatus}

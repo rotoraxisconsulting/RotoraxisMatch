@@ -256,24 +256,61 @@ export function mapChatMessageRow(row: DbRow): ChatMessage {
   };
 }
 
+/**
+ * Tipos de perfil de un lote de técnicos, desde `technician_profile_types`
+ * (migración 048).
+ *
+ * ES LA ÚNICA FUENTE que el código lee. La columna
+ * `technician_profiles.technician_type` sigue existiendo y sigue
+ * escribiéndose en el alta, pero NO se lee en ninguna parte: es una copia
+ * del primer tipo, en espera de la migración que la retire. Leerla en
+ * cualquier sitio reabriría exactamente el problema que la tabla puente
+ * resuelve (un perfil con dos tipos que aparenta tener uno).
+ *
+ * `.order('type_code')` para que la lista se pinte siempre igual entre
+ * pantallas y recargas — sin él, el orden lo decide Postgres y dos tarjetas
+ * del mismo técnico pueden salir con los tipos permutados.
+ */
+export async function loadTechnicianProfileTypes(technicianIds: string[]): Promise<Record<string, TechnicianTypeCode[]>> {
+  const uniqueIds = [...new Set(technicianIds)].filter(Boolean);
+  const map: Record<string, TechnicianTypeCode[]> = {};
+  for (const id of uniqueIds) map[id] = [];
+  if (uniqueIds.length === 0) return map;
+
+  const { data, error } = await supabase
+    .from('technician_profile_types')
+    .select('technician_id, type_code')
+    .in('technician_id', uniqueIds)
+    .order('type_code');
+  throwIfError(error);
+  for (const row of (data ?? []) as DbRow[]) {
+    map[row.technician_id]?.push(row.type_code as TechnicianTypeCode);
+  }
+  return map;
+}
+
 export async function loadTechnicianRelations(technicianIds: string[]): Promise<Record<string, {
   licenses: TechnicianLicense[];
   habilitations: TechnicianHabilitation[];
+  technicianTypes: TechnicianTypeCode[];
 }>> {
   const uniqueIds = [...new Set(technicianIds)].filter(Boolean);
   const map: Record<string, {
     licenses: TechnicianLicense[];
     habilitations: TechnicianHabilitation[];
+    technicianTypes: TechnicianTypeCode[];
   }> = {};
-  for (const id of uniqueIds) map[id] = { licenses: [], habilitations: [] };
+  for (const id of uniqueIds) map[id] = { licenses: [], habilitations: [], technicianTypes: [] };
   if (uniqueIds.length === 0) return map;
 
-  const [licensesRes, habsRes] = await Promise.all([
+  const [licensesRes, habsRes, types] = await Promise.all([
     supabase.from('technician_licenses').select('id, technician_id, license_code, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
     supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
+    loadTechnicianProfileTypes(uniqueIds),
   ]);
   throwIfError(licensesRes.error);
   throwIfError(habsRes.error);
+  for (const id of uniqueIds) map[id].technicianTypes = types[id] ?? [];
 
   for (const row of (licensesRes.data ?? []) as DbRow[]) {
     map[row.technician_id]?.licenses.push({
@@ -311,7 +348,7 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
     email: row.email,
     phone: row.phone ?? undefined,
     birthDate: row.birth_date ?? '1970-01-01',
-    technicianType: row.technician_type,
+    technicianTypes: relations?.technicianTypes ?? [],
     locationCityId: row.location_city_id,
     availability: mapAvailability(row.availability),
     yearsExperience: row.years_experience ?? undefined,
@@ -330,7 +367,7 @@ export function mapPublicTechnicianRow(row: DbRow, relations?: Awaited<ReturnTyp
   return {
     id: row.id,
     anonymousCode: row.anonymous_code,
-    technicianType: row.technician_type,
+    technicianTypes: relations?.technicianTypes ?? [],
     locationCityId: row.location_city_id,
     country: row.country ?? location?.country ?? '',
     city: row.city ?? location?.city ?? '',
@@ -390,7 +427,7 @@ export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnT
     // '1970-01-01' que había antes producía "56 años" para TODOS los técnicos
     // que veía una empresa.
     birthDate: '',
-    technicianType: row.technician_type,
+    technicianTypes: relations?.technicianTypes ?? [],
     locationCityId: row.location_city_id,
     availability: mapAvailability(row.availability),
     yearsExperience: row.years_experience ?? undefined,
