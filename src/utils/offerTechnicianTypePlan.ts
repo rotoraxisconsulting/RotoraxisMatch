@@ -68,7 +68,7 @@ export function planOfferTechnicianTypeToggle(input: {
     return {
       next: currentTypes,
       error:
-        `${label(code)} profiles do not hold EASA Part-66 licences or aircraft type ratings. ` +
+        `${label(code)} profiles do not hold maintenance licences or aircraft type ratings. ` +
         `Clear the ${part66RequirementCount} licence / aircraft / type rating requirement${
           part66RequirementCount === 1 ? '' : 's'
         } on this offer first.`,

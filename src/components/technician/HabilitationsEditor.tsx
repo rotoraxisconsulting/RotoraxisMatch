@@ -121,7 +121,7 @@ export function HabilitationsEditor({
   return (
     <TechnicianCard style={styles.card}>
       <Text style={styles.title}>Habilitations</Text>
-      <Text style={styles.subtitle}>Each rating is linked to the Part-66 category it was issued under — never guessed.</Text>
+      <Text style={styles.subtitle}>Each rating is linked to the licence category it was issued under — never guessed.</Text>
 
       {value.length === 0 ? <Text style={styles.emptyValue}>Not specified</Text> : null}
 

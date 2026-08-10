@@ -261,7 +261,7 @@ export default function NewOfferScreen() {
           helper={
             targetsLicensedProfiles
               ? 'Leave empty to accept any type.'
-              : 'These trades hold no EASA Part-66 licence, so this offer has no qualification requirements.'
+              : 'These trades hold no maintenance licence, so this offer has no qualification requirements.'
           }
         >
           {TECHNICIAN_TYPES.filter((t) => t.isActive).map((t) => (

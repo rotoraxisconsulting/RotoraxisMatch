@@ -960,7 +960,7 @@ export default function TechnicianProfileScreen() {
               que no existen. Ver isLicensedTechnicianType. */}
           {holdsPart66Qualifications && (
           <>
-          <SectionTitle title="Licenses" subtitle="Select all EASA Part-66 categories you hold." />
+          <SectionTitle title="Licenses" subtitle="Select all licence categories you hold." />
           <TechnicianCard style={styles.sectionCard}>
             <View style={styles.chipRow}>
               {LICENSE_CATEGORIES.map((lic) => (

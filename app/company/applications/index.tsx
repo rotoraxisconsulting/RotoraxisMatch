@@ -38,6 +38,7 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { TechnicianWithRelations } from '../../../src/types/technician';
 import { SafeTechnicianPreview } from '../../../src/types/privacy';
 import { MatchScore } from '../../../src/types/matching';
+import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
 
 type StatusFilter = 'all' | 'pending' | 'accepted' | 'rejected';
 
@@ -47,14 +48,6 @@ type AppEntry = {
   tech: TechnicianWithRelations | null;
   safePreview: SafeTechnicianPreview | null;
   score: MatchScore | null;
-};
-
-const TECH_TYPE_LABELS: Record<string, string> = {
-  mechanic: 'Mechanic',
-  avionics: 'Avionics',
-  structures: 'Structures',
-  inspector: 'Inspector',
-  electrician: 'Electrician',
 };
 
 function scoreColor(total: number): string {
@@ -259,7 +252,7 @@ export default function ApplicationsListScreen() {
                     <Text style={styles.offerTitle} numberOfLines={2}>{offer?.title ?? 'Unknown offer'}</Text>
                     {safePreview ? (
                       <Text style={styles.applicantLine} numberOfLines={1}>
-                        {safePreview.anonymousCode} - {TECH_TYPE_LABELS[safePreview.technicianType] ?? safePreview.technicianType}
+                        {safePreview.anonymousCode} - {technicianTypeLabel(safePreview.technicianType)}
                       </Text>
                     ) : isDeletedTechnician ? (
                       <Text style={styles.deletedLine} numberOfLines={1}>[Deleted user]</Text>

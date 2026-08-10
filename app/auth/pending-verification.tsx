@@ -32,7 +32,7 @@ const STEPS = [
     icon: '✅',
     title: 'Once approved',
     description:
-      "You'll be able to complete your profile, add your Part-66 licences and type ratings, upload documents for verification, and appear in company searches.",
+      "You'll be able to complete your profile, add your licences and type ratings, upload documents for verification, and appear in company searches.",
   },
 ];
 

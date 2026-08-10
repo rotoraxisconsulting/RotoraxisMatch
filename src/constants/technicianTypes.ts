@@ -4,10 +4,20 @@ export const TECHNICIAN_TYPES: TechnicianTypeCatalog[] = [
   { code: 'mechanic',           label: 'Mechanic',            requiresLicense: true,  isActive: true,  sortOrder: 1 },
   { code: 'avionic',            label: 'Avionics Technician', requiresLicense: true,  isActive: true,  sortOrder: 2 },
   { code: 'sheet_metal_worker', label: 'Sheet Metal Worker',  requiresLicense: false, isActive: true,  sortOrder: 3 },
-  { code: 'painter',            label: 'Painter',             requiresLicense: false, isActive: true,  sortOrder: 4 },
+  { code: 'painter',            label: 'Aircraft Painter',    requiresLicense: false, isActive: true,  sortOrder: 4 },
   { code: 'composite',          label: 'Composite Technician',requiresLicense: false, isActive: true,  sortOrder: 5 },
   { code: 'pilot',              label: 'Pilot',               requiresLicense: true,  isActive: false, sortOrder: 6 },
 ];
+
+// Display label for a technician type code. The catalog above is the only
+// place a label is written; screens read it through here.
+//
+// Unknown code -> the code itself, which is what every caller already did on
+// a miss. A raw code on screen is ugly but honest; inventing a label for a
+// row that is not in the catalog would be worse.
+export function technicianTypeLabel(code: string): string {
+  return TECHNICIAN_TYPES.find((t) => t.code === code)?.label ?? code;
+}
 
 // ── Licensed vs non-licensed profiles ───────────────────────────────────
 // EASA Part-66 licences and aircraft type ratings only exist for the

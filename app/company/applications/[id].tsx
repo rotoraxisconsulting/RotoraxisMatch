@@ -57,15 +57,8 @@ import { OfferWithRequirements } from '../../../src/types/offer';
 import { MatchScore } from '../../../src/types/matching';
 import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
+import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
-
-const TECH_TYPE_LABELS: Record<string, string> = {
-  mechanic: 'Mechanic',
-  avionics: 'Avionics',
-  structures: 'Structures',
-  inspector: 'Inspector',
-  electrician: 'Electrician',
-};
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   license: 'License',
@@ -400,7 +393,7 @@ export default function ApplicationDetailScreen() {
             </View>
 
             <View style={styles.badgeRow}>
-              <CompanyBadge label={TECH_TYPE_LABELS[techView.technicianType] ?? techView.technicianType} tone="cyan" small />
+              <CompanyBadge label={technicianTypeLabel(techView.technicianType)} tone="cyan" small />
               <CompanyBadge label={`${techView.city}, ${techView.country}`} tone="muted" small />
               <CompanyBadge label={techView.verificationStatus} tone={techView.verificationStatus === 'verified' ? 'success' : 'warning'} small />
             </View>

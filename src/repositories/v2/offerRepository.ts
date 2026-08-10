@@ -99,7 +99,7 @@ function assertRequirementsMatchTechnicianTypes(requirements: {
     .map((code) => TECHNICIAN_TYPES.find((t) => t.code === code)?.label ?? code)
     .join(', ');
   throw new Error(
-    `This offer targets ${targeted}, which do not hold EASA Part-66 licences or aircraft type ratings. ` +
+    `This offer targets ${targeted}, which do not hold maintenance licences or aircraft type ratings. ` +
       'Remove the licence, aircraft and type rating requirements, or target a licensed technician type.',
   );
 }

@@ -2468,3 +2468,84 @@ trae.
 `tsc` 0 · `test:matching` 120/120 · `test:url-validation` PASS ·
 `validate:aircraft-ratings` PASS (606) · `validate:state-machine` PASS ·
 `validate:auth-hooks` PASS.
+
+
+## Fase 6 — Perfiles múltiples y ofertas sin licencia
+
+Decidido el 10/08/2026. Va DESPUÉS de la migración 047 (offers.product_type).
+
+> **Renumeración (10/08/2026)**: `offers.product_type` tenía reservado el 046 y
+> pasa a ser la **047**. El 046 lo ocupa
+> `046_technician_type_labels_drop_part66.sql`, aplicada ese mismo día junto con
+> la 045: las etiquetas de `technician_types` dejan de nombrar el marco EASA
+> (`'Mechanic (Part-66 A / B1)'` → `'Mechanic'`,
+> `'Avionics Technician (Part-66 B2)'` → `'Avionics Technician'`). Salió del
+> cambio de copy para admitir técnicos sin licencia EASA; eran el único
+> Part-66 de cara al usuario que no vivía en el código.
+
+### Técnico
+- Varios tipos de perfil, sin restricción (se cae la regla licenciado /
+  no licenciado: deja de ser propiedad del tipo y pasa a serlo de la persona)
+- `technician_habilitations` NO se toca. `license_code` sigue NOT NULL y la
+  invariante de misma fila intacta
+- Tabla nueva de experiencia sin licencia: solo aeronave + años
+
+### Oferta — orden del formulario
+1. Tipos de perfil buscados (informativo, no condiciona el formulario)
+2. ¿Necesita certificar trabajo? sí / no
+3. ¿Aviones o helicópteros? (siempre se pregunta; acota 4 y 5)
+4. Licencia — UNA sola por oferta
+5. Aeronaves — las que hagan falta
+6. ¿Basta con una, o hacen falta todas? Por defecto "basta con una",
+   casilla pequeña. SUSTITUYE a mandatory / preferred, que desaparece.
+
+Con licencia y sin licencia para el mismo puesto = dos ofertas separadas.
+Anotado como mejora futura: botón "duplicar oferta".
+
+### Scoring
+- Con certificación → solo cuentan habilitaciones con licencia; una licencia
+  caducada NO vale (hoy `evaluateVigencia` solo degrada — necesita regla propia)
+- Sin certificación → cuentan habilitaciones y experiencia
+- Tener licencia en una aeronave cuenta también como experiencia. Nunca al revés
+- El tipo de perfil no puntúa ni filtra
+- Sobrecualificado no penaliza
+- Sin licencia en oferta que la exige → ZERO_QUALIFICATION_CAP (39), visible
+  en el listado, no oculto
+- HABILITATION_TIER_FRACTIONS (1 / 0,57 / 0) y los caps: sin tocar
+
+### UI
+- Crear oferta: los cambios repintan sobre la marcha, sin avisos
+- Editar oferta: avisa antes de limpiar requisitos al cambiar 2 o 3
+
+### Deuda a colapsar: los labels de tipo de técnico tienen DOS fuentes de verdad
+
+Anotado el 10/08/2026, al aplicar la 046.
+
+- `technician_types` en Postgres → lo que ve el **signup**
+  (`useTechnicianTypes` en `src/auth/useCatalogOptions.ts` lee `label` directo
+  de la tabla).
+- `TECHNICIAN_TYPES` en `src/constants/technicianTypes.ts` → lo que ve **todo
+  lo demás** (pantallas de empresa, admin, formularios de oferta, mensajes de
+  error del matching).
+
+Los dos catálogos ya habían divergido en silencio: `painter` era
+`'Aircraft Painter'` en la base y `'Painter'` en TypeScript, y las dos filas
+con Part-66 solo existían del lado Postgres — por eso el grep sobre `app/` y
+`src/` no las encontró y el selector siguió diciendo Part-66 después de que el
+resto del copy ya estuviera limpio.
+
+El 10/08/2026 se alineó el TS a `'Aircraft Painter'`, con lo que las 6 filas
+coinciden hoy en ambos sitios. **Eso no arregla el problema, lo esconde**: la
+próxima edición de un label en un solo lado vuelve a abrir la brecha sin que
+nada falle ni avise.
+
+Fase 6 debe colapsarlo a UNA sola fuente. Es el momento natural, porque
+`requiresLicense` desaparece del catálogo TS al caerse la regla licenciado /
+no licenciado — el catálogo se queda con `code`, `label`, `isActive` y
+`sortOrder`, es decir, exactamente las columnas que ya viven en la tabla.
+
+### Pendiente de validar con usuarios reales
+El buscador de aeronaves usa el catálogo de 606 endorsements EASA. Un jefe
+de taller piensa "los A320 nuestros", no "Airbus A320 family — V2500".
+Probar el formulario con jefes de mantenimiento reales antes de la siguiente
+tanda de arquitectura.

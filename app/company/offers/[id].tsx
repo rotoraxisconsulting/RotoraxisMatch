@@ -55,6 +55,7 @@ import { canManageOffers, canSendDirectOffers } from '../../../src/utils/company
 import { resolveTypeRatingLabels } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
+import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
@@ -78,14 +79,6 @@ const CONTRACT_LABELS: Record<string, string> = {
   permanent: 'Permanent',
   long_term: 'Long-term',
   short_term: 'Short-term',
-};
-
-const TECH_TYPE_LABELS: Record<string, string> = {
-  mechanic: 'Mechanic',
-  avionics: 'Avionics',
-  structures: 'Structures',
-  inspector: 'Inspector',
-  electrician: 'Electrician',
 };
 
 function availabilityLabel(value?: string): string {
@@ -605,7 +598,7 @@ export default function OfferDetailScreen() {
                 <View style={styles.techInfo}>
                   <Text style={styles.techCode}>{technician.anonymousCode}</Text>
                   <Text style={styles.techMeta}>
-                    {TECH_TYPE_LABELS[technician.technicianType] ?? technician.technicianType} - {technician.city}, {technician.country}
+                    {technicianTypeLabel(technician.technicianType)} - {technician.city}, {technician.country}
                   </Text>
                 </View>
                 <MatchBadge score={score.total} context="match for this offer" notEligible={score.blockers.length > 0} />
