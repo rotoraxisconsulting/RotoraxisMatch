@@ -1,5 +1,5 @@
 import { supabase } from '../../lib/supabase';
-import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
+import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
@@ -11,6 +11,14 @@ import {
   withRequirements,
   throwIfNoRows,
 } from './supabaseMappers';
+
+// Una sola lista de columnas para las siete consultas de `offers` de este
+// fichero. Estaba repetida literalmente en cada una, y añadir `product_type`
+// (migración 047) exigía acertar siete veces: olvidar una devuelve un Offer
+// con `productType` undefined y NADA lo señala hasta que la UI pinta el badge
+// vacío o el guardado escribe basura.
+const OFFER_COLUMNS =
+  'id, company_id, title, description, contract_type, product_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at';
 
 type OfferLocationInput = {
   locationCityId?: string;
@@ -54,6 +62,7 @@ function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record
     ...(patch.title !== undefined ? { title: patch.title } : {}),
     ...(patch.description !== undefined ? { description: patch.description } : {}),
     ...(patch.contractType !== undefined ? { contract_type: patch.contractType } : {}),
+    ...(patch.productType !== undefined ? { product_type: patch.productType } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.locationCountry !== undefined ? { location_country: patch.locationCountry } : {}),
     ...(patch.locationCity !== undefined ? { location_city: patch.locationCity } : {}),
@@ -108,7 +117,7 @@ export const offerRepository = {
   async getAll(): Promise<Offer[]> {
     const { data, error } = await supabase
       .from('offers')
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .order('created_at', { ascending: false });
     throwIfError(error);
     return ((data ?? []) as any[]).map(mapOfferRow);
@@ -117,7 +126,7 @@ export const offerRepository = {
   async getById(id: string): Promise<Offer | null> {
     const { data, error } = await supabase
       .from('offers')
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .eq('id', id)
       .maybeSingle();
     throwIfError(error);
@@ -127,7 +136,7 @@ export const offerRepository = {
   async getPublished(): Promise<Offer[]> {
     const { data, error } = await supabase
       .from('offers')
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .eq('status', 'published')
       .eq('visible', true)
       .order('created_at', { ascending: false });
@@ -138,7 +147,7 @@ export const offerRepository = {
   async getForCompany(companyId: string): Promise<Offer[]> {
     const { data, error } = await supabase
       .from('offers')
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .eq('company_id', companyId)
       .order('created_at', { ascending: false });
     throwIfError(error);
@@ -169,7 +178,7 @@ export const offerRepository = {
       .from('offers')
       .update({ status, visible: status === 'published' })
       .eq('id', id)
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .maybeSingle();
     throwIfError(error);
     // `.select()` sin comprobar el resultado seguía siendo un éxito falso: con
@@ -186,6 +195,23 @@ export const offerRepository = {
   async update(id: string, patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Promise<Offer | null> {
     const existing = await this.getById(id);
     if (!existing) return null;
+
+    // Cambiar el producto de la oferta con requisitos exactos dentro es
+    // IMPOSIBLE en Postgres: `orh_matches_offer` (migración 047) ata cada fila
+    // de offer_required_habilitations al par (offer_id, product_type) de su
+    // oferta, y un UPDATE de esa columna con hijos vivos viola la FK. Las filas
+    // tienen que salir primero y la columna cambiar después — no hay otro
+    // orden posible.
+    //
+    // Borrarlas aquí no es una decisión silenciosa: son requisitos del
+    // producto contrario, ya inválidos, y la pantalla de edición hace
+    // confirmar el cambio antes de llegar a este punto (app/company/offers/
+    // edit.tsx). Acotado a un cambio REAL de producto: guardar sin tocar el
+    // selector no borra nada.
+    if (patch.productType !== undefined && patch.productType !== existing.productType) {
+      await this.replaceRequiredHabilitations(id, []);
+    }
+
     const locationPatch = hasOfferLocationPatch(patch)
       ? controlledOfferLocation({ ...existing, ...patch })
       : {};
@@ -193,7 +219,7 @@ export const offerRepository = {
       .from('offers')
       .update(offerPatchToDb({ ...patch, ...locationPatch }))
       .eq('id', id)
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .maybeSingle();
     throwIfError(error);
     // Mismo motivo que updateStatus: app/company/offers/edit.tsx descarta el
@@ -209,6 +235,7 @@ export const offerRepository = {
     title: string;
     description: string;
     contractType: ContractTypeCode;
+    productType: OfferProductType;
     locationCityId: string;
     locationCountry?: string;
     locationCity?: string;
@@ -235,6 +262,7 @@ export const offerRepository = {
         title: data.title,
         description: data.description,
         contract_type: data.contractType,
+        product_type: data.productType,
         location_city_id: location.locationCityId,
         location_country: location.locationCountry,
         location_city: location.locationCity,
@@ -243,7 +271,7 @@ export const offerRepository = {
         status,
         visible: status === 'published',
       })
-      .select('id, company_id, title, description, contract_type, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at')
+      .select(OFFER_COLUMNS)
       .single();
     throwIfError(error);
 
@@ -395,11 +423,25 @@ export const offerRepository = {
     throwIfError(deleteError);
 
     if (habilitations.length === 0) return;
+
+    // `product_type` se LEE de la oferta, nunca se recibe del llamante: es el
+    // valor que las FK compuestas de la migración 047 obligan a que coincida
+    // con el de la oferta Y con el del rating. Un parámetro sería una segunda
+    // oportunidad de equivocarse (y un llamante podría pasarlo desfasado
+    // respecto a lo que la oferta acaba de guardar); leerlo aquí hace que solo
+    // exista un valor posible. Si el rating es del otro producto, el insert
+    // falla en Postgres — que es exactamente lo que queremos.
+    const offer = await this.getById(offerId);
+    if (!offer) {
+      throw new Error('Could not save the type rating requirements — this offer no longer exists.');
+    }
+
     const { data, error } = await supabase
       .from('offer_required_habilitations')
       .insert(
         habilitations.map((h) => ({
           offer_id: offerId,
+          product_type: offer.productType,
           license_code: h.licenseCode,
           aircraft_type_rating_id: h.aircraftTypeRatingId,
           requirement_level: h.requirementLevel,

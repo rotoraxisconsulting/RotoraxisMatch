@@ -6,9 +6,11 @@ import { AircraftTypeRatingPicker } from '../AircraftTypeRatingPicker';
 import { useAircraftTypeRatingsCatalog } from '../../state/useAircraftTypeRatingsCatalog';
 import { catalogRepository } from '../../repositories/v2/catalogRepository';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../constants/aircraftTypeRatings';
-import { getCompatibleProductType } from '../../utils/licenseCategoryProductType';
+import { isLicenseCompatibleWithProductType } from '../../utils/licenseCategoryProductType';
 import { LICENSE_CATEGORIES } from '../../constants/licenses';
+import { getOfferProductTypeLabel } from '../../constants/offerProductTypes';
 import { LicenseCode, RequirementLevel } from '../../types/catalog';
+import { OfferProductType } from '../../types/offer';
 
 export interface ExactHabilitationRow {
   licenseCode: LicenseCode;
@@ -20,6 +22,9 @@ export interface ExactHabilitationRow {
 interface Props {
   value: ExactHabilitationRow[];
   onChange: (next: ExactHabilitationRow[]) => void;
+  // El producto declarado por la OFERTA. Acota a la vez las categorías
+  // ofrecidas y el catálogo de ratings — ver el comentario del componente.
+  productType: OfferProductType;
 }
 
 // Fase 3b screen 1 — the PRIMARY requirements block on the offer form
@@ -33,7 +38,14 @@ interface Props {
 // Resolves rating labels for every referenced id itself (including
 // inactive ones an existing offer might reference) — new.tsx/edit.tsx no
 // longer need to manage a ratingIndex/ratingsById for this purpose at all.
-export function TypeRatingRequirementsEditor({ value, onChange }: Props) {
+//
+// Migración 047 — el filtro se toma del producto de la OFERTA, no de la
+// licencia de cada fila como hasta ahora. La versión anterior derivaba el
+// facet de `getCompatibleProductType(newLicense)`, y B2/B2L/C/L cubren ambos
+// productos: con B2 seleccionada no se filtraba NADA. Por ese agujero
+// entraron ofertas tituladas "Helicópteros" con requisitos B1.1/B1.2. Ahora
+// el producto lo declara la empresa una sola vez y acota las dos listas.
+export function TypeRatingRequirementsEditor({ value, onChange, productType }: Props) {
   const { ratingIndex: activeRatingIndex } = useAircraftTypeRatingsCatalog();
   const [resolvedIndex, setResolvedIndex] = useState<AircraftRatingIndex>(new Map());
 
@@ -58,11 +70,20 @@ export function TypeRatingRequirementsEditor({ value, onChange }: Props) {
   const [newRatingId, setNewRatingId] = useState<string | null>(null);
   const [newNotes, setNewNotes] = useState('');
 
-  const categoryHint = useMemo(() => {
-    if (!newLicense) return undefined;
-    const productType = getCompatibleProductType(newLicense);
-    return productType ? { productType, licenseCode: newLicense } : undefined;
-  }, [newLicense]);
+  const categories = useMemo(
+    () => LICENSE_CATEGORIES.filter((l) => isLicenseCompatibleWithProductType(l.code as LicenseCode, productType)),
+    [productType],
+  );
+
+  // Cambiar el producto deja en la fila en construcción una categoría o un
+  // rating del producto anterior, que ya no aparecen en ninguna de las dos
+  // listas: seleccionados pero invisibles, y rechazados por Postgres al
+  // guardar. Se limpian. `value` lo limpia el formulario, que es quien pide
+  // confirmación cuando hay algo que perder.
+  useEffect(() => {
+    setNewLicense(null);
+    setNewRatingId(null);
+  }, [productType]);
 
   function selectCategory(code: LicenseCode) {
     setNewLicense(code);
@@ -94,7 +115,7 @@ export function TypeRatingRequirementsEditor({ value, onChange }: Props) {
       <Text style={styles.title}>Type rating requirements</Text>
       <Text style={styles.subtitle}>
         Search and add the exact ratings this role requires. Each one is marked Mandatory or Preferred — tap a
-        badge to change it.
+        badge to change it. Limited to {getOfferProductTypeLabel(productType).toLowerCase()}, as set above.
       </Text>
 
       {value.map((h, index) => (
@@ -133,13 +154,17 @@ export function TypeRatingRequirementsEditor({ value, onChange }: Props) {
       <View style={styles.addBlock}>
         <Text style={styles.fieldLabel}>Category</Text>
         <View style={styles.chipRow}>
-          {LICENSE_CATEGORIES.map((l) => (
+          {categories.map((l) => (
             <CompanyChip key={l.code} label={l.code} selected={newLicense === l.code} onPress={() => selectCategory(l.code as LicenseCode)} />
           ))}
         </View>
 
         <Text style={styles.fieldLabel}>Aircraft + engine rating</Text>
-        <AircraftTypeRatingPicker value={newRatingId} onSelect={(r) => setNewRatingId(r.id)} categoryHint={categoryHint} />
+        <AircraftTypeRatingPicker
+          value={newRatingId}
+          onSelect={(r) => setNewRatingId(r.id)}
+          lockedProductType={{ productType, reason: 'this offer is for ' + getOfferProductTypeLabel(productType).toLowerCase() }}
+        />
 
         <Text style={styles.fieldLabel}>Note (optional)</Text>
         <TextInput

@@ -1,5 +1,19 @@
-import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from './catalog';
+import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel, AircraftTypeRatingCatalog } from './catalog';
 import { OfferStatus } from './enums';
+
+/**
+ * Aviones o helicópteros — nunca las dos cosas en la misma oferta
+ * (migración 047, `offers.product_type`).
+ *
+ * Derivado del productType del catálogo en vez de reescrito, para que las dos
+ * listas no puedan separarse. `Gas Airship` se excluye a propósito: son 3
+ * filas del catálogo y quedan fuera de las ofertas por decisión de producto,
+ * que es también lo que impone el CHECK de la columna.
+ */
+export type OfferProductType = Exclude<
+  NonNullable<AircraftTypeRatingCatalog['productType']>,
+  'Gas Airship'
+>;
 
 // An exact category+rating requirement row (offer_required_habilitations).
 // Unlike requiredLicenses (a flat set of categories), each row here pairs a
@@ -20,6 +34,12 @@ export interface Offer {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  /**
+   * Declarado por la empresa, primer campo del formulario. Acota QUÉ puede
+   * pedir la oferta (licencias compatibles y ratings del catálogo); no entra
+   * en el scoring — el scorer no lo mira.
+   */
+  productType: OfferProductType;
   locationCityId: string;
   // Controlled snapshot copied from the canonical location catalog at create/update time.
   locationCountry: string;

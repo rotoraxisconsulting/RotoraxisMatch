@@ -24,6 +24,7 @@ import {
   Edit3,
   ListChecks,
   MapPin,
+  Plane,
   Send,
   Trash2,
   UserRound,
@@ -56,6 +57,7 @@ import { resolveTypeRatingLabels } from '../../../src/utils/v2CompatAdapters';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
 import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
+import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
@@ -472,6 +474,7 @@ export default function OfferDetailScreen() {
           </View>
 
           <View style={styles.metaGrid}>
+            <MetaTile label="Aircraft" value={getOfferProductTypeLabel(offer.productType)} icon={Plane} />
             <MetaTile label="Contract" value={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} />
             <MetaTile label="Experience" value={`${offer.minYearsExperience} yrs min`} />
             <MetaTile label="Published" value={formatPublishedDate(offer.createdAt)} icon={CalendarDays} />

@@ -1,13 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { spacing } from '../../theme';
 import { CompanyCard, CompanyChip, companyUi } from './CompanyUI';
 import { LicenseCode } from '../../types/catalog';
+import { OfferProductType } from '../../types/offer';
 import { LICENSE_CATEGORIES } from '../../constants/licenses';
+import { isLicenseCompatibleWithProductType } from '../../utils/licenseCategoryProductType';
 
 interface Props {
   requiredLicenses: LicenseCode[];
   onChangeLicenses: (next: LicenseCode[]) => void;
+  // Migración 047 — el requisito amplio se acota por el mismo producto que el
+  // exacto. Una oferta de helicópteros no puede ofrecer B1.1 por ninguna de
+  // las dos vías: aquí no lo impide una FK (esta tabla no la tiene), pero
+  // presentar la opción sería incoherente con el resto del formulario y
+  // volvería a producir el mismo tipo de oferta imposible.
+  productType: OfferProductType;
   // requiredLicenses is the broad/approximate scoring path —
   // offerMatchExplain.ts disables it entirely the moment requiredHabilitations
   // is non-empty ("el exacto ANULA al amplio"). Drives the default collapse.
@@ -35,7 +43,12 @@ export function RequiredLicensesSection({
   requiredLicenses,
   onChangeLicenses,
   hasExactRequirements,
+  productType,
 }: Props) {
+  const categories = useMemo(
+    () => LICENSE_CATEGORIES.filter((l) => isLicenseCompatibleWithProductType(l.code as LicenseCode, productType)),
+    [productType],
+  );
   const [manuallyExpanded, setManuallyExpanded] = useState(false);
   useEffect(() => {
     if (!hasExactRequirements) setManuallyExpanded(false);
@@ -68,7 +81,7 @@ export function RequiredLicensesSection({
           ) : null}
 
           <View style={styles.chipRow}>
-            {LICENSE_CATEGORIES.map((l) => (
+            {categories.map((l) => (
               <CompanyChip
                 key={l.code}
                 label={l.code}

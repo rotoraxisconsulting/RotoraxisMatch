@@ -83,6 +83,10 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     title: 'Test offer',
     description: 'Test',
     contractType: 'permanent',
+    // El scorer no lee productType (la 047 restringe qué se puede PEDIR, no
+    // cómo se puntúa); está aquí porque el tipo lo exige, no porque estos
+    // tests dependan de su valor.
+    productType: 'Aeroplane',
     locationCityId: 'airport:XXXX',
     locationCountry: 'Nowhere',
     locationCity: 'Nowhere City',

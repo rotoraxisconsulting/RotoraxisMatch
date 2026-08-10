@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
-import { FileText, MapPin, Minus, Plus, Send } from 'lucide-react-native';
+import { FileText, MapPin, Minus, Plane, Plus, Send } from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
 import {
   CompanyCard,
@@ -29,7 +29,10 @@ import { useCompanySession } from '../../../src/state/SessionContext';
 import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../../src/constants/technicianTypes';
 import { planOfferTechnicianTypeToggle } from '../../../src/utils/offerTechnicianTypePlan';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
+import { OFFER_PRODUCT_TYPES } from '../../../src/constants/offerProductTypes';
+import { isLicenseCompatibleWithProductType } from '../../../src/utils/licenseCategoryProductType';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
+import { OfferProductType } from '../../../src/types/offer';
 import { OfferStatus } from '../../../src/types/enums';
 import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
@@ -38,6 +41,7 @@ interface FormState {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  productType: OfferProductType;
   locationCityId: string;
   locationCountry: string;
   locationCity: string;
@@ -70,6 +74,9 @@ export default function NewOfferScreen() {
     title: '',
     description: '',
     contractType: 'permanent',
+    // Arranca en aviones porque el selector siempre está visible y el campo es
+    // NOT NULL: un "sin elegir" sería un tercer estado que la base no admite.
+    productType: 'Aeroplane',
     locationCityId: '',
     locationCountry: '',
     locationCity: '',
@@ -102,6 +109,25 @@ export default function NewOfferScreen() {
     set('requiredTechnicianTypes', next);
   }
 
+  // Creando una oferta el cambio de producto repinta SOBRE LA MARCHA, sin
+  // aviso: nada de lo que se descarta está guardado todavía, y un diálogo por
+  // cada toque en un formulario a medio rellenar estorba más de lo que
+  // protege. En la pantalla de edición sí se avisa — allí lo que se pierde ya
+  // está en la base.
+  function onSelectProductType(productType: OfferProductType) {
+    if (productType === form.productType) return;
+    setForm((prev) => ({
+      ...prev,
+      productType,
+      // Los ratings son del producto anterior, sin excepción posible: las FK
+      // compuestas de la 047 los rechazarían al guardar.
+      requiredHabilitations: [],
+      // Las licencias solo se caen si dejan de encajar: B2/B2L/C/L cubren
+      // ambos productos y no hay motivo para quitarlas.
+      requiredLicenses: prev.requiredLicenses.filter((code) => isLicenseCompatibleWithProductType(code, productType)),
+    }));
+  }
+
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
     if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
@@ -126,6 +152,7 @@ export default function NewOfferScreen() {
         title: form.title.trim(),
         description: form.description.trim(),
         contractType: form.contractType,
+        productType: form.productType,
         locationCityId: form.locationCityId,
         minYearsExperience: form.minYearsExperience,
         status,
@@ -156,6 +183,23 @@ export default function NewOfferScreen() {
           subtitle="Create a role technicians can match against."
           onBack={() => router.back()}
         />
+
+        <FormSection
+          title="Airplanes or helicopters?"
+          subtitle="An offer covers one or the other, never both. This sets which licence categories and type ratings you can require below."
+          icon={Plane}
+        >
+          <View style={styles.chipRow}>
+            {OFFER_PRODUCT_TYPES.map((p) => (
+              <CompanyChip
+                key={p.code}
+                label={p.label}
+                selected={form.productType === p.code}
+                onPress={() => onSelectProductType(p.code)}
+              />
+            ))}
+          </View>
+        </FormSection>
 
         <FormSection title="Offer details" subtitle="Describe the work clearly enough for match scoring." icon={FileText}>
           <FormField label="Title" error={errors.title}>
@@ -253,6 +297,7 @@ export default function NewOfferScreen() {
           <TypeRatingRequirementsEditor
             value={form.requiredHabilitations}
             onChange={(next) => set('requiredHabilitations', next)}
+            productType={form.productType}
           />
         )}
 
@@ -279,6 +324,7 @@ export default function NewOfferScreen() {
             requiredLicenses={form.requiredLicenses}
             onChangeLicenses={(next) => set('requiredLicenses', next)}
             hasExactRequirements={form.requiredHabilitations.length > 0}
+            productType={form.productType}
           />
         )}
 

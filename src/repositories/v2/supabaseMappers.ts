@@ -12,7 +12,7 @@ import {
   TechnicianWithRelations,
 } from '../../types/technician';
 import { SafeTechnicianPreview, TechnicianView, UnlockedTechnicianView } from '../../types/privacy';
-import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
+import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
 import { OfferApplication, OfferRequest } from '../../types/offerRequest';
 import { ChatMessage, ChatRoom } from '../../types/chat';
 import { SenderRole } from '../../types/enums';
@@ -128,6 +128,7 @@ export function mapOfferRow(row: DbRow): Offer {
     title: row.title,
     description: row.description,
     contractType: row.contract_type as ContractTypeCode,
+    productType: row.product_type as OfferProductType,
     locationCityId: row.location_city_id,
     locationCountry: row.location_country,
     locationCity: row.location_city,

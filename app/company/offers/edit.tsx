@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
-import { CheckCircle, FileText, MapPin, Minus, Plus, Save } from 'lucide-react-native';
+import { CheckCircle, FileText, MapPin, Minus, Plane, Plus, Save } from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
 import {
   CompanyCard,
@@ -29,9 +29,11 @@ import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { TECHNICIAN_TYPES, offerTargetsLicensedProfiles } from '../../../src/constants/technicianTypes';
 import { planOfferTechnicianTypeToggle } from '../../../src/utils/offerTechnicianTypePlan';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
+import { OFFER_PRODUCT_TYPES, getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
+import { isLicenseCompatibleWithProductType } from '../../../src/utils/licenseCategoryProductType';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
 import { OfferStatus } from '../../../src/types/enums';
-import { OfferWithRequirements } from '../../../src/types/offer';
+import { OfferProductType, OfferWithRequirements } from '../../../src/types/offer';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
@@ -40,6 +42,7 @@ interface FormState {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  productType: OfferProductType;
   locationCityId: string;
   locationCountry: string;
   locationCity: string;
@@ -83,6 +86,7 @@ export default function EditOfferScreen() {
           title: o.title,
           description: o.description,
           contractType: o.contractType,
+          productType: o.productType,
           locationCityId: o.locationCityId,
           locationCountry: o.locationCountry,
           locationCity: o.locationCity,
@@ -126,6 +130,49 @@ export default function EditOfferScreen() {
     setField('requiredTechnicianTypes', next);
   }
 
+  /**
+   * Editando una oferta que YA existe, cambiar el producto avisa antes de
+   * limpiar: lo que se descarta está guardado en la base, no es un borrador a
+   * medias como en la pantalla de creación.
+   *
+   * Si la empresa cancela, el selector NO se mueve — no se toca `form` hasta
+   * después del await, así que la pantalla se queda exactamente como estaba.
+   *
+   * Solo se pregunta cuando hay algo que perder: cambiar el producto de una
+   * oferta sin requisitos afectados es un cambio limpio y no merece diálogo.
+   */
+  async function onSelectProductType(productType: OfferProductType) {
+    if (!form || productType === form.productType) return;
+
+    const droppedLicenses = form.requiredLicenses.filter(
+      (code) => !isLicenseCompatibleWithProductType(code, productType),
+    );
+    const droppedRatings = form.requiredHabilitations.length;
+
+    if (droppedRatings > 0 || droppedLicenses.length > 0) {
+      const parts: string[] = [];
+      if (droppedRatings > 0) {
+        parts.push(`${droppedRatings} type rating requirement${droppedRatings !== 1 ? 's' : ''}`);
+      }
+      if (droppedLicenses.length > 0) parts.push(`the ${droppedLicenses.join(', ')} licence requirement${droppedLicenses.length !== 1 ? 's' : ''}`);
+
+      const confirmed = await confirmAction({
+        title: `Switch this offer to ${getOfferProductTypeLabel(productType).toLowerCase()}?`,
+        message: `This clears ${parts.join(' and ')}, which cannot apply to ${getOfferProductTypeLabel(productType).toLowerCase()}. You will need to add the new requirements before saving.`,
+        confirmLabel: 'Switch and clear',
+        destructive: true,
+      });
+      if (!confirmed) return;
+    }
+
+    setForm((prev) => prev ? {
+      ...prev,
+      productType,
+      requiredHabilitations: [],
+      requiredLicenses: prev.requiredLicenses.filter((code) => isLicenseCompatibleWithProductType(code, productType)),
+    } : prev);
+  }
+
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => prev ? { ...prev, [key]: value } : prev);
     if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
@@ -148,6 +195,11 @@ export default function EditOfferScreen() {
         title: form.title.trim(),
         description: form.description.trim(),
         contractType: form.contractType,
+        // Va en el update(), no en replaceRequirements(): el repositorio tiene
+        // que retirar las filas de requisitos ANTES de mover esta columna
+        // (orh_matches_offer lo impone), y hace justo eso cuando ve que
+        // cambia.
+        productType: form.productType,
         locationCityId: form.locationCityId,
         minYearsExperience: form.minYearsExperience,
         status,
@@ -201,6 +253,23 @@ export default function EditOfferScreen() {
           subtitle={offer.title}
           onBack={() => router.back()}
         />
+
+        <FormSection
+          title="Airplanes or helicopters?"
+          subtitle="An offer covers one or the other, never both. This sets which licence categories and type ratings you can require below."
+          icon={Plane}
+        >
+          <View style={styles.chipRow}>
+            {OFFER_PRODUCT_TYPES.map((p) => (
+              <CompanyChip
+                key={p.code}
+                label={p.label}
+                selected={form.productType === p.code}
+                onPress={() => { void onSelectProductType(p.code); }}
+              />
+            ))}
+          </View>
+        </FormSection>
 
         <FormSection title="Offer details" subtitle="Update the role information technicians will see." icon={FileText}>
           <FormField label="Title" error={errors.title}>
@@ -295,6 +364,7 @@ export default function EditOfferScreen() {
           <TypeRatingRequirementsEditor
             value={form.requiredHabilitations}
             onChange={(next) => setField('requiredHabilitations', next)}
+            productType={form.productType}
           />
         )}
 
@@ -321,6 +391,7 @@ export default function EditOfferScreen() {
             requiredLicenses={form.requiredLicenses}
             onChangeLicenses={(next) => setField('requiredLicenses', next)}
             hasExactRequirements={form.requiredHabilitations.length > 0}
+            productType={form.productType}
           />
         )}
 

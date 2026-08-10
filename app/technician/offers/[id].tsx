@@ -14,6 +14,7 @@ import {
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { colors, spacing } from '../../../src/theme';
 import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
+import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { InlineScore } from '../../../src/components/InlineScore';
 import { MatchExplanation } from '../../../src/components/MatchExplanation';
@@ -308,6 +309,7 @@ export default function OfferDetailScreen() {
             <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match with your profile" />
           )}
           <View style={styles.badgeRow}>
+            <TechnicianBadge label={getOfferProductTypeLabel(offer.productType)} tone="info" />
             <TechnicianBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" />
             {offer.minYearsExperience > 0 ? (
               <TechnicianBadge label={`${offer.minYearsExperience}+ yrs exp`} tone="muted" />

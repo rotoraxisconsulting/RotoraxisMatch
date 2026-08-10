@@ -16,12 +16,39 @@ export interface AircraftTypeRatingPickerCategoryHint {
   licenseCode: string; // for the hint text, e.g. "compatible with B1.3"
 }
 
+/**
+ * Migración 047 — un facet productType SIN escotilla de escape, al contrario
+ * que `categoryHint`. Existe porque hay un caso donde salirse del facet no es
+ * "poco habitual" sino IMPOSIBLE de guardar: en el formulario de oferta, la
+ * empresa ya ha declarado aviones o helicópteros y las FK compuestas
+ * (orh_matches_offer / orh_matches_rating) rechazan en Postgres cualquier
+ * rating del otro producto. Ofrecer un "Show all" ahí sería invitar a elegir
+ * algo que el motor va a rechazar al guardar.
+ *
+ * Regla: `categoryHint` para lo improbable-pero-legal (perfil del técnico),
+ * esto para lo imposible. Si ambos llegan, gana éste.
+ */
+export interface AircraftTypeRatingPickerLockedProductType {
+  productType: NonNullable<AircraftTypeRatingCatalog['productType']>;
+  reason: string; // por qué está acotado, p. ej. "this offer is for helicopters"
+}
+
 interface Props {
   value?: string | null;
   onSelect: (rating: AircraftTypeRatingCatalog) => void;
   placeholder?: string;
   maxResults?: number;
   categoryHint?: AircraftTypeRatingPickerCategoryHint;
+  lockedProductType?: AircraftTypeRatingPickerLockedProductType;
+}
+
+// El vocabulario EASA ('Aeroplane') no es el que usa nadie al hablar; en
+// pantalla se dice "Airplanes"/"Helicopters". Los valores sin traducción
+// propia (p. ej. 'Gas Airship') salen tal cual antes que inventarles una.
+function productTypeNoun(productType: NonNullable<AircraftTypeRatingCatalog['productType']>): string {
+  if (productType === 'Aeroplane') return 'Airplanes';
+  if (productType === 'Helicopter') return 'Helicopters';
+  return productType;
 }
 
 // Shared aircraft+engine rating search picker — used by the technician
@@ -33,7 +60,7 @@ interface Props {
 // with a rating picker/filter goes through), which is plenty for a few
 // hundred rows. No web-only APIs: TextInput/ScrollView/TouchableOpacity/
 // ActivityIndicator all work the same on web, iOS and Android.
-export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResults = 25, categoryHint }: Props) {
+export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResults = 25, categoryHint, lockedProductType }: Props) {
   const { ratings, state, error, retry } = useAircraftTypeRatingsCatalog();
   const [query, setQuery] = useState('');
   // Escape hatch for categoryHint — "Show all" — resets whenever the hint
@@ -67,14 +94,17 @@ export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResu
 
   const selected = selectedFromActiveList ?? inactiveSelected;
 
-  const activeHint = categoryHint && !hintDismissed ? categoryHint : null;
+  // El facet duro gana al blando: donde el producto está acotado por la propia
+  // oferta no tiene sentido seguir sugiriendo el de la licencia.
+  const activeHint = !lockedProductType && categoryHint && !hintDismissed ? categoryHint : null;
+  const activeProductType = lockedProductType?.productType ?? activeHint?.productType ?? null;
 
   // Search results only ever come from the ACTIVE list — an inactive rating
   // can be displayed (above) but never re-selected as a new relationship.
   const results = useMemo(() => {
-    const pool = activeHint ? getByProductType(ratings, activeHint.productType) : ratings;
+    const pool = activeProductType ? getByProductType(ratings, activeProductType) : ratings;
     return searchRatings(pool, query).slice(0, maxResults);
-  }, [ratings, query, maxResults, activeHint]);
+  }, [ratings, query, maxResults, activeProductType]);
 
   return (
     <View style={styles.wrap}>
@@ -115,10 +145,16 @@ export function AircraftTypeRatingPicker({ value, onSelect, placeholder, maxResu
 
       {(state === 'success' || state === 'empty') && (
         <>
-          {activeHint ? (
+          {lockedProductType ? (
             <View style={styles.hintRow}>
               <Text style={styles.hintText}>
-                Showing only {activeHint.productType === 'Helicopter' ? 'helicopters' : activeHint.productType === 'Aeroplane' ? 'airplanes' : activeHint.productType.toLowerCase()} — compatible with {activeHint.licenseCode}
+                {productTypeNoun(lockedProductType.productType)} only — {lockedProductType.reason}
+              </Text>
+            </View>
+          ) : activeHint ? (
+            <View style={styles.hintRow}>
+              <Text style={styles.hintText}>
+                Showing only {productTypeNoun(activeHint.productType).toLowerCase()} — compatible with {activeHint.licenseCode}
               </Text>
               <TouchableOpacity onPress={() => setHintDismissed(true)} accessibilityRole="button">
                 <Text style={styles.hintAction}>Show all</Text>

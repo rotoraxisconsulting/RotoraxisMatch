@@ -32,6 +32,8 @@ import { useTechnicianSession } from '../../../src/state/SessionContext';
 import { CompanyProfileView } from '../../../src/types/company';
 import { OfferApplication } from '../../../src/types/offerRequest';
 import { ContractTypeCode } from '../../../src/types/catalog';
+import { OfferProductType } from '../../../src/types/offer';
+import { OFFER_PRODUCT_TYPES, getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { useAircraftTypeRatingsCatalog } from '../../../src/state/useAircraftTypeRatingsCatalog';
 
 function formatPublishedDate(iso: string): string {
@@ -80,20 +82,12 @@ function appStatusInfo(status: string): { label: string; tone: 'success' | 'warn
 
 type ContractFilter = ContractTypeCode | 'all';
 
-// TODO (Fase 5, 2026-08-04) — RESTAURAR el filtro Airplane/Helicopter y el
-// badge de categoría en cada tarjeta de oferta.
-//
-// Ambos se derivaban de offer.requiredAircraftTypes (las family keys del
-// filtro aproximado) vía resolveAircraftCategoryForFamilyKeys(). Ese campo se
-// retiró con offer_required_aircraft_types, así que se quedaron sin fuente de
-// datos y se eliminan aquí — regresión aceptada y temporal, decidida
-// explícitamente.
-//
-// NO los re-derives de requiredHabilitations: la fuente correcta es
-// offers.product_type (NOT NULL, 'Aeroplane' | 'Helicopter', declarado por la
-// empresa), que añade la siguiente tarea. Un helper derivado ahora se
-// borraría al aplicarla. Cuando exista esa columna, el filtro vuelve a ser un
-// chip sobre offer.productType y el badge un TechnicianBadge con su label.
+// Migración 047 — filtro y badge Airplanes/Helicopters restaurados, ahora
+// sobre `offer.productType` (declarado por la empresa, NOT NULL) en vez de
+// derivarlos del catálogo. El filtro es una comparación directa contra la
+// columna: no hay family keys que resolver, ni estado 'mixed' que representar
+// — una oferta es de un producto o del otro, y la base lo garantiza.
+type ProductFilter = OfferProductType | 'all';
 
 export default function BrowseOffersScreen() {
   const router = useRouter();
@@ -111,6 +105,7 @@ export default function BrowseOffersScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [contractFilter, setContractFilter] = useState<ContractFilter>('all');
+  const [productFilter, setProductFilter] = useState<ProductFilter>('all');
   const [searchText, setSearchText] = useState('');
 
   const load = useCallback(async () => {
@@ -167,6 +162,7 @@ export default function BrowseOffersScreen() {
   const filtered = matches
     .filter(({ offer }) => {
       if (contractFilter !== 'all' && offer.contractType !== contractFilter) return false;
+      if (productFilter !== 'all' && offer.productType !== productFilter) return false;
       if (searchText.trim()) {
         const q = searchText.trim().toLowerCase();
         const haystack = [offer.title, offer.locationCity, offer.locationCountry, offer.locationBaseAirport ?? '']
@@ -233,6 +229,27 @@ export default function BrowseOffersScreen() {
           ))}
         </ScrollView>
 
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow}
+          contentContainerStyle={styles.filterContent}
+        >
+          <TechnicianChip
+            label="All aircraft"
+            selected={productFilter === 'all'}
+            onPress={() => setProductFilter('all')}
+          />
+          {OFFER_PRODUCT_TYPES.map((p) => (
+            <TechnicianChip
+              key={p.code}
+              label={p.label}
+              selected={productFilter === p.code}
+              onPress={() => setProductFilter(p.code)}
+            />
+          ))}
+        </ScrollView>
+
         {filtered.length === 0 && (
           <EmptyPanel
             title="No offers found"
@@ -278,6 +295,7 @@ export default function BrowseOffersScreen() {
                 <Text style={styles.cardDate}>Published {formatPublishedDate(offer.createdAt)}</Text>
 
                 <View style={styles.metaRow}>
+                  <TechnicianBadge label={getOfferProductTypeLabel(offer.productType)} tone="info" small />
                   <TechnicianBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" small />
                   {offer.minYearsExperience > 0 && (
                     <TechnicianBadge label={`${offer.minYearsExperience}+ yrs exp`} tone="muted" small />

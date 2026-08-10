@@ -2470,6 +2470,77 @@ trae.
 `validate:auth-hooks` PASS.
 
 
+## 047 — una oferta es de aviones o de helicópteros (APLICADA 2026-08-10)
+
+`offers.product_type` (NOT NULL, CHECK `'Aeroplane' | 'Helicopter'`) lo declara
+la empresa en el PRIMER campo del formulario, siempre visible.
+
+**El agujero que cierra**: el filtro de ratings se derivaba de la LICENCIA de
+cada fila (`getCompatibleProductType`, `TypeRatingRequirementsEditor.tsx:63`), y
+B2/B2L/C/L cubren ambos productos → **con B2 no se filtraba nada**. Por ahí
+entraron ofertas tituladas "Helicópteros" con requisitos B1.1/B1.2. Ahora el
+producto se declara una vez y acota las DOS listas (categorías ofrecidas y
+catálogo del picker).
+
+**Enforcement en el motor, no en la pantalla**: dos FK compuestas desde
+`offer_required_habilitations`, cruzándose sobre su propia columna
+`product_type` — `(offer_id, product_type) → offers` y
+`(aircraft_type_rating_id, product_type) → aircraft_type_ratings`. La columna
+hija no la elige el escritor, la hereda: `replaceRequiredHabilitations()` la LEE
+de la oferta en vez de aceptarla como parámetro, para que no exista un segundo
+valor posible. Requisitos previos: `aircraft_type_ratings.product_type` pasa a
+NOT NULL (0 nulls verificados en las 606 filas) y las dos tablas padre reciben
+UNIQUE `(id, product_type)` — una FK compuesta exige una única EXACTAMENTE sobre
+las columnas referenciadas.
+
+**Gas Airship queda fuera de las ofertas** (3 filas del catálogo, decisión
+tomada): basta el CHECK de `offers`; la fila hija hereda ese valor por la
+primera FK, así que la segunda nunca puede apuntar a un dirigible. Sin CHECK
+propio en la tabla hija.
+
+**`ON DELETE CASCADE` en `orh_matches_offer`**, igual que la FK simple sobre
+`offer_id` que ya existía: sin él, la nueva FK habría bloqueado el DELETE real
+de ofertas sin dependientes de `offerRepository.delete()`.
+
+**Orden forzado por el motor**: cambiar `offers.product_type` con requisitos
+vivos viola la FK — las filas salen primero y la columna cambia después, no hay
+otro orden. `offerRepository.update()` lo hace explícitamente, acotado a un
+cambio REAL de producto (guardar sin tocar el selector no borra nada), porque
+`edit.tsx` llama a `update()` ANTES que a `replaceRequirements()`.
+
+**Cambiar el producto con requisitos dentro**: creando, repinta sobre la marcha
+sin aviso (nada está guardado); editando, `confirmAction` antes de limpiar y
+cancelar deja el selector donde estaba (no se toca `form` hasta después del
+await). Las licencias solo se caen si dejan de encajar — B2/B2L/C/L sobreviven
+al cambio. El picker recibe un facet DURO (`lockedProductType`, sin "Show all"),
+distinto del `categoryHint` blando del perfil del técnico: salirse aquí no es
+improbable, es imposible de guardar.
+
+**Restaurado** el filtro Airplanes/Helicopters y el badge por tarjeta en
+`app/technician/offers/index.tsx` (el TODO de la línea 82), ya sobre
+`offer.productType`: comparación directa contra la columna, sin resolver family
+keys y sin estado `mixed` — la base garantiza un solo producto por oferta.
+
+**Sin tocar**: el scorer (`product_type` restringe qué se puede pedir, no cómo
+se puntúa) ni `requirement_level`, que cambia en Fase 6.
+
+**Sin backfill**: `offers` y `offer_required_habilitations` vacías en dev
+(verificado en vivo, 0 y 0). Las guardas de la migración abortan en vez de
+inventar un valor si eso deja de ser cierto.
+
+**Sonda en transacción con rollback** (7 casos, todos por control de flujo: un
+caso que pasara habría lanzado su propio `FALLO` en vez de llegar al final):
+positivo de control (rating de avión en oferta de aviones → aceptado) ·
+helicóptero declarando `Aeroplane` → rechazado por `orh_matches_rating` ·
+el mismo declarando `Helicopter` para esquivarlo → rechazado por
+`orh_matches_offer` · UPDATE del producto con requisitos vivos → bloqueado ·
+borrar requisitos y luego cambiar → OK · `Gas Airship` → CHECK · DELETE de
+oferta con requisitos → CASCADE OK. Rollback confirmado (0 ofertas, 0 filas).
+
+`tsc` 0 · `test:matching` 150/150 · `test:url-validation` PASS ·
+`validate:state-machine` PASS.
+
+
 ## Fase 6 — Perfiles múltiples y ofertas sin licencia
 
 Decidido el 10/08/2026. Va DESPUÉS de la migración 047 (offers.product_type).
