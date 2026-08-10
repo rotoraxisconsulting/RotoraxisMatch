@@ -212,7 +212,7 @@ export function AdminTechnicianCard({ technician, details, typeRatingLabels, acc
           <View style={styles.metaGrid}>
             <InfoPill icon={BriefcaseBusiness} label={technicianTypesLabel(details)} />
             <InfoPill icon={MapPin} label={`${technician.city}, ${technician.country}`} />
-            <InfoPill icon={UserRound} label={`${technician.yearsExperience} years exp. - ${technician.profileCompleteness}% profile`} />
+            <InfoPill icon={UserRound} label={`${technician.yearsExperience} years exp.`} />
           </View>
 
           {licenseChips.length > 0 ? (

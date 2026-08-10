@@ -14,9 +14,8 @@ import { TechnicianTypeOption } from '../auth/useCatalogOptions';
  * no en cada pantalla, para que no pueda divergir.
  *
  * Sin restricción de mezcla: se puede ser aviónico y pintor a la vez. Y sin
- * relación con las licencias — un tipo no habilita ni impide declarar nada
- * (ver la nota de getProfileCompletenessWeights); el eje Part-66 se muestra
- * siempre, tenga el técnico los tipos que tenga.
+ * relación con las licencias — un tipo no habilita ni impide declarar nada:
+ * el eje Part-66 se muestra siempre, tenga el técnico los tipos que tenga.
  *
  * La `palette` es el mismo patrón que DateField: el alta es tema oscuro
  * (navy) y el perfil claro, y un componente compartido no puede traer sus

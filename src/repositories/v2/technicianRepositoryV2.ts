@@ -27,16 +27,22 @@ import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan'
 // loadTechnicianProfileTypes(). La columna sigue en la tabla y en la vista
 // hasta la migración que la retire, pero pedirla aquí sería mantener viva la
 // fuente que la tabla puente sustituye.
+//
+// `profile_completeness` tampoco se pide desde el 2026-08-10: el porcentaje
+// de completitud se retiró entero. La columna sigue en la tabla y en la vista
+// hasta que se aplique la migración 049, que la borra — y precisamente por
+// eso hay que dejar de pedirla ANTES (expand-contract): un SELECT explícito
+// de una columna que ya no existe revienta TODAS las consultas de la tabla.
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
   location_city_id, availability, years_experience,
-  verification_status, profile_completeness, social_links, created_at, updated_at
+  verification_status, social_links, created_at, updated_at
 `;
 
 const PUBLIC_SELECT = `
   id, anonymous_code, location_city_id, country, city,
   base_airport, latitude, longitude, availability, years_experience,
-  verification_status, profile_completeness, first_name, last_name, email,
+  verification_status, first_name, last_name, email,
   phone, social_links
 `;
 
@@ -108,7 +114,6 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
       },
     } : {}),
     ...(patch.yearsExperience !== undefined ? { years_experience: patch.yearsExperience ?? null } : {}),
-    ...(patch.profileCompleteness !== undefined ? { profile_completeness: patch.profileCompleteness } : {}),
     ...(patch.socialLinks !== undefined ? { social_links: patch.socialLinks ?? null } : {}),
   };
 }

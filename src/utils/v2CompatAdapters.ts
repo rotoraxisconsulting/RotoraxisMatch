@@ -177,7 +177,6 @@ export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview, ratingIn
     specialties: [],
     availability: withAvailabilityStatus(preview.availability),
     verificationStatus: preview.verificationStatus,
-    profileCompleteness: 0,
     yearsExperience: computeYearsExperience(preview.yearsExperience),
     // matchingScore intentionally omitted — no offer context in general search
   };
@@ -228,7 +227,6 @@ export function v2TechnicianToV1(tech: TechnicianWithRelations, ratingIndex: Air
     specialties: [],
     availability: withAvailabilityStatus(tech.availability),
     verificationStatus: tech.verificationStatus,
-    profileCompleteness: tech.profileCompleteness,
     yearsExperience: computeYearsExperience(tech.yearsExperience),
   };
 }

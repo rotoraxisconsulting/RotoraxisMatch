@@ -40,7 +40,6 @@ import { HabilitationsEditor, HabilitationRow as HabRow } from '../../src/compon
 import { DateField } from '../../src/components/DateField';
 import { isValidDateOrder } from '../../src/utils/validityDates';
 import { validateProfileYearsExperience } from '../../src/utils/yearsExperienceValidation';
-import { computeProfileCompleteness } from '../../src/utils/profileCompleteness';
 import { technicianRepositoryV2 } from '../../src/repositories/v2/technicianRepositoryV2';
 import { catalogRepository } from '../../src/repositories/v2/catalogRepository';
 import { catalogRequestRepository } from '../../src/repositories/v2/catalogRequestRepository';
@@ -87,7 +86,6 @@ type SupaTechRow = {
   } | null;
   years_experience: number | null;
   verification_status: string;
-  profile_completeness: number;
   social_links: SocialLinks | null;
 };
 
@@ -131,7 +129,6 @@ function supaRowToForm(
     specialties: [],
     availability: { immediately, status, contractTypes },
     verificationStatus: row.verification_status as Technician['verificationStatus'],
-    profileCompleteness: row.profile_completeness,
     yearsExperience,
   };
 }
@@ -263,7 +260,7 @@ export default function TechnicianProfileScreen() {
         .from('technician_profiles')
         // Sin `technician_type`: los tipos salen de la tabla puente de abajo.
         .select(
-          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, years_experience, verification_status, profile_completeness, social_links',
+          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, years_experience, verification_status, social_links',
         )
         .eq('user_id', profile.id)
         .maybeSingle();
@@ -346,8 +343,8 @@ export default function TechnicianProfileScreen() {
       const resolvedIndex = buildAircraftRatingIndex(resolvedRatings);
       setRatingsById(resolvedIndex);
 
-      // Derived only for the V1-shaped completeness score / summary card —
-      // never used as the source of truth for saving.
+      // '' cuando la columna es NULL: "no declarado" y "0 anios" son estados
+      // distintos y el string vacio es el unico que sabe expresar el primero.
       setYearsInput(techRow.years_experience == null ? '' : String(techRow.years_experience));
 
       // social_links: se reparte en los tres campos conocidos y un cajon con
@@ -642,14 +639,6 @@ export default function TechnicianProfileScreen() {
     )];
     const trimmedYears = yearsInput.trim();
     const yearsToSave = trimmedYears === '' ? null : Math.max(0, Math.min(70, parseInt(trimmedYears, 10) || 0));
-    // Se calcula sobre lo que SE VA A GUARDAR, no sobre lo que hay en
-    // pantalla: si el tecnico acaba de aceptar retirar sus licencias
-    // huerfanas, la tabla de pesos que le toca es la no licenciada.
-    const newCompleteness = computeProfileCompleteness(
-      { ...form, licenseCategories: licensesToSave, aircraftTypes: derivedAircraftTypes },
-      yearsToSave !== null,
-      socialDeclared,
-    );
 
     setSaving(true);
     setProfileError(null);
@@ -673,7 +662,6 @@ export default function TechnicianProfileScreen() {
             contract_types: form.availability.contractTypes,
           },
           years_experience: yearsToSave,
-          profile_completeness: newCompleteness,
           social_links: socialDeclared ? socialToSave : null,
         })
         .eq('id', techId)
@@ -735,7 +723,6 @@ export default function TechnicianProfileScreen() {
 
       setForm((prev) => (prev ? {
         ...prev,
-        profileCompleteness: newCompleteness,
         licenseCategories: licensesToSave,
         aircraftTypes: derivedAircraftTypes,
       } : prev));
@@ -827,7 +814,6 @@ export default function TechnicianProfileScreen() {
 
   // ── Main form ─────────────────────────────────────────────────────────────
 
-  const completeness = form.profileCompleteness ?? 0;
   const status = form.availability.status ?? 'open_to_offers';
 
   return (
@@ -876,16 +862,6 @@ export default function TechnicianProfileScreen() {
               <View style={styles.profileMetaItem}>
                 <Text style={styles.profileMetaLabel}>Status</Text>
                 <Text style={styles.profileMetaValue}>{availabilityLabel(status)}</Text>
-              </View>
-            </View>
-
-            <View style={styles.completenessBlock}>
-              <View style={styles.completenessRow}>
-                <Text style={styles.completenessLabel}>Profile completeness</Text>
-                <Text style={styles.completenessValue}>{completeness}%</Text>
-              </View>
-              <View style={styles.progressBg}>
-                <View style={[styles.progressFill, { width: `${completeness}%` as any }]} />
               </View>
             </View>
           </TechnicianCard>
@@ -1101,22 +1077,6 @@ export default function TechnicianProfileScreen() {
               ))}
             </View>
 
-            {/* La nota del 100 -> 85 (decision del 2026-08-10). Declarar la
-                primera licencia CRUZA a la tabla de pesos licenciada y
-                aparecen los 15 puntos de type ratings, todavia sin rellenar,
-                asi que el porcentaje BAJA. Es honesto — se ha abierto una
-                pregunta nueva — pero sin decirlo parece un castigo por
-                declarar mas. Solo se enseña cuando aplica: con licencia y sin
-                ningun type rating. */}
-            {form.licenseCategories.length > 0 && habilitations.length === 0 ? (
-              <Text style={styles.privacyNote}>
-                Adding a licence opens a new question: which aircraft you are rated on. Until you
-                add a type rating below, your profile completeness goes DOWN — nothing has gone
-                wrong, there is simply one more thing to fill in, and it is the one companies
-                match you on.
-              </Text>
-            ) : null}
-
             {form.licenseCategories.length > 0 ? (
               <>
                 <View style={styles.fieldGap} />
@@ -1302,37 +1262,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '700',
     color: techUi.text,
-  },
-  completenessBlock: {
-    gap: spacing.xs,
-  },
-  completenessRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  completenessLabel: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    color: techUi.textSoft,
-  },
-  completenessValue: {
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-    color: techUi.accent,
-  },
-  progressBg: {
-    height: 7,
-    borderRadius: 4,
-    overflow: 'hidden',
-    backgroundColor: techUi.borderSoft,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-    backgroundColor: techUi.accent,
   },
   dirtyBanner: {
     marginTop: spacing.sm,

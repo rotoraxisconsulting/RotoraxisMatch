@@ -67,7 +67,6 @@ export interface Technician {
   specialties: string[];
   availability: Availability;
   verificationStatus: VerificationStatus;
-  profileCompleteness: number;
   yearsExperience: number;
 }
 
@@ -233,7 +232,17 @@ export interface TechnicianProfile {
 
   /** ADMIN-ONLY in Supabase — technician cannot write this field; set via admin-only RLS policy */
   verificationStatus: VerificationStatus;
-  profileCompleteness: number;
+
+  // 2026-08-10: aquí vivía `profileCompleteness` (0–100), retirado junto con
+  // toda su maquinaria. Un porcentaje único sobre ejes independientes obliga
+  // a inventar un reparto de pesos entre cosas que no se comparan, y producía
+  // el efecto perverso de que declarar una licencia BAJARA el número. Nunca
+  // fue un gate: no filtraba, no ordenaba, no bloqueaba nada y no entraba en
+  // el match — sólo se pintaba. La columna `technician_profiles
+  // .profile_completeness` se retira en la migración 049.
+  //
+  // Si hace falta decirle al técnico que le falta algo, va una LISTA de "te
+  // falta esto" —que nunca baja y dice qué hacer—, no un porcentaje.
 
   socialLinks?: SocialLinks;
 

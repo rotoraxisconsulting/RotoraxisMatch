@@ -47,12 +47,6 @@ import { planOfferTechnicianTypeToggle } from '../src/utils/offerTechnicianTypeP
 import { findOrphanedLicenses } from '../src/constants/licenses';
 import { getMatchDisplayLabel } from '../src/utils/offerMatchExplain';
 import { GENERAL_COMPATIBILITY_LABEL } from '../src/types/matching';
-import {
-  computeProfileCompleteness,
-  LICENSED_COMPLETENESS_WEIGHTS,
-  NON_LICENSED_COMPLETENESS_WEIGHTS,
-  ProfileCompletenessWeights,
-} from '../src/utils/profileCompleteness';
 import { Technician } from '../src/types';
 import {
   parseYearsExperience,
@@ -145,7 +139,6 @@ function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): Techn
     locationCityId: 'airport:YYYY',
     availability: { immediately: true, contractTypes: ['permanent'] },
     verificationStatus: 'pending',
-    profileCompleteness: 50,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     licenses: [],
@@ -1992,37 +1985,6 @@ async function main() {
     assert.equal(parseYearsExperience('  5  '), 5, 'surrounding whitespace is tolerated');
   });
 
-  // ── Profile completeness: both branches must be able to reach 100 ────
-
-  // A profile with every field the screen offers filled in. `licenseCategories`
-  // and `aircraftTypes` are the two a non-licensed trade can never have — the
-  // tests below override them per branch.
-  function makeCompleteProfile(overrides: Partial<Technician> = {}): Technician {
-    return {
-      id: 'tech-completeness',
-      anonymousCode: 'AVT-9999',
-      fullName: 'Complete Technician',
-      email: 'complete@example.com',
-      phone: '+34 600 000 000',
-      locationCityId: 'airport:LEMD',
-      country: 'Spain',
-      city: 'Madrid',
-      baseAirport: 'LEMD',
-      licenseCategories: [],
-      aircraftTypes: [],
-      specialties: [],
-      availability: { immediately: true, status: 'open_to_offers', contractTypes: ['permanent'] },
-      verificationStatus: 'verified',
-      profileCompleteness: 0,
-      yearsExperience: 8,
-      ...overrides,
-    } as Technician;
-  }
-
-  function sumWeights(w: ProfileCompletenessWeights): number {
-    return Object.values(w).reduce((sum, v) => sum + v, 0);
-  }
-
   // ── Fase 6 tanda A: licencias huérfanas al quitar un tipo ─────────────
   await test('Huérfanas — quitar "mechanic" conservando "avionic": B1.3 entra, B2 no', () => {
     // El ejemplo exacto de la decisión del 2026-08-10.
@@ -2079,108 +2041,6 @@ async function main() {
     assert.deepEqual(findOrphanedLicenses(['B2'], ['mechanic', 'avionic'], ['avionic']), []);
   });
 
-  await test('Completeness — a fully completed profile WITHOUT licences reaches 100 (was capped at 65)', () => {
-    // The bug: licences (20) + aircraft types (15) were unreachable for a
-    // profile with no Part-66 axis, so the single old table topped out at 65
-    // for someone who had answered every question the app asks them.
-    const noLicences = makeCompleteProfile();
-    assert.equal(computeProfileCompleteness(noLicences, true, true), 100);
-  });
-
-  await test('Completeness — the same profile scored under the licensed table would only reach 65', () => {
-    // Pins the regression itself, not just the fix: if the branch is ever
-    // removed, this is the number that comes back.
-    const noLicences = makeCompleteProfile();
-    const w = LICENSED_COMPLETENESS_WEIGHTS;
-    const underLicensedTable =
-      w.fullName + w.email + w.phone + w.city + w.country + w.baseAirport + w.social + w.availability + w.years;
-    assert.equal(
-      underLicensedTable,
-      65,
-      'no licences + no aircraft types under the licensed table = 65, the exact bug being fixed',
-    );
-  });
-
-  await test('Completeness — the licensed branch is untouched: a fully completed licensed profile still reaches 100', () => {
-    const mechanic = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] });
-    assert.equal(computeProfileCompleteness(mechanic, true, true), 100);
-  });
-
-  // ── Fase 6 tanda A ────────────────────────────────────────────────────
-  await test('Completeness — la rama la decide lo DECLARADO, no el tipo de perfil', () => {
-    // El mismo perfil, con las dos ramas, y el tipo no aparece por ninguna
-    // parte: ya no es un argumento de la función. Antes esto era imposible de
-    // expresar — un "mechanic" sin licencias topaba en 65 por su etiqueta.
-    const withLicence = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] });
-    const withoutLicence = makeCompleteProfile();
-    assert.equal(computeProfileCompleteness(withLicence, true, true), 100);
-    assert.equal(computeProfileCompleteness(withoutLicence, true, true), 100);
-  });
-
-  await test('Completeness — el techo de 100 es alcanzable POR CONSTRUCCIÓN en las dos ramas', () => {
-    // La invariante que sustituye al par de casos sueltos: para CUALQUIER
-    // combinación de licencias/ratings declarados, un perfil por lo demás
-    // completo llega a 100. No existe entrada que deje puntos huérfanos.
-    const combos: Partial<Technician>[] = [
-      { licenseCategories: [], aircraftTypes: [] },
-      { licenseCategories: ['B1.1'], aircraftTypes: ['A318/A319/A320/A321'] },
-      { licenseCategories: ['B1.1', 'B2'], aircraftTypes: ['A318/A319/A320/A321', 'B737'] },
-    ];
-    for (const combo of combos) {
-      assert.equal(
-        computeProfileCompleteness(makeCompleteProfile(combo), true, true),
-        100,
-        `un perfil completo con ${JSON.stringify(combo)} debe llegar a 100`,
-      );
-    }
-  });
-
-  await test('Completeness — declarar la primera licencia SIN ratings baja de 100 a 85, y es esperado', () => {
-    // Efecto aceptado a propósito el 2026-08-10: la licencia abre la pregunta
-    // de los type ratings, que aún no está contestada. La pantalla de perfil
-    // lo explica con todas las letras. Si este número cambia, o la nota de la
-    // UI se ha quedado mintiendo o alguien ha movido los pesos.
-    const noLicences = makeCompleteProfile();
-    const justAddedLicence = makeCompleteProfile({ licenseCategories: ['B1.1'], aircraftTypes: [] });
-    assert.equal(computeProfileCompleteness(noLicences, true, true), 100);
-    assert.equal(computeProfileCompleteness(justAddedLicence, true, true), 85);
-    assert.equal(
-      100 - 85,
-      LICENSED_COMPLETENESS_WEIGHTS.aircraftTypes,
-      'la caída es EXACTAMENTE el peso de los type ratings, ni un punto más',
-    );
-  });
-
-  await test('Completeness — both weight tables sum to exactly 100, so neither branch can silently become unreachable', () => {
-    assert.equal(sumWeights(LICENSED_COMPLETENESS_WEIGHTS), 100);
-    assert.equal(sumWeights(NON_LICENSED_COMPLETENESS_WEIGHTS), 100);
-  });
-
-  await test('Completeness — the non-licensed table redistributes exactly the 35 orphaned points, leaving social and availability alone', () => {
-    const moved = LICENSED_COMPLETENESS_WEIGHTS.licenses + LICENSED_COMPLETENESS_WEIGHTS.aircraftTypes;
-    assert.equal(moved, 35);
-    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.licenses, 0);
-    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.aircraftTypes, 0);
-    // The two branches recorded on 2026-07-29 are separate product decisions
-    // and were explicitly out of scope for this redistribution.
-    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.social, LICENSED_COMPLETENESS_WEIGHTS.social);
-    assert.equal(NON_LICENSED_COMPLETENESS_WEIGHTS.availability, LICENSED_COMPLETENESS_WEIGHTS.availability);
-  });
-
-  await test('Completeness — an empty non-licensed profile still scores low, and the cap still holds', () => {
-    const empty = makeCompleteProfile({
-      fullName: '',
-      email: '',
-      phone: '',
-      country: '',
-      city: '',
-      baseAirport: '',
-      availability: { immediately: false, status: 'unavailable', contractTypes: [] },
-    });
-    assert.equal(computeProfileCompleteness(empty, false, false), 0, 'redistributing weights must not hand out free points');
-    // 0 declared years IS a declaration, and scores like one.
-    assert.equal(computeProfileCompleteness(empty, true, false), NON_LICENSED_COMPLETENESS_WEIGHTS.years);
-  });
 }
 
 main()

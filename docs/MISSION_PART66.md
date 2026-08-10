@@ -2735,6 +2735,48 @@ Ojo al hacerlo: `TechnicianSearchFilters.technicianTypes` (el contrato V2 de
 `filters.ts`) ya existe y NO tiene ningún lector. No es el camino vivo; el que
 se usa de verdad es el `TechnicianFilters` V1 de una sola selección.
 
+### Retirada del porcentaje de completitud (10/08/2026)
+
+Posterior a la tanda A y **deshace parte de ella**: el trabajo de
+`profileCompleteness` descrito arriba (selector por dato, invariante del techo
+de 100, nota del 100→85 en la UI) queda sin objeto porque el indicador entero
+se retira. Se conserva el relato porque explica POR QUÉ se retira.
+
+El porcentaje obligaba a repartir pesos entre ejes independientes —¿cuánto vale
+una licencia frente a un aeropuerto base?— y producía el efecto perverso de que
+declarar la primera licencia BAJARA el número, al abrir el eje de type ratings
+todavía vacío. Un indicador que empeora cuando el usuario aporta más datos no
+está midiendo al usuario, está midiendo la regla de la app. La tanda A tapó el
+síntoma con una nota explicativa en pantalla; la conclusión correcta era que si
+hace falta explicar por qué el número baja, el número sobra.
+
+**Nunca fue un gate**, comprobado contra la base en vivo por dirección
+entrante antes de tocar nada: 0 políticas RLS, 0 funciones, 0 triggers, 0
+índices. Un solo CHECK (0..100), que cae con la columna, y una vista
+(`technician_public_view`) que la selecciona y por eso hay que recrear. En el
+código no filtraba, no ordenaba, no bloqueaba aplicar a ofertas, no
+condicionaba la verificación y no entraba en el scorer. Se pintaba en dos
+sitios: la barra del perfil del técnico y un `InfoPill` de admin.
+
+Se va: `src/utils/profileCompleteness.ts` y sus 9 tests, el bloque de la
+pantalla de perfil con sus estilos, el `InfoPill` de `AdminTechnicianCard`, el
+campo en los tipos `TechnicianProfile` (V2) **y `Technician` (V1)**, los dos
+mappers, los dos SELECT del repositorio, `privatePatchToDb` y las dos
+escrituras de `v2CompatAdapters`.
+
+**La migración 049 NO SE APLICA con este commit.** Es la contracción del
+expand-contract y va después del despliegue del código. Había tres SELECT
+nombrando la columna explícitamente; PostgREST no ignora una columna
+inexistente, devuelve error y tumba la consulta entera, así que aplicarla
+antes de tiempo deja sin cargar a la vez el perfil del técnico, la búsqueda de
+empresa, el mapa y el panel de admin.
+
+Lo que NO se hace aquí, a propósito: sustituirlo. Si al técnico le falta algo
+importante, eso se resuelve con una lista de "te falta esto" —que nunca baja y
+dice qué hacer—, y esa lista es trabajo propio, no un apaño de esta retirada.
+El admin también pierde su resumen de un vistazo al revisar verificaciones;
+se acepta, porque verifica contra documentos, no contra un porcentaje.
+
 ### Pendiente de validar con usuarios reales
 El buscador de aeronaves usa el catálogo de 606 endorsements EASA. Un jefe
 de taller piensa "los A320 nuestros", no "Airbus A320 family — V2500".

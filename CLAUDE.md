@@ -49,7 +49,9 @@ Companies can only see (contrato V2, alineado con `technician_public_view` y
 `SafeTechnicianPreview` — esta lista era la de V1 y estaba desactualizada;
 corregida 2026-07-29 tras la auditoría de cierre):
 - anonymousCode
-- technicianType
+- technicianTypes (VARIOS desde la Fase 6 tanda A, migración 048: tabla puente
+  `technician_profile_types`. La columna `technician_profiles.technician_type`
+  sigue existiendo sin lectores, pendiente de retirada)
 - country / city / baseAirport (+ latitude/longitude para el mapa)
 - licenses
 - habilitations (type ratings EASA célula+motor; el V1 `aircraftTypes` era la
@@ -57,8 +59,14 @@ corregida 2026-07-29 tras la auditoría de cierre):
 - availability
 - yearsExperience
 - verificationStatus
-- profileCompleteness
 - matchingScore (calculado por par oferta+técnico, nunca global)
+
+`profileCompleteness` salió de esta lista el 2026-08-10: el porcentaje de
+completitud se retiró del producto entero. Un número único sobre ejes
+independientes obliga a repartir pesos entre cosas que no se comparan, y
+bajaba cuando el técnico declaraba una licencia. Nunca fue un gate. Si hay que
+señalar que falta algo, va una lista de "te falta esto", no un porcentaje.
+La columna se borra en la migración 049.
 
 Companies must NOT see:
 - fullName

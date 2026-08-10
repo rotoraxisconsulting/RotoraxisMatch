@@ -38,8 +38,7 @@ interface Props {
   licenseCategories: string[];
   // Resolves labels for every rating referenced by `value`, including
   // inactive ones — owned by the parent (profile.tsx also needs it at save
-  // time for validation messages and the completeness score), passed down
-  // read-only.
+  // time, para los mensajes de validacion), passed down read-only.
   ratingsById: AircraftRatingIndex;
   // Called the moment the picker resolves a NEW rating (before "Add" is
   // even pressed) so the parent's own index stays in sync — mirrors the
