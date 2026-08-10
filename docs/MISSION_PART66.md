@@ -2735,6 +2735,71 @@ Ojo al hacerlo: `TechnicianSearchFilters.technicianTypes` (el contrato V2 de
 `filters.ts`) ya existe y NO tiene ningún lector. No es el camino vivo; el que
 se usa de verdad es el `TechnicianFilters` V1 de una sola selección.
 
+### Tanda B — HECHA (10/08/2026)
+
+**Migración 050** (aplicada): `technician_aircraft_experience` —
+`(technician_id → technician_profiles ON DELETE CASCADE, aircraft_type_rating_id
+→ aircraft_type_ratings, years NUMERIC(4,1) NULL, UNIQUE(technician_id,
+aircraft_type_rating_id))`, RLS calcada de `technician_habilitations` (las
+mismas 5 políticas, incluida la ausencia de UPDATE).
+
+⚠ **Mismo nombre que la tabla que borró la 031, y NO es una vuelta atrás.**
+Aquélla era experiencia por código de aeronave pre-Part-66: 0 filas, cero
+caminos de escritura, y su único efecto era dejar el componente `experience`
+del score inalcanzable. Ésta se diferencia en las tres cosas que la mataron:
+apunta al catálogo de ratings, tiene camino de escritura desde el primer día,
+y NO PUNTÚA. El principio de la 031 sigue vigente: "la cualificación puntúa,
+la experiencia informa".
+
+**`technician_habilitations` intacta.** `license_code` sigue NOT NULL y hay
+post-condición en la migración que aborta si alguien lo hiciera nullable: en
+cuanto admitiera NULL, la invariante de MISMA FILA dejaría de ser verificable,
+que es justo el bug real que impide reintroducir. Son dos listas separadas, no
+una con la licencia opcional.
+
+**La vista pública no cambia**, mismo criterio que en la tanda A: campo
+público multivaluado viaja por su tabla con su policy de empresa. (Al decidirlo
+se creyó además que la 049 seguía sin aplicar y que las dos migraciones se
+pisarían al recrear la misma vista; era falso — la 049 se aplicó el 10/08/2026,
+versión `20260810122813`, antes que la 050. El criterio no dependía de eso.)
+
+**El editor es deliberadamente más pobre que el de habilitaciones**, y ésa es
+la feature: sólo aeronave y años. Sin categoría, sin fechas, sin vigencia,
+porque ninguna de esas cosas existe sin licencia detrás. Y el picker va **sin
+`categoryHint` ni `lockedProductType`**: un técnico puede haber trabajado en
+aviones y en helicópteros, y acotar el producto ahí sería confundir una
+restricción de la OFERTA (migración 047) con una propiedad de la PERSONA.
+
+**Guardado independiente** del bloque de licencias/habilitaciones: esta tabla
+no tiene ninguna FK hacia ellas, así que quitar una licencia NO arrastra la
+experiencia declarada en esa aeronave. Es justo el punto de la tanda — saber
+hacer el trabajo no caduca con la licencia.
+
+**El scorer no se ha tocado.** Tres tests lo fijan: declarar experiencia no
+mueve total, desglose, matches ni blockers; un perfil con sólo experiencia y
+cero licencias sigue cayendo en `ZERO_QUALIFICATION_CAP` frente a una oferta
+que exige certificar; y la unión de conjuntos que necesitará la Tanda E se
+calcula sin copiar ninguna fila entre tablas.
+
+#### Ambigüedad que hereda la Tanda E, anotada aquí para que no se descubra tarde
+
+Un técnico puede tener a la vez una habilitación y una fila de experiencia
+sobre el MISMO rating, y es un estado legítimo (no hay constraint que lo
+impida, a propósito). Cuando eso pasa hay **dos declaraciones de años para la
+misma aeronave**: `technician_habilitations.experience_years` y
+`technician_aircraft_experience.years`. La Tanda E tendrá que decidir cuál
+manda. Esta tanda no lo decide.
+
+**Sonda en transacción con rollback** (7 casos, sobre un técnico real sin
+ninguna licencia): declara experiencia sin licencia → OK · aviones y
+helicópteros a la vez → OK · NULL en años sigue siendo NULL, no 0 · duplicado
+→ UNIQUE · 99 años → CHECK · rating fuera del catálogo → FK · `habilitations`
+sigue con 0 filas. Rollback confirmado.
+
+`tsc` 0 · `test:matching` 154/154 (+3) · `test:url-validation` PASS ·
+`validate:state-machine` PASS · `validate:auth-hooks` PASS ·
+`validate:aircraft-ratings` PASS.
+
 ### Retirada del porcentaje de completitud (10/08/2026)
 
 Posterior a la tanda A y **deshace parte de ella**: el trabajo de
@@ -2764,12 +2829,15 @@ campo en los tipos `TechnicianProfile` (V2) **y `Technician` (V1)**, los dos
 mappers, los dos SELECT del repositorio, `privatePatchToDb` y las dos
 escrituras de `v2CompatAdapters`.
 
-**La migración 049 NO SE APLICA con este commit.** Es la contracción del
-expand-contract y va después del despliegue del código. Había tres SELECT
-nombrando la columna explícitamente; PostgREST no ignora una columna
-inexistente, devuelve error y tumba la consulta entera, así que aplicarla
-antes de tiempo deja sin cargar a la vez el perfil del técnico, la búsqueda de
-empresa, el mapa y el panel de admin.
+**La migración 049 no se aplicó con ese commit**, a propósito: es la
+contracción del expand-contract y va después del despliegue del código. Había
+tres SELECT nombrando la columna explícitamente, y PostgREST no ignora una
+columna inexistente — devuelve error y tumba la consulta entera, así que
+aplicarla antes de tiempo habría dejado sin cargar a la vez el perfil del
+técnico, la búsqueda de empresa, el mapa y el panel de admin.
+**Aplicada después**, el 10/08/2026 (versión `20260810122813`), una vez
+confirmado el despliegue. Verificado tras aplicarla: columna fuera, la vista
+ya no la nombra, y sus 5 gates de identidad y 3 grants intactos.
 
 Lo que NO se hace aquí, a propósito: sustituirlo. Si al técnico le falta algo
 importante, eso se resuelve con una lista de "te falta esto" —que nunca baja y

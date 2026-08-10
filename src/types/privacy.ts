@@ -27,6 +27,7 @@
 import { TechnicianTypeCode, LicenseCode } from './catalog';
 import { VerificationStatus } from './enums';
 import {
+  TechnicianAircraftExperience,
   TechnicianHabilitation,
   Availability,
   SocialLinks,
@@ -57,6 +58,14 @@ export interface SafeTechnicianPreview {
   longitude?: number;
   licenses: LicenseCode[];
   habilitations: TechnicianHabilitation[];
+  // Aeronaves declaradas SIN necesidad de licencia (Fase 6 tanda B). Campo
+  // público, como las habilitaciones, y por el mismo camino: su propia tabla
+  // con su policy de empresa, no technician_public_view. Sin esto la tanda no
+  // serviría de nada — un técnico sin licencia seguiría siendo invisible para
+  // la empresa por mucho que declarara.
+  //
+  // NO puntúa en esta tanda: el scorer no lo lee. Tanda E.
+  aircraftExperience: TechnicianAircraftExperience[];
   // Años declarados — visual y filtrable, nunca puntuable. undefined = no
   // declarado, se muestra "not specified".
   yearsExperience?: number;

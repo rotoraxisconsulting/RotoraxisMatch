@@ -6,6 +6,7 @@ import { CompanyMemberRole, DocumentStatus, OfferRequestStatus, OfferStatus, Ver
 import { ContractTypeCode, LicenseCode, TechnicianTypeCode } from '../../types/catalog';
 import {
   Availability,
+  TechnicianAircraftExperience,
   TechnicianHabilitation,
   TechnicianLicense,
   TechnicianProfile,
@@ -293,24 +294,43 @@ export async function loadTechnicianRelations(technicianIds: string[]): Promise<
   licenses: TechnicianLicense[];
   habilitations: TechnicianHabilitation[];
   technicianTypes: TechnicianTypeCode[];
+  aircraftExperience: TechnicianAircraftExperience[];
 }>> {
   const uniqueIds = [...new Set(technicianIds)].filter(Boolean);
   const map: Record<string, {
     licenses: TechnicianLicense[];
     habilitations: TechnicianHabilitation[];
     technicianTypes: TechnicianTypeCode[];
+    aircraftExperience: TechnicianAircraftExperience[];
   }> = {};
-  for (const id of uniqueIds) map[id] = { licenses: [], habilitations: [], technicianTypes: [] };
+  for (const id of uniqueIds) map[id] = { licenses: [], habilitations: [], technicianTypes: [], aircraftExperience: [] };
   if (uniqueIds.length === 0) return map;
 
-  const [licensesRes, habsRes, types] = await Promise.all([
+  // Cuarta relación desde la Fase 6 tanda B. Sigue siendo UN lote por tabla,
+  // no una consulta por técnico: es lo que hace que la búsqueda de empresa no
+  // se convierta en N+1 al crecer el número de resultados.
+  const [licensesRes, habsRes, types, experienceRes] = await Promise.all([
     supabase.from('technician_licenses').select('id, technician_id, license_code, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
     supabase.from('technician_habilitations').select('id, technician_id, license_code, aircraft_type_rating_id, experience_years, is_current, issued_at, expires_at, created_at').in('technician_id', uniqueIds),
     loadTechnicianProfileTypes(uniqueIds),
+    supabase.from('technician_aircraft_experience').select('id, technician_id, aircraft_type_rating_id, years, created_at').in('technician_id', uniqueIds),
   ]);
   throwIfError(licensesRes.error);
   throwIfError(habsRes.error);
+  throwIfError(experienceRes.error);
   for (const id of uniqueIds) map[id].technicianTypes = types[id] ?? [];
+
+  for (const row of (experienceRes.data ?? []) as DbRow[]) {
+    map[row.technician_id]?.aircraftExperience.push({
+      id: row.id,
+      technicianId: row.technician_id,
+      aircraftTypeRatingId: row.aircraft_type_rating_id,
+      // `?? undefined` y NO `?? 0`: NULL es "no declarado" y 0 es "declarado
+      // sin años". Convertirlo a 0 inventaría una declaración.
+      years: row.years ?? undefined,
+      createdAt: row.created_at,
+    });
+  }
 
   for (const row of (licensesRes.data ?? []) as DbRow[]) {
     map[row.technician_id]?.licenses.push({
@@ -358,6 +378,7 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
     updatedAt: row.updated_at,
     licenses: relations?.licenses ?? [],
     habilitations: relations?.habilitations ?? [],
+    aircraftExperience: relations?.aircraftExperience ?? [],
   };
 }
 
@@ -375,6 +396,7 @@ export function mapPublicTechnicianRow(row: DbRow, relations?: Awaited<ReturnTyp
     longitude: row.longitude ?? location?.longitude,
     licenses: (relations?.licenses ?? []).map((license) => license.licenseCode),
     habilitations: relations?.habilitations ?? [],
+    aircraftExperience: relations?.aircraftExperience ?? [],
     yearsExperience: row.years_experience ?? undefined,
     availability: mapAvailability(row.availability),
     verificationStatus: row.verification_status as VerificationStatus,
@@ -436,5 +458,6 @@ export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnT
     updatedAt: row.updated_at ?? now,
     licenses: relations?.licenses ?? [],
     habilitations: relations?.habilitations ?? [],
+    aircraftExperience: relations?.aircraftExperience ?? [],
   };
 }

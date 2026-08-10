@@ -134,13 +134,42 @@ export interface TechnicianHabilitation {
   createdAt: string;
 }
 
-// Sub-fase de experiencia (2026-07-28): TechnicianAircraftExperience ha sido
-// eliminado con su tabla (migracion 031). Era experiencia por codigo de
-// aeronave del modelo pre-Part-66: 0 filas, 4 lecturas vivas y CERO caminos
-// de escritura — una feature a medio construir cuyo unico efecto real era
-// dejar el componente `experience` del score permanentemente inalcanzable.
-// Lo sustituye TechnicianProfile.yearsExperience (arriba): visual y
-// filtrable, nunca puntuable.
+/**
+ * Una aeronave en la que el técnico ha trabajado, CON O SIN licencia
+ * (Fase 6 tanda B, migración 050).
+ *
+ * ── Por qué es un tipo aparte y no una habilitación con licencia opcional ──
+ * Una habilitación dice que estás AUTORIZADO A FIRMAR el trabajo; esto dice
+ * que SABES HACERLO. Hasta la 050 el modelo sólo sabía representar lo
+ * primero, así que un mecánico con 15 años de A320 y sin licencia EASA no
+ * existía en el sistema.
+ *
+ * `technician_habilitations.licenseCode` sigue siendo NOT NULL justamente
+ * para que la invariante de MISMA FILA (categoría y rating vienen de la
+ * misma fila, nunca combinados desde listas independientes) siga siendo
+ * verificable. Hacerla opcional habría fundido las dos cosas y perdido esa
+ * garantía.
+ *
+ * ⚠ MISMO NOMBRE que el tipo retirado con la migración 031, y NO es una
+ * vuelta atrás. Aquél nombraba la aeronave con un código suelto pre-Part-66,
+ * no tenía ningún camino de escritura y su único efecto era dejar el
+ * componente `experience` del score inalcanzable. Éste apunta al catálogo de
+ * ratings, se escribe desde el perfil, y NO PUNTÚA: en la tanda B se declara
+ * y se muestra. Que el scorer lo mire es la Tanda E.
+ */
+export interface TechnicianAircraftExperience {
+  id: string;
+  technicianId: string;
+  /** FK a aircraft_type_ratings — el MISMO catálogo que usan las habilitaciones. */
+  aircraftTypeRatingId: string;
+  /**
+   * `undefined`/NULL = NO DECLARADO, distinto de 0. Declarar la aeronave sin
+   * poner años es una declaración válida y completa: la ausencia de dato
+   * nunca penaliza. Misma regla que TechnicianProfile.yearsExperience.
+   */
+  years?: number;
+  createdAt: string;
+}
 
 /**
  * Objeto JSONB plano clave -> URL, persistido tal cual en
@@ -239,7 +268,7 @@ export interface TechnicianProfile {
   // el efecto perverso de que declarar una licencia BAJARA el número. Nunca
   // fue un gate: no filtraba, no ordenaba, no bloqueaba nada y no entraba en
   // el match — sólo se pintaba. La columna `technician_profiles
-  // .profile_completeness` se retira en la migración 049.
+  // .profile_completeness` ya no existe: la borró la migración 049.
   //
   // Si hace falta decirle al técnico que le falta algo, va una LISTA de "te
   // falta esto" —que nunca baja y dice qué hacer—, no un porcentaje.
@@ -253,4 +282,12 @@ export interface TechnicianProfile {
 export interface TechnicianWithRelations extends TechnicianProfile {
   licenses: TechnicianLicense[];
   habilitations: TechnicianHabilitation[];
+  /**
+   * Lista SEPARADA de `habilitations`, nunca fundida con ella (Fase 6 tanda
+   * B). Las dos apuntan al mismo catálogo de ratings, y ésa es justo la
+   * propiedad que permitirá a la Tanda E aplicar "tener licencia en una
+   * aeronave cuenta también como experiencia en ella, nunca al revés" como
+   * una UNIÓN DE CONJUNTOS en lectura, sin duplicar ni una fila.
+   */
+  aircraftExperience: TechnicianAircraftExperience[];
 }

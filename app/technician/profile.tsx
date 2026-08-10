@@ -37,6 +37,7 @@ import { useTechnicianTypes } from '../../src/auth/useCatalogOptions';
 import { confirmAction } from '../../src/utils/platformAlert';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
 import { HabilitationsEditor, HabilitationRow as HabRow } from '../../src/components/technician/HabilitationsEditor';
+import { AircraftExperienceEditor, AircraftExperienceRow } from '../../src/components/technician/AircraftExperienceEditor';
 import { DateField } from '../../src/components/DateField';
 import { isValidDateOrder } from '../../src/utils/validityDates';
 import { validateProfileYearsExperience } from '../../src/utils/yearsExperienceValidation';
@@ -183,6 +184,11 @@ export default function TechnicianProfileScreen() {
   // license. See technicianRepositoryV2.replaceHabilitations().
   const [habilitations, setHabilitations] = useState<HabRow[]>([]);
   const [habDirty, setHabDirty] = useState(false);
+  // Fase 6 tanda B: aeronaves declaradas SIN licencia. Lista aparte de
+  // `habilitations` a proposito — ver AircraftExperienceEditor. Su propio
+  // flag de sucio para no reescribir la tabla en cada guardado del perfil.
+  const [aircraftExperience, setAircraftExperience] = useState<AircraftExperienceRow[]>([]);
+  const [experienceDirty, setExperienceDirty] = useState(false);
   // Anios declarados como TEXTO: '' = no declarado (NULL en BD), distinto de
   // '0' = declarado sin experiencia. Estado propio y no `form.yearsExperience`
   // justamente porque el tipo V1 es `number` y no sabe expresar "no declarado".
@@ -275,7 +281,7 @@ export default function TechnicianProfileScreen() {
 
       setTechId(techRow.id);
 
-      const [licResult, habResult, typeResult] = await Promise.all([
+      const [licResult, habResult, typeResult, expResult] = await Promise.all([
         supabase
           .from('technician_licenses')
           .select('license_code, issued_at, expires_at')
@@ -289,6 +295,11 @@ export default function TechnicianProfileScreen() {
           .select('type_code')
           .eq('technician_id', techRow.id)
           .order('type_code'),
+        supabase
+          .from('technician_aircraft_experience')
+          .select('id, aircraft_type_rating_id, years')
+          .eq('technician_id', techRow.id)
+          .order('created_at'),
       ]);
 
       // Un fallo aqui NO se traga: sin tipos cargados, guardar mandaria [] a
@@ -335,11 +346,32 @@ export default function TechnicianProfileScreen() {
       setHabilitations(normalizedHabs);
       setHabDirty(false);
 
+      // Experiencia sin licencia (Fase 6 tanda B). Un fallo aqui NO se traga,
+      // por lo mismo que los tipos: si la lista no carga, guardar mandaria []
+      // a replaceAircraftExperience y borraria lo que el tecnico tenia
+      // declarado sin que nadie se enterara.
+      if (expResult.error) throw expResult.error;
+      const expRows = (expResult.data ?? []) as {
+        id: string;
+        aircraft_type_rating_id: string;
+        years: number | null;
+      }[];
+      const normalizedExperience: AircraftExperienceRow[] = expRows.map((r) => ({
+        id: r.id,
+        aircraftTypeRatingId: r.aircraft_type_rating_id,
+        years: r.years ?? undefined,
+      }));
+      setAircraftExperience(normalizedExperience);
+      setExperienceDirty(false);
+
       // Resolve every referenced rating id in one batched call — includes
       // inactive ratings, since an existing habilitation may point at one.
-      const resolvedRatings = await catalogRepository.getAircraftTypeRatingsByIds(
-        normalizedHabs.map((h) => h.aircraftTypeRatingId),
-      );
+      // Las dos listas comparten catalogo, asi que se resuelven juntas: sin
+      // los ids de la experiencia, sus filas se pintarian con un UUID crudo.
+      const resolvedRatings = await catalogRepository.getAircraftTypeRatingsByIds([
+        ...normalizedHabs.map((h) => h.aircraftTypeRatingId),
+        ...normalizedExperience.map((e) => e.aircraftTypeRatingId),
+      ]);
       const resolvedIndex = buildAircraftRatingIndex(resolvedRatings);
       setRatingsById(resolvedIndex);
 
@@ -466,6 +498,13 @@ export default function TechnicianProfileScreen() {
   function onChangeHabilitations(next: HabRow[]) {
     setHabilitations(next);
     setHabDirty(true);
+    setIsDirty(true);
+  }
+
+  // Mismo patron que el de arriba, para la lista de experiencia sin licencia.
+  function onChangeAircraftExperience(next: AircraftExperienceRow[]) {
+    setAircraftExperience(next);
+    setExperienceDirty(true);
     setIsDirty(true);
   }
 
@@ -716,7 +755,24 @@ export default function TechnicianProfileScreen() {
         setHabilitations(habsToSave);
       }
 
-      // 4) Only now remove deselected licenses — AFTER habilitations are
+      // 4) Experiencia sin licencia (Fase 6 tanda B). INDEPENDIENTE del
+      // bloque de arriba: esta tabla no tiene ninguna FK hacia licencias ni
+      // hacia habilitaciones, asi que su orden no importa y quitar una
+      // licencia NO arrastra la experiencia declarada en esa aeronave. Es
+      // justo el punto de la tanda — saber hacer el trabajo no caduca con la
+      // licencia.
+      if (experienceDirty) {
+        await technicianRepositoryV2.replaceAircraftExperience(
+          techId,
+          aircraftExperience.map((e) => ({
+            aircraftTypeRatingId: e.aircraftTypeRatingId,
+            years: e.years,
+          })),
+        );
+        setExperienceDirty(false);
+      }
+
+      // 5) Only now remove deselected licenses — AFTER habilitations are
       // saved, so the dependency check reflects the technician's actual
       // final state rather than a stale pre-save snapshot.
       const { blocked } = await technicianRepositoryV2.removeUnreferencedLicenses(techId, licensesToSave);
@@ -1118,6 +1174,17 @@ export default function TechnicianProfileScreen() {
             onRatingResolved={(r) => setRatingsById((prev) => new Map(prev).set(r.id, r))}
             onRequestCatalog={() => setRequestPanelOpen((v) => !v)}
             dateFieldPalette={DATE_FIELD_PALETTE}
+          />
+
+          {/* Debajo de las habilitaciones y como seccion propia (Fase 6 tanda
+              B): declarar una aeronave sin licencia es una lista SEPARADA, no
+              una habilitacion a la que le falta un campo. */}
+          <AircraftExperienceEditor
+            value={aircraftExperience}
+            onChange={onChangeAircraftExperience}
+            ratingsById={ratingsById}
+            onRatingResolved={(r) => setRatingsById((prev) => new Map(prev).set(r.id, r))}
+            onRequestCatalog={() => setRequestPanelOpen((v) => !v)}
           />
 
           {requestPanelOpen && (

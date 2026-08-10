@@ -107,6 +107,7 @@ export function getSafeTechnicianPreview(technician: TechnicianWithRelations): S
     longitude: location?.longitude,
     licenses: technician.licenses.map((l) => l.licenseCode as LicenseCode),
     habilitations: technician.habilitations,
+    aircraftExperience: technician.aircraftExperience,
     yearsExperience: technician.yearsExperience,
     availability: technician.availability,
     verificationStatus: technician.verificationStatus,

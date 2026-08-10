@@ -3,6 +3,10 @@
 -- technician_profiles.profile_completeness
 -- ============================================================
 -- Created: 2026-08-10
+-- Applied: 2026-08-10 (versión 20260810122813), DESPUÉS de confirmarse el
+--          despliegue del código que dejó de leer la columna. El aviso de
+--          abajo se conserva porque explica el orden que se siguió, no una
+--          tarea pendiente.
 --
 -- ⚠ NO APLICAR HASTA QUE EL CÓDIGO QUE DEJA DE LEER LA COLUMNA ESTÉ
 -- DESPLEGADO. Es la mitad de CONTRACCIÓN del expand-contract, y va DESPUÉS

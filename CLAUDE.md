@@ -56,6 +56,10 @@ corregida 2026-07-29 tras la auditoría de cierre):
 - licenses
 - habilitations (type ratings EASA célula+motor; el V1 `aircraftTypes` era la
   familia suelta, sin motor)
+- aircraftExperience (Fase 6 tanda B, migración 050: aeronaves en las que ha
+  trabajado, CON O SIN licencia. Lista separada de `habilitations` — aquélla
+  dice que está autorizado a firmar el trabajo, ésta que sabe hacerlo. NO
+  puntúa: el scorer no la lee hasta la Tanda E)
 - availability
 - yearsExperience
 - verificationStatus
@@ -66,7 +70,7 @@ completitud se retiró del producto entero. Un número único sobre ejes
 independientes obliga a repartir pesos entre cosas que no se comparan, y
 bajaba cuando el técnico declaraba una licencia. Nunca fue un gate. Si hay que
 señalar que falta algo, va una lista de "te falta esto", no un porcentaje.
-La columna se borra en la migración 049.
+La columna ya no existe: la borró la migración 049.
 
 Companies must NOT see:
 - fullName

@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict';
 import { calculateOfferTechnicianMatch, getMatchLabel, applyScoreCeilings, getMatchScoreWeights } from '../src/utils/offerMatchExplain';
 import { OfferWithRequirements, OfferRequiredHabilitation } from '../src/types/offer';
-import { TechnicianWithRelations, TechnicianHabilitation, TechnicianLicense } from '../src/types/technician';
+import { TechnicianWithRelations, TechnicianHabilitation, TechnicianLicense, TechnicianAircraftExperience } from '../src/types/technician';
 import { AircraftTypeRatingCatalog } from '../src/types/catalog';
 import {
   buildAircraftRatingIndex,
@@ -143,7 +143,20 @@ function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): Techn
     updatedAt: '2026-01-01T00:00:00.000Z',
     licenses: [],
     habilitations: [],
+    aircraftExperience: [],
     ...overrides,
+  };
+}
+
+// Fase 6 tanda B. Existe para poder ASEVERAR que el scorer la ignora: sin un
+// constructor, "ningún score cambia" sería una afirmación sin prueba.
+function makeAircraftExperience(aircraftTypeRatingId: string, years?: number): TechnicianAircraftExperience {
+  return {
+    id: `exp-${aircraftTypeRatingId}-${years ?? 'na'}`,
+    technicianId: 'tech-test',
+    aircraftTypeRatingId,
+    years,
+    createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
 
@@ -1677,6 +1690,84 @@ async function main() {
     assert.ok(
       !unrestricted.matches.some((m) => m.startsWith('Technician type:')),
       'no match line either — claiming a match for a requirement the offer never stated is noise',
+    );
+  });
+
+  // ── Fase 6 tanda B: la experiencia declarada NO puntúa (todavía) ──────
+  //
+  // Criterio de verificación de la tanda, escrito como test: "al desplegar B,
+  // ningún score debe moverse". Que el scorer la mire es la Tanda E, y
+  // depende del interruptor de certificación que llega en la C.
+  await test('Experiencia sin licencia — declararla no mueve NI UN PUNTO del score', () => {
+    const offer = makeOffer({
+      contractType: 'permanent',
+      requiredTechnicianTypes: ['mechanic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const base = { technicianTypes: ['mechanic' as const], verificationStatus: 'verified' as const, ...EXACT_A320 };
+
+    const sinExperiencia = makeTechnician(base);
+    const conExperiencia = makeTechnician({
+      ...base,
+      aircraftExperience: [
+        makeAircraftExperience('fx-a320-cfm56', 15),
+        makeAircraftExperience('fx-b737-cfm56', 8),
+        makeAircraftExperience('fx-ec135-arrius'),
+      ],
+    });
+
+    const a = calculateOfferTechnicianMatch(offer, sinExperiencia, RATING_INDEX);
+    const b = calculateOfferTechnicianMatch(offer, conExperiencia, RATING_INDEX);
+
+    assert.equal(a.total, b.total, 'el total no puede moverse');
+    assert.deepEqual(a.breakdown, b.breakdown, 'ni un solo componente del desglose');
+    assert.deepEqual(a.matches, b.matches, 'ni aparecer como línea de match');
+    assert.deepEqual(a.blockers, b.blockers, 'ni como blocker');
+    assert.equal(a.label, b.label);
+  });
+
+  await test('Experiencia sin licencia — un perfil SIN NINGUNA licencia sigue puntuando como hoy', () => {
+    // El caso que motiva la tanda: 15 años de A320 y cero licencias. Puede
+    // DECLARARLO (eso es lo nuevo), pero frente a una oferta que exige
+    // certificar sigue cayendo en ZERO_QUALIFICATION_CAP exactamente igual
+    // que antes de existir la tabla. Si este número se mueve, la tanda B ha
+    // tocado el scorer sin querer.
+    const offer = makeOffer({
+      requiredTechnicianTypes: ['mechanic'],
+      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+    });
+    const sinNada = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified' });
+    const soloExperiencia = makeTechnician({
+      technicianTypes: ['mechanic'],
+      verificationStatus: 'verified',
+      aircraftExperience: [makeAircraftExperience('fx-a320-cfm56', 15)],
+    });
+
+    const a = calculateOfferTechnicianMatch(offer, sinNada, RATING_INDEX);
+    const b = calculateOfferTechnicianMatch(offer, soloExperiencia, RATING_INDEX);
+    assert.equal(a.total, b.total, 'declarar experiencia no rescata a quien no tiene la licencia');
+    assert.ok(b.total <= 39, `ZERO_QUALIFICATION_CAP debe seguir aplicando, got ${b.total}`);
+  });
+
+  await test('Experiencia sin licencia — el modelo admite la regla de la Tanda E sin duplicar filas', () => {
+    // NO se implementa aquí: sólo se comprueba que el modelo la PERMITE.
+    // "Tener licencia en una aeronave cuenta también como experiencia en
+    // ella, nunca al revés" se resuelve como unión de conjuntos sobre el
+    // MISMO aircraft_type_rating_id, sin copiar ninguna fila a la otra tabla.
+    const tecnico = makeTechnician({
+      ...EXACT_A320, // habilitación B1.1 sobre fx-a320-cfm56
+      aircraftExperience: [makeAircraftExperience('fx-b737-cfm56', 8)],
+    });
+
+    const union = new Set([
+      ...tecnico.habilitations.map((h) => h.aircraftTypeRatingId),
+      ...tecnico.aircraftExperience.map((e) => e.aircraftTypeRatingId),
+    ]);
+    assert.deepEqual([...union].sort(), ['fx-a320-cfm56', 'fx-b737-cfm56']);
+    assert.equal(
+      tecnico.aircraftExperience.length,
+      1,
+      'la habilitación NO se copia a la tabla de experiencia: la unión se calcula en lectura, no se persiste',
     );
   });
 

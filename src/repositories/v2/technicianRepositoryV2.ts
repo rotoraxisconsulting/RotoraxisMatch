@@ -29,10 +29,11 @@ import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan'
 // fuente que la tabla puente sustituye.
 //
 // `profile_completeness` tampoco se pide desde el 2026-08-10: el porcentaje
-// de completitud se retiró entero. La columna sigue en la tabla y en la vista
-// hasta que se aplique la migración 049, que la borra — y precisamente por
-// eso hay que dejar de pedirla ANTES (expand-contract): un SELECT explícito
-// de una columna que ya no existe revienta TODAS las consultas de la tabla.
+// de completitud se retiró entero, y la migración 049 YA BORRÓ la columna.
+// Dejar de pedirla tuvo que ir ANTES del DROP (expand-contract) porque un
+// SELECT explícito de una columna inexistente no se ignora: revienta TODAS
+// las consultas de la tabla. Volver a nombrarla aquí ya no es un despiste,
+// es una caída.
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
   location_city_id, availability, years_experience,
@@ -499,6 +500,55 @@ export const technicianRepositoryV2 = {
     // Aquí el delete ya se llevó las filas viejas: si el insert no entra, el
     // técnico se queda SIN habilitaciones y la pantalla diría "guardado".
     throwIfNoRows(data, 'Could not save your type ratings — your session may have expired. Sign in again and retry.');
+  },
+
+  /**
+   * Reemplaza la experiencia declarada en aeronaves (Fase 6 tanda B).
+   *
+   * Semántica de REEMPLAZO (borrar todo + insertar), igual que
+   * replaceHabilitations y por el mismo motivo estructural: la RLS de esta
+   * tabla es una copia de la de technician_habilitations, que NO TIENE
+   * política de UPDATE — un guardado diferencial que intentara actualizar los
+   * años en su sitio sería rechazado por RLS. Si algún día hace falta, la
+   * política se añade primero y el código después, nunca al revés.
+   *
+   * `technician_habilitations` no se toca aquí. Son dos listas separadas: una
+   * dice que el técnico está autorizado a firmar, ésta que sabe hacer el
+   * trabajo. Guardar una nunca escribe en la otra — la regla de la Tanda E
+   * ("la licencia cuenta también como experiencia") se resuelve en LECTURA,
+   * como unión de conjuntos, jamás copiando filas aquí.
+   */
+  async replaceAircraftExperience(
+    technicianId: string,
+    entries: { aircraftTypeRatingId: string; years?: number }[],
+  ): Promise<void> {
+    // Sin comprobación de filas en el DELETE, igual que replaceHabilitations:
+    // un técnico que aún no ha declarado nada borra CERO filas legítimamente,
+    // y es el caso normal del primer guardado. La red se pone en el INSERT,
+    // que sí sabe cuántas filas debe producir.
+    const { error: deleteError } = await supabase
+      .from('technician_aircraft_experience')
+      .delete()
+      .eq('technician_id', technicianId);
+    throwIfError(deleteError);
+
+    if (entries.length === 0) return;
+    const { data, error } = await supabase
+      .from('technician_aircraft_experience')
+      .insert(
+        entries.map((entry) => ({
+          technician_id: technicianId,
+          aircraft_type_rating_id: entry.aircraftTypeRatingId,
+          // `?? null` y no `?? 0`: NULL es "no declarado", 0 sería una
+          // declaración de "sin años", que no es lo mismo.
+          years: entry.years ?? null,
+        })),
+      )
+      .select('id');
+    throwIfError(error);
+    // El DELETE ya se llevó las filas viejas: si el INSERT no entra, el
+    // técnico se queda SIN experiencia y la pantalla diría "guardado".
+    throwIfNoRows(data, 'Could not save your aircraft experience — your session may have expired. Sign in again and retry.');
   },
 
   /** Deletes a single habilitation row by id. */
