@@ -1,4 +1,4 @@
-import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel, AircraftTypeRatingCatalog } from './catalog';
+import { TechnicianTypeCode, LicenseCode, ContractTypeCode, AircraftTypeRatingCatalog } from './catalog';
 import { OfferStatus } from './enums';
 
 /**

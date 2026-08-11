@@ -1,6 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
-import { TechnicianTypeCode, LicenseCode, ContractTypeCode, RequirementLevel } from '../../types/catalog';
+import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
 import {
@@ -64,6 +64,26 @@ function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record
     ...(patch.productType !== undefined ? { product_type: patch.productType } : {}),
     ...(patch.technicianType !== undefined ? { technician_type: patch.technicianType } : {}),
     ...(patch.requiresCertification !== undefined ? { requires_certification: patch.requiresCertification } : {}),
+    // `license_code` y `requires_certification` están ATADAS por
+    // chk_offers_license_matches_certification (migración 053). Escribir una
+    // sin la otra deja la fila en un estado que Postgres rechaza y tumba el
+    // UPDATE ENTERO — verificado en vivo: apagar la certificación sin poner
+    // la licencia a NULL viola el CHECK.
+    //
+    // Al apagar el interruptor la licencia se va a NULL SIN MIRAR el patch:
+    // no es una preferencia del llamante, es el único valor que el CHECK
+    // admite ahí. En cualquier otro caso se escribe lo que traiga el patch.
+    //
+    // Estas dos líneas faltaban desde la tanda D: `license_code` y
+    // `requiresAllAircraft` se añadieron a create() y NUNCA aquí, así que
+    // editar una oferta para cambiar su licencia o su "hacen falta todas" no
+    // guardaba nada — sin error, sin aviso.
+    ...(patch.requiresCertification === false
+      ? { license_code: null }
+      : patch.licenseCode !== undefined
+        ? { license_code: patch.licenseCode }
+        : {}),
+    ...(patch.requiresAllAircraft !== undefined ? { requires_all_aircraft: patch.requiresAllAircraft } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.locationCountry !== undefined ? { location_country: patch.locationCountry } : {}),
     ...(patch.locationCity !== undefined ? { location_city: patch.locationCity } : {}),
@@ -219,21 +239,27 @@ export const offerRepository = {
       await this.replaceRequiredHabilitations(id, []);
     }
 
-    // Apagar la certificación con requisitos Part-66 vivos (Fase 6 tanda C).
-    // Aquí NO hay ninguna FK que fuerce el orden, al contrario que arriba: lo
-    // que lo fuerza es la INVARIANTE — una oferta que declara no necesitar
-    // certificación no puede exigir licencia ni rating, y
+    // Apagar la certificación con AERONAVES vivas (Fase 6 tanda C, corregido
+    // en la D). Aquí NO hay ninguna FK que fuerce el orden, al contrario que
+    // arriba: lo que lo fuerza es la INVARIANTE — una oferta que declara no
+    // necesitar certificación no puede exigir un rating, y
     // assertRequirementsMatchCertification lo rechaza. Sin esta limpieza, un
     // llamante que actualizara la columna y no llamara después a
     // replaceRequirements dejaría la oferta en un estado que el repositorio
     // se niega a aceptar pero que la base ya tiene guardado.
     //
+    // La LICENCIA no se limpia aquí: desde la tanda D vive en
+    // `offers.license_code` y la pone a NULL el propio UPDATE de abajo, en la
+    // misma sentencia que apaga el interruptor — que es lo que el CHECK
+    // exige. Aquí había un DELETE sobre `offer_required_licenses`, resto de
+    // cuando esa tabla era la fuente de licencias: con la migración 054
+    // aplicada habría lanzado excepción (tiene throwIfError debajo) y
+    // reventado el guardado.
+    //
     // Acotado a un cambio REAL de true -> false: guardar sin tocar el
     // interruptor no borra nada, y encenderlo no borra nada tampoco.
     if (patch.requiresCertification === false && existing.requiresCertification) {
       await this.replaceRequiredHabilitations(id, []);
-      const { error } = await supabase.from('offer_required_licenses').delete().eq('offer_id', id);
-      throwIfError(error);
     }
 
     const locationPatch = hasOfferLocationPatch(patch)

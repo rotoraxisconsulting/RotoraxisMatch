@@ -108,4 +108,15 @@ export interface AircraftTypeRatingCatalog {
   isActive: boolean;
 }
 
+/**
+ * ⚠ SIN CONSUMIDORES desde la Fase 6 tanda D (2026-08-10). `mandatory` /
+ * `preferred` se evaluaba por fila de requisito y nadie entendía cómo se
+ * combinaban varias; lo sustituye `Offer.requiresAllAircraft`, una decisión
+ * por oferta. La columna `offer_required_habilitations.requirement_level` la
+ * retira la migración 054.
+ *
+ * Pendiente del barrido de exports muertos — ver docs/MISSION_PART66.md,
+ * sección "LIMPIEZA". No se borra aquí para no mezclar la corrección con una
+ * retirada.
+ */
 export type RequirementLevel = 'mandatory' | 'preferred';

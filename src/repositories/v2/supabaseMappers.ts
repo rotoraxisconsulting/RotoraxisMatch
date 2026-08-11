@@ -18,7 +18,6 @@ import { OfferApplication, OfferRequest } from '../../types/offerRequest';
 import { ChatMessage, ChatRoom } from '../../types/chat';
 import { SenderRole } from '../../types/enums';
 import { CatalogRequest } from '../../types/catalogRequest';
-import { RequirementLevel } from '../../types/catalog';
 
 export type DbRow = Record<string, any>;
 

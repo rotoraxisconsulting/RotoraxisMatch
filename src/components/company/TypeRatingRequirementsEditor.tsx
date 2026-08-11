@@ -9,7 +9,7 @@ import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLab
 import { isLicenseCompatibleWithProductType } from '../../utils/licenseCategoryProductType';
 import { LICENSE_CATEGORIES } from '../../constants/licenses';
 import { getOfferProductTypeLabel } from '../../constants/offerProductTypes';
-import { LicenseCode, RequirementLevel } from '../../types/catalog';
+import { LicenseCode } from '../../types/catalog';
 import { OfferProductType } from '../../types/offer';
 
 // Fase 6 tanda D: una fila es UNA AERONAVE. Perdió `licenseCode` (la licencia

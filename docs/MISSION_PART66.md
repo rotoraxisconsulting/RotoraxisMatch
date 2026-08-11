@@ -442,6 +442,14 @@ alcance real de esta fase.
      Sus tests siguen verdes marcados `[SIN CONSUMIDORES]` en
      scripts/testMatching.ts: consérvalos hasta el barrido, borralos con la
      cadena.
+   - **Bloque de la Fase 6 tanda D (10/08/2026), verificado por grep.**
+     - `RequirementLevel` (src/types/catalog.ts) — sus cuatro imports ya se
+       retiraron al corregir la tanda; el tipo se quedó sin usos. Muere con
+       `offer_required_habilitations.requirement_level` (migración 054).
+     - `OfferSearchFilters` (src/types/filters.ts) — **entero**, nunca tuvo
+       lectores. Sus campos `requiredLicenses` y `technicianTypes` (plurales)
+       ya nombran cosas que el modelo no tiene, desde las tandas D y C. Va
+       junto a `TechnicianSearchFilters`, en la misma situación desde la A.
    - useTechnicianDashboard.updateProfile() — código muerto V1, cero call
      sites, eliminar
    - src/components/TechnicianCard.tsx — código muerto, cero call sites,
@@ -2890,6 +2898,46 @@ y quedaba anulada por los requisitos exactos; ahora es el eje con el que se
 cruza cada aeronave y se usa siempre). La casilla de "hacen falta todas" va
 BAJO la lista y **sólo aparece con dos o más aeronaves** — con una sola, las
 dos respuestas dicen lo mismo.
+
+#### Corrección posterior al commit de la tanda D (10/08/2026)
+
+Detectada al ir a aplicar la 054: **quedaba un escritor vivo de
+`offer_required_licenses`** en `offerRepository.update()`, dentro de la rama
+que salta al apagar el interruptor. Era un resto de la tanda C —existía porque
+entonces esa tabla ERA la fuente de licencias de la oferta— y la D no lo
+limpió. Con la 054 aplicada habría lanzado excepción (tiene `throwIfError`
+debajo) y reventado el guardado al editar.
+
+Al arreglarlo aparecieron **dos bugs peores, ya activos hoy** con la 053
+aplicada, porque `offerPatchToDb` **nunca llegó a mapear `license_code` ni
+`requires_all_aircraft`** — se añadieron a `create()` y no al patch:
+
+1. **Apagar la certificación al editar reventaba el guardado.** El UPDATE
+   escribía `requires_certification = false` dejando `license_code` con valor,
+   y eso viola `chk_offers_license_matches_certification`. Verificado en vivo:
+   Postgres rechaza el UPDATE entero.
+2. **Cambiar la licencia de una oferta existente, o marcar "hacen falta
+   todas", no guardaba nada.** Sin error y sin aviso: el campo simplemente no
+   viajaba al UPDATE.
+
+Arreglado escribiendo las dos columnas SIEMPRE JUNTAS, porque el CHECK las ata:
+al apagar el interruptor la licencia va a NULL sin mirar el patch (es el único
+valor legal ahí); en cualquier otro caso se escribe lo que el patch traiga.
+Sonda de 4 casos con rollback: apagar, reencender con otra licencia, cambiar
+sólo la licencia, y `requires_all_aircraft`.
+
+**Barrido de restos** de `offer_required_licenses`,
+`offer_required_habilitations.license_code` y `.requirement_level`: fuera del
+comentario no quedaba nada más que ese DELETE y **cuatro imports muertos** de
+`RequirementLevel` (TypeRatingRequirementsEditor, offerRepository,
+supabaseMappers, types/offer). Retirados. El tipo `RequirementLevel` en sí y
+`OfferSearchFilters` —que nunca tuvo lectores y cuyos campos `requiredLicenses`
+y `technicianTypes` ya nombran cosas que el modelo no tiene— quedan anotados
+para el barrido, no borrados aquí.
+
+`scripts/validateAircraftTypeRatingsCatalog.ts` lee
+`offer_required_habilitations` pero sólo `offer_id` y `aircraft_type_rating_id`,
+que sobreviven a la 054: no hay que tocarlo.
 
 **Sonda en transacción con rollback** (6 casos): certificar nombrando licencia
 → OK · DEFAULT de `requires_all_aircraft` = false · certificar SIN licencia →
