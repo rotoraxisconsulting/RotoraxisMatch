@@ -23,6 +23,13 @@ import { join, relative } from 'node:path';
 import { createCityDirectory } from '../src/repositories/v2/cityDirectoryRepository';
 import { createLocationCountriesCache } from '../src/repositories/v2/locationCountriesCache';
 import { CountryCatalogEntry, getCityCoordinates } from '../src/types/location';
+import {
+  assertNoDirectLocationWrite,
+  locationColumnsFromAirport,
+  persistedLocationFromAirport,
+} from '../src/utils/locationBridge';
+import { LOCATION_CITY_INDEX, resolveLocationSnapshot } from '../src/constants/locationCities';
+import { findCountry } from '../src/constants/countries';
 
 let passed = 0;
 let failed = 0;
@@ -426,6 +433,124 @@ async function main() {
     assert.equal(cache.getState().status, 'empty');
     await cache.getActiveCountries();
     assert.equal(calls, 2);
+  });
+
+  // ── El puente aeropuerto -> país + ciudad (F2b) ─────────────────────────
+
+  await test('Puente — deriva país ISO y ciudad del aeropuerto', () => {
+    assert.deepEqual(persistedLocationFromAirport('airport:LEVC'), {
+      locationCountryCode: 'ES',
+      locationCityName: 'Valencia',
+    });
+    assert.deepEqual(persistedLocationFromAirport('airport:EBLG'), {
+      locationCountryCode: 'BE',
+      locationCityName: 'Liège',
+    });
+    assert.deepEqual(persistedLocationFromAirport('airport:DAAG'), {
+      locationCountryCode: 'DZ',
+      locationCityName: 'Algiers',
+    });
+  });
+
+  await test('Puente — NUNCA devuelve coordenadas del aeropuerto', () => {
+    // Las del aeropuerto no son las de la ciudad: Barajas está a 12 km del
+    // centro de Madrid. Un pin preciso y falso es peor que ninguno, así que
+    // esto no es un detalle de implementación, es la regla.
+    for (const id of ['airport:LEVC', 'airport:LEAL', 'airport:LIRF', 'airport:SEGU']) {
+      const location = persistedLocationFromAirport(id);
+      assert.equal(location.locationCityLat, undefined, id);
+      assert.equal(location.locationCityLng, undefined, id);
+      assert.equal(location.locationCityGeonameId, undefined, id);
+    }
+  });
+
+  await test('Puente — TODO país del catálogo de aeropuertos resuelve a un ISO', () => {
+    // Si uno solo no resolviera, guardar el perfil de ese técnico lanzaría.
+    // Comprobado además contra location_country_aliases en vivo: 0
+    // discrepancias entre este mapa y el de Postgres, en los 65.
+    const countries = [...new Set(LOCATION_CITY_INDEX.map((e) => e.countryName))];
+    const orphans = countries.filter((name) => !findCountry(name));
+    assert.deepEqual(orphans, [], `Países sin código ISO: ${orphans.join(', ')}`);
+    assert.ok(countries.length >= 60, `Sólo ${countries.length} países: ¿se vació el catálogo?`);
+
+    // Y que cada aeropuerto, uno a uno, produzca un país de dos letras.
+    for (const entry of LOCATION_CITY_INDEX) {
+      const location = persistedLocationFromAirport(entry.id);
+      assert.match(location.locationCountryCode, /^[A-Z]{2}$/, entry.id);
+      assert.ok(location.locationCityName, `${entry.id} sin ciudad`);
+    }
+  });
+
+  await test('Puente — un aeropuerto desconocido lanza en vez de degradar', () => {
+    assert.throws(() => persistedLocationFromAirport('airport:NOPE'), /not in the airport catalog/);
+  });
+
+  await test('Puente — las columnas se escriben SIEMPRE las cinco', () => {
+    // Escribir el país sin limpiar las coordenadas dejaría el punto de la
+    // ciudad anterior colgando de un país nuevo: Madrid con el pin de Valencia.
+    const columns = locationColumnsFromAirport('airport:LEVC');
+    assert.deepEqual(columns, {
+      location_country_code: 'ES',
+      location_city_name: 'Valencia',
+      location_city_lat: null,
+      location_city_lng: null,
+      location_city_geoname_id: null,
+    });
+  });
+
+  await test('Puente — escribir la localización nueva a mano se para en seco', () => {
+    // Durante F2b nadie la escribe directa: se derivaría en silencio a nada,
+    // que es cómo nacieron los dos fallos de offerPatchToDb.
+    for (const key of [
+      'locationCountryCode',
+      'locationCityName',
+      'locationCityLat',
+      'locationCityLng',
+      'locationCityGeonameId',
+    ] as const) {
+      assert.throws(
+        () => assertNoDirectLocationWrite({ [key]: key.includes('Lat') || key.includes('Lng') || key.includes('Geoname') ? 1 : 'ES' } as any, 'test'),
+        new RegExp(key),
+        `${key} debería estar vetado`,
+      );
+    }
+    // Un patch sin localización pasa sin ruido.
+    assert.doesNotThrow(() => assertNoDirectLocationWrite({}, 'test'));
+  });
+
+  // ── La garantía de "ningún score cambia" ────────────────────────────────
+
+  await test('Scorer — quitar location_city y location_base_airport no puede mover un score', () => {
+    // El scorer resuelve la localización de la oferta así:
+    //   resolveLocationSnapshot({ locationCityId, country, city, baseAirport })
+    // y `resolveAirportCity` prueba PRIMERO por locationCityId. Como esa
+    // columna es NOT NULL con FK a location_airports, siempre resuelve, y los
+    // otros tres argumentos NUNCA se miran.
+    //
+    // Por eso la 059 puede retirar `offers.location_city` y
+    // `offers.location_base_airport` sin tocar un solo punto: son entradas
+    // muertas. Esto lo comprueba en vez de confiar en la lectura del código.
+    for (const entry of LOCATION_CITY_INDEX) {
+      const soloId = resolveLocationSnapshot({ locationCityId: entry.id });
+
+      // Con los campos denormalizados correctos.
+      const conDatos = resolveLocationSnapshot({
+        locationCityId: entry.id,
+        country: entry.countryName,
+        city: entry.city,
+        baseAirport: entry.iata || entry.icao,
+      });
+      assert.deepEqual(conDatos, soloId, entry.id);
+
+      // Y con basura dentro: si el id manda, ni siquiera esto cambia nada.
+      const conBasura = resolveLocationSnapshot({
+        locationCityId: entry.id,
+        country: 'Wrongland',
+        city: 'Nowhere',
+        baseAirport: 'ZZZZ',
+      });
+      assert.deepEqual(conBasura, soloId, `${entry.id} con datos contradictorios`);
+    }
   });
 
   // ── La regla arquitectónica, como test ──────────────────────────────────

@@ -33,10 +33,19 @@ import {
   SocialLinks,
 } from './technician';
 import { Document } from './document';
+import { PersistedLocation } from './location';
 
 // What a company sees BEFORE offer acceptance.
 // No real identity, no documents, NO age (migración 040 — ver abajo).
-export interface SafeTechnicianPreview {
+// Fase 7 F2b: el país ISO y la ciudad entran en el contrato público. Salen de
+// `technician_public_view`, que la migración 057 recreó con las cinco
+// columnas nuevas — y con sus 5 gates de identidad y sus 3 GRANT verificados
+// en las post-condiciones, porque recrear una vista se los lleva por delante.
+//
+// No amplían lo que la empresa ve: `country` y `city` ya estaban, derivados
+// del aeropuerto. Lo que cambia es de dónde salen y que ahora hay un código
+// ISO estable en vez de un nombre suelto.
+export interface SafeTechnicianPreview extends PersistedLocation {
   id: string;
   anonymousCode: string;
   // SIN edad, a propósito (migración 040). La edad es característica protegida

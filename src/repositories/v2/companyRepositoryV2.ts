@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { assertNoDirectLocationWrite, locationColumnsFromAirport } from '../../utils/locationBridge';
 import { CompanyProfile, CompanyMember, CompanyProfileView } from '../../types/company';
 import { CompanyMemberRole } from '../../types/enums';
 import { mapCompanyMemberRow, mapCompanyRow, throwIfError } from './supabaseMappers';
@@ -16,6 +17,9 @@ type CompanyProfilePatch = Partial<Omit<CompanyProfile, 'id' | 'createdAt'>> & {
 };
 
 function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
+  // Fase 7 F2b: igual que en técnicos — la localización nueva se deriva del
+  // aeropuerto, nunca se acepta suelta. Se retira en F2c.
+  assertNoDirectLocationWrite(patch, 'companyRepositoryV2.companyPatchToDb');
   return {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
@@ -24,7 +28,11 @@ function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
     // '' -> NULL: la ausencia de web se representa de una sola forma, y el
     // CHECK de la migracion 036 rechaza la cadena vacia de todos modos.
     ...(patch.website !== undefined ? { website: patch.website || null } : {}),
-    ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
+    // Un solo origen, igual que en técnicos: el aeropuerto arrastra consigo
+    // las cinco columnas del modelo nuevo.
+    ...(patch.locationCityId !== undefined
+      ? { location_city_id: patch.locationCityId, ...locationColumnsFromAirport(patch.locationCityId) }
+      : {}),
   };
 }
 
@@ -34,6 +42,8 @@ export const companyRepositoryV2 = {
       .from('companies')
       .select(`
         id, name, location_city_id, phone, email, company_type, website,
+        location_country_code, location_city_name,
+        location_city_lat, location_city_lng, location_city_geoname_id,
         verification_status, created_at, updated_at,
         location_airports ( country_name, city, iata, icao, latitude, longitude )
       `)
@@ -47,6 +57,8 @@ export const companyRepositoryV2 = {
       .from('companies')
       .select(`
         id, name, location_city_id, phone, email, company_type, website,
+        location_country_code, location_city_name,
+        location_city_lat, location_city_lng, location_city_geoname_id,
         verification_status, created_at, updated_at,
         location_airports ( country_name, city, iata, icao, latitude, longitude )
       `)
@@ -176,6 +188,8 @@ export const companyRepositoryV2 = {
       .eq('id', id)
       .select(`
         id, name, location_city_id, phone, email, company_type, website,
+        location_country_code, location_city_name,
+        location_city_lat, location_city_lng, location_city_geoname_id,
         verification_status, created_at, updated_at,
         location_airports ( country_name, city, iata, icao, latitude, longitude )
       `)

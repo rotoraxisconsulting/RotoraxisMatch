@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
+import { persistedLocationFromRow } from '../../utils/locationBridge';
 import { CompanyMember, CompanyProfileView } from '../../types/company';
 import { Document, DocumentType } from '../../types/document';
 import { CompanyMemberRole, DocumentStatus, OfferRequestStatus, OfferStatus, VerificationStatus } from '../../types/enums';
@@ -90,6 +91,7 @@ export function mapCompanyRow(row: DbRow): CompanyProfileView {
     baseAirport: loc?.iata ?? loc?.icao ?? fallback?.baseAirport,
     latitude: loc?.latitude ?? fallback?.latitude,
     longitude: loc?.longitude ?? fallback?.longitude,
+    ...persistedLocationFromRow(row),
   };
 }
 
@@ -122,6 +124,7 @@ export function mapDocumentRow(row: DbRow): Document {
 }
 
 export function mapOfferRow(row: DbRow): Offer {
+  const derivedFromAirport = resolveLocationSnapshot({ locationCityId: row.location_city_id });
   return {
     id: row.id,
     companyId: row.company_id,
@@ -143,8 +146,19 @@ export function mapOfferRow(row: DbRow): Offer {
     requiresAllAircraft: Boolean(row.requires_all_aircraft),
     locationCityId: row.location_city_id,
     locationCountry: row.location_country,
-    locationCity: row.location_city,
-    locationBaseAirport: row.location_base_airport ?? undefined,
+    // Fase 7 F2b — `locationCity` y `locationBaseAirport` YA NO SON COLUMNAS:
+    // la migración 059 retira `offers.location_city` y
+    // `offers.location_base_airport`. Se DERIVAN, que es lo que siempre
+    // fueron: copias denormalizadas de lo que `location_city_id` ya determina.
+    //
+    // La ciudad sale del modelo nuevo y sólo cae al aeropuerto si faltara;
+    // así, cuando F2c deje al usuario elegir una ciudad distinta de la del
+    // aeropuerto, esto ya la respeta sin tocar nada.
+    locationCity: row.location_city_name ?? derivedFromAirport?.city ?? '',
+    // El código de aeropuerto no tiene equivalente en el modelo nuevo — y no
+    // lo necesita: muere con las pantallas en F2c.
+    locationBaseAirport: derivedFromAirport?.baseAirport,
+    ...persistedLocationFromRow(row),
     minYearsExperience: row.min_years_experience ?? 0,
     status: row.status as OfferStatus,
     visible: Boolean(row.visible),
@@ -375,6 +389,7 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
     birthDate: row.birth_date ?? '1970-01-01',
     technicianTypes: relations?.technicianTypes ?? [],
     locationCityId: row.location_city_id,
+    ...persistedLocationFromRow(row),
     availability: mapAvailability(row.availability),
     yearsExperience: row.years_experience ?? undefined,
     verificationStatus: row.verification_status as VerificationStatus,
@@ -399,6 +414,7 @@ export function mapPublicTechnicianRow(row: DbRow, relations?: Awaited<ReturnTyp
     baseAirport: row.base_airport ?? location?.baseAirport,
     latitude: row.latitude ?? location?.latitude,
     longitude: row.longitude ?? location?.longitude,
+    ...persistedLocationFromRow(row),
     licenses: (relations?.licenses ?? []).map((license) => license.licenseCode),
     habilitations: relations?.habilitations ?? [],
     aircraftExperience: relations?.aircraftExperience ?? [],
@@ -455,6 +471,7 @@ export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnT
     birthDate: '',
     technicianTypes: relations?.technicianTypes ?? [],
     locationCityId: row.location_city_id,
+    ...persistedLocationFromRow(row),
     availability: mapAvailability(row.availability),
     yearsExperience: row.years_experience ?? undefined,
     verificationStatus: row.verification_status as VerificationStatus,

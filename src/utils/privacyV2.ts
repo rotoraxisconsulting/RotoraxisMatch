@@ -87,7 +87,8 @@ export function canRevealIdentity(params: AcceptanceCheckParams): boolean {
  * Builds a SafeTechnicianPreview — the anonymous company view before acceptance.
  *
  * Includes: id, anonymousCode, technicianTypes, country, city,
- *           baseAirport, location coordinates, licenses, habilitations,
+ *           baseAirport, location coordinates, país ISO + ciudad del modelo
+ *           nuevo (Fase 7 F2b), licenses, habilitations,
  *           yearsExperience, availability, verificationStatus.
  *
  * Excludes: firstName, lastName, email, phone, birthDate, socialLinks, documents, matchingScore.
@@ -105,6 +106,16 @@ export function getSafeTechnicianPreview(technician: TechnicianWithRelations): S
     baseAirport: location?.baseAirport,
     latitude: location?.latitude,
     longitude: location?.longitude,
+    // Fase 7 F2b: el modelo nuevo se COPIA del perfil, no se recalcula. El
+    // perfil ya lo trae de Postgres (mapPrivateTechnicianRow), y volver a
+    // derivarlo del aeropuerto aquí sería una segunda fuente que podría
+    // discrepar en cuanto F2c deje elegir una ciudad distinta de la del
+    // aeropuerto. Esta función anonimiza, no decide localización.
+    locationCountryCode: technician.locationCountryCode,
+    locationCityName: technician.locationCityName,
+    locationCityLat: technician.locationCityLat,
+    locationCityLng: technician.locationCityLng,
+    locationCityGeonameId: technician.locationCityGeonameId,
     licenses: technician.licenses.map((l) => l.licenseCode as LicenseCode),
     habilitations: technician.habilitations,
     aircraftExperience: technician.aircraftExperience,

@@ -88,6 +88,10 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     technicianType: 'mechanic',
     requiresCertification: true,
     locationCityId: 'airport:XXXX',
+    // Fase 7 F2b: el tipo lo exige (NOT NULL en Postgres), pero el scorer NO
+    // lo lee todavía — sigue puntuando por locationCityId. Que pase a
+    // puntuar por país es F2c, y ahí sí se moverán los números.
+    locationCountryCode: 'XX',
     locationCountry: 'Nowhere',
     locationCity: 'Nowhere City',
     locationBaseAirport: 'XXXX',
@@ -144,6 +148,9 @@ function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): Techn
     birthDate: '1990-01-01',
     technicianTypes: ['mechanic'],
     locationCityId: 'airport:YYYY',
+    // Distinto del de la oferta a propósito, igual que locationCityId: así
+    // el caso por defecto de estos tests sigue siendo "no coinciden".
+    locationCountryCode: 'YY',
     availability: { immediately: true, contractTypes: ['permanent'] },
     verificationStatus: 'pending',
     createdAt: '2026-01-01T00:00:00.000Z',

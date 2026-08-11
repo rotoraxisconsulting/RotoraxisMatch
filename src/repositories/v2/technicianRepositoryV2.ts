@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { assertNoDirectLocationWrite, locationColumnsFromAirport } from '../../utils/locationBridge';
 import {
   TechnicianProfile,
   TechnicianWithRelations,
@@ -34,15 +35,26 @@ import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan'
 // SELECT explícito de una columna inexistente no se ignora: revienta TODAS
 // las consultas de la tabla. Volver a nombrarla aquí ya no es un despiste,
 // es una caída.
+// Fase 7 F2b: entran las cinco columnas del modelo nuevo (migración 057).
+// `location_city_id` se queda: sigue siendo NOT NULL y el scorer lo lee.
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
-  location_city_id, availability, years_experience,
+  location_city_id, location_country_code, location_city_name,
+  location_city_lat, location_city_lng, location_city_geoname_id,
+  availability, years_experience,
   verification_status, social_links, created_at, updated_at
 `;
 
+// Las mismas cinco sobre `technician_public_view`, que la 057 recreó para
+// exponerlas. `country`, `city`, `base_airport`, `latitude` y `longitude`
+// siguen aquí — son las derivadas del aeropuerto, y las pantallas las leen
+// hasta F2c.
 const PUBLIC_SELECT = `
   id, anonymous_code, location_city_id, country, city,
-  base_airport, latitude, longitude, availability, years_experience,
+  base_airport, latitude, longitude,
+  location_country_code, location_city_name,
+  location_city_lat, location_city_lng, location_city_geoname_id,
+  availability, years_experience,
   verification_status, first_name, last_name, email,
   phone, social_links
 `;
@@ -96,6 +108,9 @@ function warnIfTruncated(context: string, fetched: number, total: number | null)
 }
 
 function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId' | 'createdAt' | 'technicianTypes'>>): Record<string, unknown> {
+  // Fase 7 F2b: la localización nueva se DERIVA del aeropuerto, nunca se
+  // acepta suelta. Ver assertNoDirectLocationWrite — se retira en F2c.
+  assertNoDirectLocationWrite(patch, 'technicianRepositoryV2.privatePatchToDb');
   return {
     ...(patch.anonymousCode !== undefined ? { anonymous_code: patch.anonymousCode } : {}),
     ...(patch.firstName !== undefined ? { first_name: patch.firstName } : {}),
@@ -105,7 +120,12 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
     ...(patch.birthDate !== undefined ? { birth_date: patch.birthDate } : {}),
     // `technicianTypes` NO se escribe aquí: vive en la tabla puente, no en una
     // columna de technician_profiles. Va por replaceProfileTypes().
-    ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
+    // Un solo origen: cambiar de aeropuerto reescribe TAMBIÉN las cinco
+    // columnas del modelo nuevo, juntas. Escribir el aeropuerto sin ellas
+    // dejaría el país anterior pegado a una ciudad nueva.
+    ...(patch.locationCityId !== undefined
+      ? { location_city_id: patch.locationCityId, ...locationColumnsFromAirport(patch.locationCityId) }
+      : {}),
     ...(patch.availability !== undefined ? {
       // Sólo `immediately` y `contract_types`. `status` es etiqueta de UI y
       // NUNCA se persiste; `available_from` se retiró en la 041.

@@ -1,5 +1,6 @@
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode, AircraftTypeRatingCatalog } from './catalog';
 import { OfferStatus } from './enums';
+import { PersistedLocation } from './location';
 
 /**
  * Aviones o helicópteros — nunca las dos cosas en la misma oferta
@@ -40,7 +41,12 @@ export interface OfferRequiredHabilitation {
   createdAt: string;
 }
 
-export interface Offer {
+// Fase 7 F2b: `PersistedLocation` trae el modelo nuevo (país ISO obligatorio
+// + ciudad opcional con o sin coordenadas). Los cuatro campos de abajo
+// —locationCityId, locationCountry, locationCity, locationBaseAirport— son el
+// modelo VIEJO y siguen aquí porque las pantallas y el scorer los leen. F2c
+// los retira.
+export interface Offer extends PersistedLocation {
   id: string;
   companyId: string;
   title: string;

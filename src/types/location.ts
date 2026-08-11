@@ -60,6 +60,33 @@ export type CitySelection =
       name: string;
     };
 
+/**
+ * La localización tal y como se PERSISTE, en las tres tablas que la tienen:
+ * `offers`, `technician_profiles` y `companies` (migración 057).
+ *
+ * No es lo mismo que `LocationValue`, y la diferencia importa:
+ *   - `LocationValue` es lo que el usuario está editando en el selector.
+ *     País puede ser `null` porque todavía no lo ha elegido.
+ *   - `PersistedLocation` es lo que hay en una fila. El país es OBLIGATORIO
+ *     (NOT NULL con FK a `location_countries`), porque una fila guardada sin
+ *     país no puede existir.
+ *
+ * Los cuatro campos de ciudad reproducen el CHECK `chk_*_city_coords`: las
+ * coordenadas sólo acompañan a un nombre, y el `geonameId` sólo a unas
+ * coordenadas. Postgres lo impone; esto lo documenta.
+ */
+export interface PersistedLocation {
+  /** ISO-3166-1 alpha-2. Lo único que puntuará en F2c. */
+  locationCountryCode: string;
+  /** `undefined` = el usuario no ha puesto ciudad. Es válido: la ciudad es opcional. */
+  locationCityName?: string;
+  /** Sólo si la ciudad vino del directorio. `undefined` para una escrita a mano. */
+  locationCityLat?: number;
+  locationCityLng?: number;
+  /** Traza el origen: si está, la ciudad salió del directorio. */
+  locationCityGeonameId?: number;
+}
+
 /** El valor completo del selector: país obligatorio, ciudad opcional. */
 export interface LocationValue {
   /** `null` hasta que el usuario elige país. País es obligatorio en el modelo nuevo. */

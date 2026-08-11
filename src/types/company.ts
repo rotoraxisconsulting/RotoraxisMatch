@@ -1,5 +1,6 @@
 import { VerificationStatus, CompanyMemberRole } from './enums'; // owned by enums.ts — not re-exported here
 import { CompanyTypeCode } from './catalog'; // owned by catalog.ts — not re-exported here
+import { PersistedLocation } from './location';
 
 // --- V1-compatible types — intentionally retained until the V2 UI migration ---
 
@@ -42,7 +43,9 @@ export interface Company {
 
 // --- V2 types ---
 
-export interface CompanyProfile {
+// Fase 7 F2b: ver la nota de TechnicianProfile. Mismo modelo, misma
+// convivencia temporal con `locationCityId`.
+export interface CompanyProfile extends PersistedLocation {
   id: string;
   name: string;
   // Required: every persisted company must reference a valid location_airports entry.

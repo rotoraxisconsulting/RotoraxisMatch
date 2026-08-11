@@ -3,6 +3,8 @@ import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequiremen
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
 import { resolveLocationSnapshot } from '../../constants/locationCities';
+import { PersistedLocation } from '../../types/location';
+import { persistedLocationFromAirport } from '../../utils/locationBridge';
 import {
   loadOfferRequirements,
   mapOfferRow,
@@ -16,8 +18,27 @@ import {
 // (migración 047) exigía acertar siete veces: olvidar una devuelve un Offer
 // con `productType` undefined y NADA lo señala hasta que la UI pinta el badge
 // vacío o el guardado escribe basura.
+// Fase 7 F2b: `location_city` y `location_base_airport` SALEN de esta lista
+// porque la migración 059 las retira. Dejar de pedirlas tiene que ir ANTES
+// del DROP (expand-contract): un SELECT explícito de una columna inexistente
+// no se ignora, revienta todas las consultas de la tabla. Es literalmente el
+// mismo aviso que dejó `profile_completeness` en technicianRepositoryV2.
+// Entran las cinco del modelo nuevo.
+//
+// ⚠ FUERA DEL ENCARGO DE F2b, pero encontrado al reescribir esta línea:
+// faltaban `license_code` y `requires_all_aircraft`. Las siete consultas de
+// ofertas de este fichero pasan por aquí y `mapOfferRow` las lee, así que
+// TODA oferta volvía con `licenseCode: undefined` y `requiresAllAircraft:
+// false`, dijera lo que dijera la fila. Es la tercera vez que muerde el mismo
+// patrón — es justo lo que avisa el comentario original de esta constante
+// sobre `product_type`, y la hermana de los dos fallos de `offerPatchToDb` de
+// la tanda D.
+//
+// Hoy no cambia ningún score porque la tabla `offers` está VACÍA (0 filas,
+// verificado). En cuanto hubiera una oferta, el scorer estaría puntuando su
+// licencia como si no existiera.
 const OFFER_COLUMNS =
-  'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, location_city_id, location_country, location_city, location_base_airport, min_years_experience, status, visible, expires_at, created_at, updated_at';
+  'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, license_code, requires_all_aircraft, location_city_id, location_country, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, min_years_experience, status, visible, expires_at, created_at, updated_at';
 
 type OfferLocationInput = {
   locationCityId?: string;
@@ -26,7 +47,21 @@ type OfferLocationInput = {
   locationBaseAirport?: string;
 };
 
-function controlledOfferLocation(reference: OfferLocationInput): Pick<Offer, 'locationCityId' | 'locationCountry' | 'locationCity' | 'locationBaseAirport'> {
+type ControlledOfferLocation = Pick<Offer, 'locationCityId' | 'locationCountry' | 'locationCity' | 'locationBaseAirport'> &
+  PersistedLocation;
+
+/**
+ * La ÚNICA derivación de localización de una oferta. La usan `create()` y
+ * `update()`, y produce a la vez el modelo viejo y el nuevo a partir del
+ * mismo aeropuerto — no dos caminos que puedan divergir.
+ *
+ * Fase 7 F2b: antes devolvía cuatro campos que se escribían en cuatro
+ * columnas. Ahora sólo `locationCityId`, `locationCountry` y las del modelo
+ * nuevo llegan a Postgres; `locationCity` y `locationBaseAirport` viajan en
+ * el objeto porque el tipo `Offer` los tiene y las pantallas los leen, pero
+ * NO se persisten: la 059 retira sus columnas y `mapOfferRow` los deriva.
+ */
+function controlledOfferLocation(reference: OfferLocationInput): ControlledOfferLocation {
   const location = resolveLocationSnapshot({
     locationCityId: reference.locationCityId,
     country: reference.locationCountry,
@@ -43,6 +78,7 @@ function controlledOfferLocation(reference: OfferLocationInput): Pick<Offer, 'lo
     locationCountry: location.country,
     locationCity: location.city,
     locationBaseAirport: location.baseAirport,
+    ...persistedLocationFromAirport(location.locationCityId),
   };
 }
 
@@ -86,8 +122,17 @@ function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record
     ...(patch.requiresAllAircraft !== undefined ? { requires_all_aircraft: patch.requiresAllAircraft } : {}),
     ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.locationCountry !== undefined ? { location_country: patch.locationCountry } : {}),
-    ...(patch.locationCity !== undefined ? { location_city: patch.locationCity } : {}),
-    ...(patch.locationBaseAirport !== undefined ? { location_base_airport: patch.locationBaseAirport } : {}),
+    // Fase 7 F2b — `location_city` y `location_base_airport` ya NO se
+    // escriben: la 059 retira las columnas y sus valores se derivan al leer.
+    // En su lugar van las cinco del modelo nuevo, SIEMPRE juntas: escribir el
+    // país sin limpiar las coordenadas dejaría el punto de la ciudad
+    // anterior atado a un país nuevo. Todas vienen de
+    // `controlledOfferLocation`, que es la única que las produce.
+    ...(patch.locationCountryCode !== undefined ? { location_country_code: patch.locationCountryCode } : {}),
+    ...(patch.locationCityName !== undefined ? { location_city_name: patch.locationCityName ?? null } : {}),
+    ...(patch.locationCountryCode !== undefined
+      ? { location_city_lat: patch.locationCityLat ?? null, location_city_lng: patch.locationCityLng ?? null, location_city_geoname_id: patch.locationCityGeonameId ?? null }
+      : {}),
     ...(patch.minYearsExperience !== undefined ? { min_years_experience: patch.minYearsExperience } : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
     ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
@@ -303,8 +348,16 @@ export const offerRepository = {
         requires_all_aircraft: data.requiresAllAircraft ?? false,
         location_city_id: location.locationCityId,
         location_country: location.locationCountry,
-        location_city: location.locationCity,
-        location_base_airport: location.locationBaseAirport,
+        // Fase 7 F2b: el modelo nuevo. `location_city` y
+        // `location_base_airport` desaparecen con la 059.
+        location_country_code: location.locationCountryCode,
+        location_city_name: location.locationCityName ?? null,
+        // Explícitas a null y no omitidas: una oferta creada desde el
+        // aeropuerto no tiene coordenadas de ciudad, y decirlo es más claro
+        // que confiar en el DEFAULT de la columna.
+        location_city_lat: null,
+        location_city_lng: null,
+        location_city_geoname_id: null,
         min_years_experience: data.minYearsExperience,
         status,
         visible: status === 'published',

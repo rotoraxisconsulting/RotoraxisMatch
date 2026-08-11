@@ -1,5 +1,6 @@
 import { VerificationStatus } from './enums'; // owned by enums.ts — not re-exported here
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from './catalog';
+import { PersistedLocation } from './location';
 
 // Disponibilidad: DOS estados, 2026-07-29.
 //
@@ -210,7 +211,10 @@ export interface SocialLinks {
  * Companies never receive this shape — they receive technician_public_view rows
  * (private fields gated by CASE WHEN offer_accepted_between()).
  */
-export interface TechnicianProfile {
+// Fase 7 F2b: `PersistedLocation` trae el país ISO (obligatorio) y la ciudad
+// opcional. `locationCityId`, más abajo, es el modelo viejo y sigue vivo
+// porque el scorer y 27 ficheros lo leen. F2c lo retira.
+export interface TechnicianProfile extends PersistedLocation {
   id: string;
   userId: string;
   anonymousCode: string;
