@@ -2827,6 +2827,68 @@ sigue con 0 filas. Rollback confirmado.
 `validate:state-machine` PASS · `validate:auth-hooks` PASS ·
 `validate:aircraft-ratings` PASS.
 
+### Tanda E — HECHA (10/08/2026). Fase 6 cerrada.
+
+La que conecta todo lo que A–D dejaron montado. **Aquí sí se mueven scores**, y
+sin migración: es puro código.
+
+**Hallazgo bloqueante, resuelto primero**: una oferta sin certificación **no
+podía nombrar aeronaves**. Lo impuso la tanda C leyendo "sin certificación no
+hay eje Part-66 que pedir", y era demasiado estricto — el ejemplo que abre la
+fase entera, *"ayudante para el A320, sin licencia"*, era inexpresable. Sin
+licencia sí; el A320 hay que poder decirlo, o la experiencia de la tanda B no
+tiene contra qué compararse. Retirado `assertRequirementsMatchCertification`
+(la licencia la sigue atando el CHECK de la 053, en la base) y con él
+`replaceRequirements`, que ya no envolvía nada.
+
+**La fuente de evidencia la elige el interruptor**: con certificación sólo
+cuentan las habilitaciones de LA licencia de la oferta; sin ella, la unión de
+habilitaciones y experiencia declarada. Dos evaluadores separados, porque la
+pregunta es distinta: "¿puede firmar esto?" contra "¿ha trabajado en esto?".
+
+**Los 20 puntos de licencia** van ÍNTEGROS a habilitación cuando no se
+certifica (`NO_CERTIFICATION_WEIGHTS`: 15/65/0/15/5 = 100), no repartidos —
+mismo criterio y mismo precedente que cuando se retiró `experience`. Y suma
+100, no 80: la pantalla del técnico lista ofertas con su porcentaje al lado, y
+un techo estructural más bajo en las de ayudante se leería como "encajo peor
+aquí" cuando lo que cambia es la escala.
+
+**`BROAD_ONLY_CAP` (79) retirado por INALCANZABLE**, no por criterio: el máximo
+de su rama es 15 + round(45×0,29)=13 + 20 + 15 + 5 = **68**, así que su
+`Math.min` nunca recortó nada. Ningún score se mueve al quitarlo. La frase que
+se le atribuía —"sabes de la aeronave pero no lo has demostrado con papel"— no
+era suya: describe el tier `related_family` (0,57), que sigue en pie.
+
+**Caducidad ≠ "no vigente"**. `evaluateVigencia` pasa de un booleano a
+`ok | expired | not_current`. Con certificación, una licencia o un rating
+caducados **no valen** y caen al cap de 39 con su propio texto ("— expired"),
+que es accionable: renovar, no formarse. `isCurrent = false` sigue degradando
+sin excluir, porque es una autodeclaración en un campo opcional y excluir por
+ella castigaría la honestidad. Sin certificación, las tres degradan como
+siempre.
+
+**El tipo de perfil sale del scorer entero**: ni puntúa, ni bloquea, ni deja
+línea de match. Sigue sirviendo para mostrar y para buscar. No se le deja "un
+poco" de peso a propósito — un peso pequeño no evita el doble conteo, sólo lo
+hace más difícil de detectar. El único blocker que queda es el de años
+declarados por debajo del mínimo.
+
+**Ambigüedad de los dos campos de años, cerrada**: manda
+`technician_habilitations.experience_years`, la fuente comprobable. Y el editor
+de experiencia deja de ofrecer aeronaves donde el técnico ya tiene
+habilitación, así que el estado ambiguo casi no puede crearse — la regla de
+desempate queda para datos anteriores.
+
+Verificación de los seis criterios, todos como test: oferta con certificación +
+sólo experiencia → 39 · el mismo técnico sin certificación → 95 con
+habilitación 65 · licencia sin experiencia declarada puntúa en oferta de
+ayudante · caducado excluye con certificación y degrada sin ella · dos técnicos
+idénticos salvo el tipo sacan lo mismo · sobrecualificado no resta.
+
+`tsc` 0 · `test:matching` 157/157 · `test:url-validation` PASS ·
+`validate:state-machine` PASS · `validate:auth-hooks` PASS ·
+`validate:aircraft-ratings` PASS.
+
 ### Tanda D — HECHA (10/08/2026)
 
 **Migración 053** (aplicada): `offers.license_code` (NULLABLE + FK) y

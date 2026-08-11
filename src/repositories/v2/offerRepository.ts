@@ -121,24 +121,23 @@ export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible
  * quietly would tell the company "saved" while discarding what it typed —
  * the same class of false success `throwIfNoRows` exists to prevent.
  */
-function assertRequirementsMatchCertification(requirements: {
-  requiresCertification: boolean;
-  // Fase 6 tanda D: `licenses` desapareció del parámetro. La licencia es
-  // ahora `offers.license_code`, y su coherencia con el interruptor la impone
-  // el CHECK chk_offers_license_matches_certification (migración 053) — en la
-  // base, no sólo aquí. Lo que sigue sin poder comprobar un CHECK es la
-  // relación entre el interruptor y las filas de OTRA tabla, que es
-  // exactamente lo que queda en esta función.
-  habilitations?: readonly unknown[];
-}): void {
-  if (requirements.requiresCertification) return;
-  if ((requirements.habilitations?.length ?? 0) === 0) return;
-
-  throw new Error(
-    'This offer does not require certified work, so it cannot require an aircraft type rating. ' +
-      'Remove those requirements, or turn certification back on.',
-  );
-}
+// Fase 6 tanda E: AQUÍ VIVÍA `assertRequirementsMatchCertification`, que
+// rechazaba aeronaves en una oferta sin certificación.
+//
+// Se retira porque prohibía justo el caso que abre la fase entera: **"busco un
+// ayudante para el A320, sin licencia"**. Sin licencia sí, pero el A320 hay
+// que poder decirlo — si no, la experiencia declarada del técnico no tiene
+// contra qué compararse y la tanda B se queda sin uso.
+//
+// La lectura de la tanda C ("sin certificación no hay eje Part-66 que pedir")
+// era correcta sólo para la LICENCIA, no para la aeronave. La licencia la
+// sigue atando el CHECK chk_offers_license_matches_certification (migración
+// 053), en la base y no aquí, así que no queda nada que este assert pudiera
+// comprobar que Postgres no compruebe mejor.
+//
+// Lo que separa una oferta de ayudante de una que certifica es qué EVIDENCIA
+// vale, y eso lo decide el scorer (offerMatchExplain), no una prohibición de
+// escritura.
 
 export const offerRepository = {
   async getAll(): Promise<Offer[]> {
@@ -239,28 +238,16 @@ export const offerRepository = {
       await this.replaceRequiredHabilitations(id, []);
     }
 
-    // Apagar la certificación con AERONAVES vivas (Fase 6 tanda C, corregido
-    // en la D). Aquí NO hay ninguna FK que fuerce el orden, al contrario que
-    // arriba: lo que lo fuerza es la INVARIANTE — una oferta que declara no
-    // necesitar certificación no puede exigir un rating, y
-    // assertRequirementsMatchCertification lo rechaza. Sin esta limpieza, un
-    // llamante que actualizara la columna y no llamara después a
-    // replaceRequirements dejaría la oferta en un estado que el repositorio
-    // se niega a aceptar pero que la base ya tiene guardado.
+    // Fase 6 tanda E: apagar el interruptor YA NO BORRA LAS AERONAVES.
     //
-    // La LICENCIA no se limpia aquí: desde la tanda D vive en
-    // `offers.license_code` y la pone a NULL el propio UPDATE de abajo, en la
-    // misma sentencia que apaga el interruptor — que es lo que el CHECK
-    // exige. Aquí había un DELETE sobre `offer_required_licenses`, resto de
-    // cuando esa tabla era la fuente de licencias: con la migración 054
-    // aplicada habría lanzado excepción (tiene throwIfError debajo) y
-    // reventado el guardado.
+    // Esta rama existía porque una oferta sin certificación tenía prohibido
+    // nombrar aeronaves. Al levantarse esa prohibición, borrarlas sería
+    // destruir justo lo que la oferta sigue queriendo decir: "el puesto es
+    // para el A320, sólo que no hace falta que puedas firmarlo".
     //
-    // Acotado a un cambio REAL de true -> false: guardar sin tocar el
-    // interruptor no borra nada, y encenderlo no borra nada tampoco.
-    if (patch.requiresCertification === false && existing.requiresCertification) {
-      await this.replaceRequiredHabilitations(id, []);
-    }
+    // Lo único que se limpia al apagar es la LICENCIA, y lo hace el propio
+    // UPDATE de abajo en la misma sentencia — que es lo que exige
+    // chk_offers_license_matches_certification. Ver offerPatchToDb.
 
     const locationPatch = hasOfferLocationPatch(patch)
       ? controlledOfferLocation({ ...existing, ...patch })
@@ -298,12 +285,6 @@ export const offerRepository = {
     requiresAllAircraft?: boolean;
     requiredHabilitations?: { aircraftTypeRatingId: string; notes?: string }[];
   }): Promise<OfferWithRequirements> {
-    // Checked BEFORE the insert: failing after it would leave an orphan
-    // offer row behind for a save the caller was told had failed.
-    assertRequirementsMatchCertification({
-      requiresCertification: data.requiresCertification,
-      habilitations: data.requiredHabilitations ?? [],
-    });
     const status = data.status ?? 'draft';
     const location = controlledOfferLocation(data);
     const { data: inserted, error } = await supabase
@@ -334,12 +315,7 @@ export const offerRepository = {
 
     const offer = mapOfferRow(inserted as any);
     const habilitations = data.requiredHabilitations ?? [];
-    // `offer.requiresCertification` y no `data.`: lo que vale es lo que la
-    // base acaba de guardar, no lo que el llamante creía estar mandando.
-    await this.replaceRequirements(offer.id, {
-      requiresCertification: offer.requiresCertification,
-      habilitations,
-    });
+    await this.replaceRequiredHabilitations(offer.id, habilitations);
     return withRequirements(offer, {
       requiredHabilitations: habilitations.map((h) => ({ ...h, offerId: offer.id, createdAt: offer.createdAt })),
     });
@@ -410,43 +386,14 @@ export const offerRepository = {
     return { action: 'archived' };
   },
 
-  /**
-   * Fase 6 tanda D: este método se ha quedado sin nada propio que escribir.
-   *
-   * Escribía `offer_required_licenses` (el conjunto de categorías que la
-   * oferta pedía). Esa tabla la sustituye `offers.license_code` — UNA sola
-   * licencia, columna de `offers`, escrita por create()/update(). La tabla
-   * queda sin lectores ni escritores y se dropea en la migración 054.
-   *
-   * Se conserva como puerta de entrada porque sigue haciendo dos cosas que
-   * importan: valida la coherencia con el interruptor de certificación ANTES
-   * de tocar nada, y delega en replaceRequiredHabilitations. Las pantallas
-   * llaman a un solo sitio para guardar requisitos, como hasta ahora.
-   */
-  async replaceRequirements(offerId: string, requirements: {
-    // Fase 6 tanda C: ya no se recibe `technicianTypes`. El tipo es una
-    // columna de `offers` y lo escribe update()/create(), no este método.
-    // Lo que sí llega es el interruptor, porque es lo que decide si estos
-    // requisitos son legales siquiera.
-    requiresCertification: boolean;
-    // Optional — omit to leave existing aircraft requirements untouched.
-    habilitations?: { aircraftTypeRatingId: string; notes?: string }[];
-  }): Promise<void> {
-    // Before anything is written, never after: a rejected save must leave the
-    // offer's existing requirements exactly as they were.
-    assertRequirementsMatchCertification({
-      requiresCertification: requirements.requiresCertification,
-      habilitations: requirements.habilitations,
-    });
-
-    if (requirements.habilitations !== undefined) {
-      await this.replaceRequiredHabilitations(offerId, requirements.habilitations);
-    }
-  },
-
-  // Aircraft requirements. Independent from replaceRequirements() above so a
-  // caller that only flips the certification switch never has to reload or
-  // resend the aircraft rows it doesn't manage.
+  // Fase 6 tanda E: AQUÍ VIVÍA `replaceRequirements`, que en la tanda D ya se
+  // había quedado sin nada propio que escribir (su tabla,
+  // `offer_required_licenses`, la sustituyó `offers.license_code`) y sólo
+  // conservaba el assert de coherencia con el interruptor. Retirado el assert,
+  // era un envoltorio de una línea alrededor del método de abajo, así que las
+  // pantallas llaman ya directamente a `replaceRequiredHabilitations`.
+  //
+  // Aircraft requirements.
   //
   // Fase 6 tanda D: cada fila es UNA AERONAVE. La licencia con la que se
   // cruza es la de la oferta (`offers.license_code`) y ya no se repite aquí;

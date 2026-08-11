@@ -668,26 +668,23 @@ async function main() {
     // param is deliberately all-required (a forgotten flag would silently
     // mean "no cap", and the ladder is most-restrictive-wins). Only the
     // fixture gained the field; every expectation below is unchanged.
-    const none = { isBroadOnlyMatch: false, hasIncompleteAircraftSet: false, isZeroQualification: false, hasBlocker: false };
+    // Fase 6 tanda E: `isBroadOnlyMatch` (BROAD_ONLY_CAP, 79) se retiró por
+    // INALCANZABLE — el máximo de su rama era 68, así que su Math.min nunca
+    // recortó nada. La escalera baja de cuatro peldaños a tres.
+    const none = { hasIncompleteAircraftSet: false, isZeroQualification: false, hasBlocker: false };
     assert.equal(applyScoreCeilings(100, none), 100, 'no ceiling applies to a confirmed exact match');
-    assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true }), 79);
     assert.equal(applyScoreCeilings(100, { ...none, hasIncompleteAircraftSet: true }), 59);
     assert.equal(applyScoreCeilings(100, { ...none, isZeroQualification: true }), 39);
     assert.equal(applyScoreCeilings(100, { ...none, hasBlocker: true }), 19);
     // Overlaps — the stricter one wins regardless of declaration order.
+    assert.equal(applyScoreCeilings(100, { ...none, hasIncompleteAircraftSet: true, isZeroQualification: true }), 39);
     assert.equal(
-      applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasIncompleteAircraftSet: true }),
-      59,
-      'broad-only (79) + mandatory unmet (59) must land on 59, not 79',
-    );
-    assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasIncompleteAircraftSet: true, isZeroQualification: true }), 39);
-    assert.equal(
-      applyScoreCeilings(100, { isBroadOnlyMatch: true, hasIncompleteAircraftSet: true, isZeroQualification: true, hasBlocker: true }),
+      applyScoreCeilings(100, { hasIncompleteAircraftSet: true, isZeroQualification: true, hasBlocker: true }),
       19,
-      'the blocker cap is the tightest rung — it wins over all three qualification ceilings',
+      'the blocker cap is the tightest rung — it wins over both qualification ceilings',
     );
     // A ceiling never RAISES a score that was already below it.
-    assert.equal(applyScoreCeilings(20, { ...none, isBroadOnlyMatch: true, hasIncompleteAircraftSet: true, isZeroQualification: true }), 20);
+    assert.equal(applyScoreCeilings(20, { ...none, hasIncompleteAircraftSet: true, isZeroQualification: true }), 20);
     assert.equal(applyScoreCeilings(5, { ...none, hasBlocker: true }), 5);
   });
 
@@ -735,19 +732,61 @@ async function main() {
     assert.equal(result.missingRequirements.length, 0);
   });
 
-  await test('Vigencia — an expired rating degrades slightly (never excludes) and adds one "Expired" notice', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
+  await test('Vigencia — SIN certificación, un rating caducado degrada y nunca excluye', () => {
+    // Fase 6 tanda E: éste era el comportamiento ÚNICO. Ahora es el de las
+    // ofertas que no exigen certificar: para trabajar de ayudante el papel
+    // vencido no borra la experiencia.
+    const offer = makeOffer({
+      requiresCertification: false,
+      licenseCode: undefined,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
+    });
     const tech = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01' })],
     });
     const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
-    assert.ok(result.breakdown.habilitation < 45 && result.breakdown.habilitation > 0, `expected a slight cut, got ${result.breakdown.habilitation}`);
+    assert.ok(result.breakdown.habilitation > 0, `expected a slight cut, not exclusion, got ${result.breakdown.habilitation}`);
+    assert.ok(result.breakdown.habilitation < 65, 'y sí un recorte: la escala sin licencia es 65');
     assert.equal(result.level, 'exact', 'still tier exact — degraded, never excluded');
     assert.equal(result.missingRequirements.length, 0, 'a degraded exact match never becomes missingRequirements');
     assert.equal(result.vigenciaNotices.length, 1);
     assert.equal(result.vigenciaNotices[0].label, 'Expired');
     assert.ok(result.vigenciaNotices[0].detail.includes('2026-03'));
+  });
+
+  await test('Vigencia — CON certificación, un rating caducado NO vale: cae al cap de 39', () => {
+    // Criterio de la tanda E. Legalmente no puede firmar ese trabajo, así que
+    // cuenta como no tener la cualificación — no como tenerla un poco peor.
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
+    const tech = makeTechnician({
+      verificationStatus: 'verified',
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01' })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.equal(result.breakdown.habilitation, 0, 'caducado cuenta como no tenerlo');
+    assert.ok(result.total <= 39, `esperaba ZERO_QUALIFICATION_CAP, got ${result.total}`);
+    assert.ok(
+      result.missingRequirements.some((m) => m.includes('expired')),
+      'el motivo se nombra, y dice "caducado", no "te falta" — es accionable: renovar',
+    );
+    assert.equal(result.vigenciaNotices.length, 1, 'el aviso de vigencia se mantiene');
+  });
+
+  await test('Vigencia — CON certificación, isCurrent=false degrada pero NO excluye', () => {
+    // La caducidad es un hecho registral; "no current" es una autodeclaración
+    // en un campo opcional. Excluir por ella castigaría la honestidad.
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
+    const tech = makeTechnician({
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', isCurrent: false })],
+    });
+    const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
+    assert.ok(result.breakdown.habilitation > 0, 'no excluye');
+    assert.ok(result.breakdown.habilitation < 45, 'pero degrada');
+    assert.equal(result.level, 'exact');
+    assert.equal(result.missingRequirements.length, 0);
   });
 
   await test('Vigencia — precedence: an expired date wins even when isCurrent is explicitly true', () => {
@@ -1654,80 +1693,152 @@ async function main() {
     habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
   };
 
-  await test('Blockers — Case 1: right technician type + exact rating produces no blocker at all', () => {
+  // Fase 6 tanda E: los tres tests que había aquí fijaban el tipo de perfil
+  // como blocker (Case 1: no bloquea si casa; Case 2: bloquea y capa a 19;
+  // Case 3: siempre match o blocker). El tipo ya no puntúa ni filtra, así que
+  // los sustituye el test de abajo, que fija lo contrario.
+  await test('El tipo de perfil NO puntúa ni bloquea: dos técnicos idénticos salvo el tipo sacan lo mismo', () => {
+    // Criterio de verificación de la tanda. Si el tipo tuviera peso, aunque
+    // fuera poco, estos dos números diferirían.
     const offer = makeOffer({
-      technicianType: 'mechanic',
-      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
-    });
-    const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.deepEqual(result.blockers, [], 'a matching type must never be a blocker');
-    assert.equal(result.level, 'exact');
-    assert.ok(
-      result.matches.some((m) => m.includes('Mechanic')),
-      'a satisfied type requirement must be surfaced by its catalog LABEL, never the raw code',
-    );
-    assert.ok(!result.matches.some((m) => m.includes('mechanic')), 'the raw code must not leak into user-facing text');
-  });
-
-  await test('Blockers — Case 2: wrong technician type blocks even with an exact rating, and caps the total at 19', () => {
-    const offer = makeOffer({
+      contractType: 'permanent',
       technicianType: 'avionic',
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
-    const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+    const base = { verificationStatus: 'verified' as const, ...EXACT_A320 };
+    const delTipo = makeTechnician({ ...base, technicianTypes: ['avionic'] });
+    const deOtroTipo = makeTechnician({ ...base, technicianTypes: ['painter'] });
 
-    assert.equal(result.blockers.length, 1, 'exactly one blocker — the type');
+    const a = calculateOfferTechnicianMatch(offer, delTipo, RATING_INDEX);
+    const b = calculateOfferTechnicianMatch(offer, deOtroTipo, RATING_INDEX);
+
+    assert.equal(a.total, b.total, 'el tipo no puede mover el total');
+    assert.deepEqual(a.breakdown, b.breakdown, 'ni el desglose');
+    assert.deepEqual(a.blockers, [], 'el tipo ya no descalifica');
+    assert.deepEqual(b.blockers, [], 'ni siquiera cuando no coincide');
     assert.ok(
-      result.blockers[0].includes('Avionics Technician') && result.blockers[0].includes('Mechanic'),
-      `the blocker must name both sides with catalog labels, got: ${result.blockers[0]}`,
+      !a.matches.some((m) => m.startsWith('Technician type:')),
+      'y tampoco deja línea de match: no es una cualificación confirmada',
     );
-    assert.ok(result.total <= 19, `BLOCKER_CAP must apply, got ${result.total}`);
-    // The qualification itself is untouched — a blocker caps the total, it
-    // never rewrites the breakdown into a fake "no qualification" story.
-    assert.equal(result.breakdown.habilitation, 45, 'the exact rating still scores in the breakdown');
-    assert.equal(result.level, 'exact');
-    assert.equal(result.missingRequirements.length, 0, 'a type blocker is not a missing qualification');
   });
 
-  await test('Blockers — Case 3: toda oferta nombra su tipo, así que siempre hay match o blocker', () => {
-    // Fase 6 tanda C: aquí se fijaba el caso "requiredTechnicianTypes vacío =
-    // sin restricción". Ese estado YA NO EXISTE — `offers.technician_type` es
-    // NOT NULL, una oferta siempre dice para qué puesto es. Lo que se fija
-    // ahora es que no queda ningún tercer camino: o casa (línea de match) o
-    // no casa (blocker), nunca silencio.
-    const base = { requiredHabilitations: [makeHabReq('fx-a320-cfm56')] };
-    const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
-
-    const met = calculateOfferTechnicianMatch(makeOffer({ ...base, technicianType: 'mechanic' }), technician, RATING_INDEX);
-    assert.deepEqual(met.blockers, []);
-    assert.ok(met.matches.some((m) => m.startsWith('Technician type:')), 'el tipo satisfecho se nombra');
-    assert.equal(met.label, 'Excellent match');
-
-    const unmet = calculateOfferTechnicianMatch(makeOffer({ ...base, technicianType: 'painter' }), technician, RATING_INDEX);
-    assert.equal(unmet.blockers.length, 1, 'un tipo que no casa sigue siendo blocker');
-    assert.ok(!unmet.matches.some((m) => m.startsWith('Technician type:')));
-  });
-
-  await test('Certificación — el interruptor NO mueve el score, solo la etiqueta', () => {
-    // Criterio de verificación de la tanda: "ningún score cambia respecto a
-    // hoy". El booleano se guarda y se muestra; que el scorer elija la fuente
-    // de evidencia según él es la Tanda E.
-    const base = {
-      contractType: 'permanent' as const,
-      technicianType: 'mechanic' as const,
+  // ── Fase 6 tanda E: el interruptor elige la FUENTE DE EVIDENCIA ───────
+  //
+  // El test que había aquí (tanda C) fijaba que el booleano NO movía el score.
+  // Eso era cierto hasta la E y deja de serlo aquí, a propósito: conectar el
+  // interruptor al scorer es la tanda entera.
+  await test('Certificación — solo experiencia y cero licencias: con certificación cae al cap de 39', () => {
+    // Criterio de verificación de la tanda. La experiencia declarada NO
+    // rescata a quien no puede firmar, por mucha que sea.
+    const offer = makeOffer({
+      contractType: 'permanent',
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
-    };
-    const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
+    });
+    const soloExperiencia = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['permanent'] },
+      licenses: [],
+      habilitations: [],
+      aircraftExperience: [makeAircraftExperience('fx-a320-cfm56', 15)],
+    });
 
-    const exige = calculateOfferTechnicianMatch(makeOffer({ ...base, requiresCertification: true }), technician, RATING_INDEX);
-    const noExige = calculateOfferTechnicianMatch(makeOffer({ ...base, requiresCertification: false }), technician, RATING_INDEX);
+    const result = calculateOfferTechnicianMatch(offer, soloExperiencia, RATING_INDEX);
+    assert.equal(result.breakdown.habilitation, 0, 'la experiencia no puntúa cuando hay que certificar');
+    assert.ok(result.total <= 39, `esperaba ZERO_QUALIFICATION_CAP, got ${result.total}`);
+  });
 
-    assert.equal(exige.total, noExige.total, 'el total no puede moverse');
-    assert.deepEqual(exige.breakdown, noExige.breakdown, 'ni un componente del desglose');
-    assert.deepEqual(exige.blockers, noExige.blockers);
-    assert.deepEqual(exige.matches, noExige.matches);
+  await test('Certificación — el MISMO técnico puntúa por su experiencia si la oferta no exige certificar', () => {
+    const offer = makeOffer({
+      contractType: 'permanent',
+      requiresCertification: false,
+      licenseCode: undefined,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
+    });
+    const soloExperiencia = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['permanent'] },
+      licenses: [],
+      habilitations: [],
+      aircraftExperience: [makeAircraftExperience('fx-a320-cfm56', 15)],
+    });
+
+    const result = calculateOfferTechnicianMatch(offer, soloExperiencia, RATING_INDEX);
+    assert.equal(result.level, 'exact');
+    assert.equal(result.breakdown.habilitation, 65, 'los 20 de licencia van íntegros a habilitación');
+    assert.equal(result.breakdown.license, 0, 'no hay licencia que puntuar');
+    // 95 y no 100 porque los fixtures de oferta y técnico están en ciudades
+    // distintas, así que el componente de ubicación (5) no puntúa. Lo que
+    // importa es que NADA se recorta: el total es la suma cruda.
+    const suma = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
+    assert.equal(result.total, suma, 'ningún cap se aplica');
+    assert.equal(result.total, 95);
+  });
+
+  await test('Certificación — la licencia cuenta como experiencia, nunca al revés', () => {
+    // Un B1.1 con rating de A320 y CERO experiencia declarada puntúa completo
+    // en una oferta de ayudante en A320: la habilitación ya demuestra que ha
+    // estado en ese avión. Al revés no — lo fija el test de más arriba.
+    const ayudante = makeOffer({
+      contractType: 'permanent',
+      requiresCertification: false,
+      licenseCode: undefined,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
+    });
+    const conLicenciaSinExperienciaDeclarada = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['permanent'] },
+      ...EXACT_A320,
+      aircraftExperience: [],
+    });
+
+    const result = calculateOfferTechnicianMatch(ayudante, conLicenciaSinExperienciaDeclarada, RATING_INDEX);
+    assert.equal(result.level, 'exact');
+    assert.equal(result.breakdown.habilitation, 65);
+  });
+
+  await test('Años — con habilitación Y experiencia sobre el mismo rating, manda la habilitación', () => {
+    // La ambigüedad que la tanda B dejó abierta. Gana la fuente COMPROBABLE:
+    // la habilitación está ligada a una licencia, tiene vigencia y se
+    // verifica; la experiencia es autodeclarada.
+    //
+    // El editor de perfil ya no deja crear este estado (no ofrece aeronaves
+    // donde el técnico tiene habilitación), así que esto sólo aplica a datos
+    // anteriores — pero el scorer no puede depender de que la UI lo evite.
+    const ayudante = makeOffer({
+      requiresCertification: false,
+      licenseCode: undefined,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
+    });
+    const ambosDatos = makeTechnician({
+      ...EXACT_A320, // habilitación B1.1 sobre fx-a320-cfm56, sin años
+      aircraftExperience: [makeAircraftExperience('fx-a320-cfm56', 30)],
+    });
+
+    const result = calculateOfferTechnicianMatch(ayudante, ambosDatos, RATING_INDEX);
+    assert.equal(result.level, 'exact');
+    assert.ok(
+      result.matches.some((m) => m.includes('Worked on') && !m.includes('30 years')),
+      'la línea sale de la habilitación, no de los 30 años autodeclarados',
+    );
+  });
+
+  await test('Sobrecualificado no penaliza — un B1.1 en una oferta de ayudante puntúa completo', () => {
+    const ayudante = makeOffer({
+      contractType: 'permanent',
+      requiresCertification: false,
+      licenseCode: undefined,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
+    });
+    const sobrecualificado = makeTechnician({
+      verificationStatus: 'verified',
+      availability: { immediately: true, contractTypes: ['permanent'] },
+      ...EXACT_A320,
+      aircraftExperience: [makeAircraftExperience('fx-a320-cfm56', 20)],
+    });
+    const result = calculateOfferTechnicianMatch(ayudante, sobrecualificado, RATING_INDEX);
+    const suma = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
+    assert.equal(result.total, suma, 'tener de más nunca resta: eso lo valora la empresa, no el algoritmo');
+    assert.equal(result.total, 95, 'mismo 95 que sin sobrecualificación: la experiencia extra no suma ni resta');
   });
 
   // ── Fase 6 tanda D: "basta con una" vs "hacen falta todas" ────────────
@@ -1887,36 +1998,17 @@ async function main() {
   });
 
   // ── Fase 6 tanda A: varios tipos por técnico ──────────────────────────
-  await test('Tipos múltiples — un técnico con dos tipos casa con las ofertas de AMBOS', () => {
-    const base = { requiredHabilitations: [makeHabReq('fx-a320-cfm56')] };
-    const dual = makeTechnician({
-      technicianTypes: ['avionic', 'mechanic'],
-      verificationStatus: 'verified',
-      ...EXACT_A320,
-    });
-
-    for (const wanted of ['mechanic', 'avionic'] as const) {
-      const result = calculateOfferTechnicianMatch(
-        makeOffer({ ...base, technicianType: wanted }),
-        dual,
-        RATING_INDEX,
-      );
-      assert.deepEqual(result.blockers, [], `un perfil que incluye "${wanted}" no puede quedar bloqueado`);
-      assert.ok(
-        result.matches.some((m) => m.startsWith('Technician type:')),
-        `la línea de match del tipo debe aparecer para "${wanted}"`,
-      );
-    }
-
-    // Y la otra mitad de la intersección: un tipo que NO tiene sigue
-    // bloqueando. "Varios tipos" no puede degenerar en "casa con todo".
-    const unrelated = calculateOfferTechnicianMatch(
-      makeOffer({ ...base, technicianType: 'painter' }),
-      dual,
-      RATING_INDEX,
-    );
-    assert.equal(unrelated.blockers.length, 1, 'un tipo que no tiene sigue siendo blocker');
-  });
+  //
+  // El test de la tanda A que había aquí fijaba que un perfil con dos tipos no
+  // quedaba bloqueado por ninguna de las dos ofertas, y que uno ajeno sí
+  // bloqueaba. La primera mitad la absorbe la tanda E de la forma más fuerte
+  // posible — el tipo ya no bloquea NUNCA, tenga los que tenga — y la segunda
+  // se deroga. Lo que la tanda A resolvió de verdad (un técnico con licencia
+  // de mecánico aparece en ofertas de mecánico aunque se registrara como
+  // aviónico) lo garantiza ahora el hecho de que el tipo no participe.
+  //
+  // Lo que SÍ sigue vivo del tipo —mostrar y buscar— se prueba en el filtro
+  // por intersección de technicianRepositoryV2, no aquí.
 
   await test('Tipos múltiples — el score de un perfil de UN SOLO tipo no cambia respecto a hoy', () => {
     // El criterio de verificación de la tanda, escrito como test: añadir un
@@ -1982,7 +2074,9 @@ async function main() {
   await test('Blockers — Case 7: a blocker plus zero qualification lands on the tightest ceiling (19), not the qualification one (39)', () => {
     const offer = makeOffer({
       contractType: 'permanent',
-      technicianType: 'avionic',
+      // Fase 6 tanda E: el blocker ya no puede ser el tipo de perfil. El
+      // único que queda es el de años declarados por debajo del mínimo.
+      minYearsExperience: 5,
       // `requiresAllAircraft` para que las DOS vías de cap se disparen a la
       // vez, que es lo que este test comprueba: la del blocker y la de la
       // aeronave no cumplida son independientes y gana la más restrictiva.
@@ -1990,7 +2084,7 @@ async function main() {
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({
-      technicianTypes: ['mechanic'],
+      yearsExperience: 2,
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
       licenses: [],
@@ -2018,11 +2112,10 @@ async function main() {
     // of in a wrapper: a rule added to one wrapper would apply to one
     // direction and to none of the ~12 direct call sites in app/.
     const offer = makeOffer({
-      technicianType: 'avionic',
       minYearsExperience: 5,
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
-    const technician = makeTechnician({ technicianTypes: ['mechanic'], yearsExperience: 2, ...EXACT_A320 });
+    const technician = makeTechnician({ yearsExperience: 2, ...EXACT_A320 });
 
     // Company side: one offer scored against a list of technicians.
     const companyDirection = [technician].map((t) => calculateOfferTechnicianMatch(offer, t, RATING_INDEX))[0];
@@ -2031,7 +2124,9 @@ async function main() {
 
     assert.deepEqual(companyDirection.blockers, technicianDirection.blockers);
     assert.equal(companyDirection.total, technicianDirection.total);
-    assert.equal(companyDirection.blockers.length, 2, 'both rules fire independently — wrong type AND too few declared years');
+    // Fase 6 tanda E: queda UNA sola regla de blocker (los años declarados);
+    // el tipo de perfil dejo de descalificar.
+    assert.equal(companyDirection.blockers.length, 1);
   });
 
   await test('Blockers — order: a blocked pair sinks to the bottom of the existing total-descending sort, with no special-casing', () => {
@@ -2041,18 +2136,17 @@ async function main() {
     // technician with zero qualification, whose own ceiling is 39.
     const offer = makeOffer({
       contractType: 'permanent',
-      technicianType: 'avionic',
+      minYearsExperience: 5,
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const blockedButPerfectlyQualified = makeTechnician({
       id: 'tech-blocked',
-      technicianTypes: ['mechanic'], // the offer is for avionics
+      yearsExperience: 2, // por debajo del minimo de la oferta
       verificationStatus: 'verified',
       ...EXACT_A320,
     });
     const eligibleButUnqualified = makeTechnician({
       id: 'tech-unqualified',
-      technicianTypes: ['avionic'],
       verificationStatus: 'verified',
       licenses: [],
       habilitations: [],

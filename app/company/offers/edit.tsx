@@ -136,20 +136,15 @@ export default function EditOfferScreen() {
     if (!form || next === form.requiresCertification) return;
 
     if (!next) {
-      const dropped: string[] = [];
+      // Fase 6 tanda E: apagar el interruptor sólo se lleva la LICENCIA. Las
+      // aeronaves se quedan — la oferta sigue siendo para ese avión, sólo que
+      // ya no hace falta poder firmarlo.
       if (form.licenseCode) {
-        dropped.push(`the ${form.licenseCode} licence requirement`);
-      }
-      if (form.requiredHabilitations.length > 0) {
-        dropped.push(`${form.requiredHabilitations.length} type rating requirement${form.requiredHabilitations.length !== 1 ? 's' : ''}`);
-      }
-
-      if (dropped.length > 0) {
         const confirmed = await confirmAction({
-          title: 'Drop the licence requirements?',
+          title: `Drop the ${form.licenseCode} licence requirement?`,
           message:
-            `An offer that does not need certified work cannot require a licence or a type rating, so this clears ${dropped.join(' and ')}.\n\n` +
-            'The offer stays open to technicians who have done the work without holding the licence.',
+            `An offer that does not need certified work cannot require a licence, so this clears ${form.licenseCode}.\n\n` +
+            'The aircraft stay: the role is still for that work, and it opens up to technicians who have done it without holding the licence.',
           confirmLabel: 'Drop and continue',
           destructive: true,
         });
@@ -160,7 +155,7 @@ export default function EditOfferScreen() {
     setForm((prev) => prev ? {
       ...prev,
       requiresCertification: next,
-      ...(next ? {} : { licenseCode: undefined, requiredHabilitations: [], requiresAllAircraft: false }),
+      ...(next ? {} : { licenseCode: undefined }),
     } : prev);
   }
 
@@ -287,10 +282,7 @@ export default function EditOfferScreen() {
         status,
         visible: status === 'published',
       });
-      await offerRepository.replaceRequirements(id, {
-        requiresCertification: form.requiresCertification,
-        habilitations: form.requiredHabilitations,
-      });
+      await offerRepository.replaceRequiredHabilitations(id, form.requiredHabilitations);
       router.back();
     } catch (e: any) {
       notify('Error', e?.message ?? 'Could not save offer.');
@@ -479,7 +471,10 @@ export default function EditOfferScreen() {
           />
         )}
 
-        {requiresCertification && (
+        {/* Fase 6 tanda E: las AERONAVES se piden siempre, certifique o no —
+            "ayudante para el A320" tiene que poder decir A320. Lo que
+            desaparece sin certificacion es la LICENCIA, no el avion. */}
+        {(
           <TypeRatingRequirementsEditor
             value={form.requiredHabilitations}
             onChange={(next) => setField('requiredHabilitations', next)}

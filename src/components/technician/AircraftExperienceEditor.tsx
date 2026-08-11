@@ -15,6 +15,17 @@ export interface AircraftExperienceRow {
 interface Props {
   value: AircraftExperienceRow[];
   onChange: (next: AircraftExperienceRow[]) => void;
+  /**
+   * Ratings en los que el técnico YA tiene habilitación (Fase 6 tanda E).
+   *
+   * No se ofrecen aquí: una habilitación ya demuestra experiencia en esa
+   * aeronave (regla "la licencia cuenta también como experiencia"), así que
+   * declararla otra vez no añade nada y sí crea la ambigüedad de tener DOS
+   * cifras de años para el mismo avión. Cortarlo en el editor hace que esa
+   * ambigüedad casi nunca llegue a existir; la regla de desempate del scorer
+   * queda sólo para los datos que ya la tuvieran.
+   */
+  habilitatedRatingIds: readonly string[];
   /** Resuelve labels de los ratings referenciados, activos e inactivos. Propiedad del padre, igual que en HabilitationsEditor. */
   ratingsById: AircraftRatingIndex;
   onRatingResolved: (rating: AircraftTypeRatingCatalog) => void;
@@ -38,6 +49,7 @@ interface Props {
 export function AircraftExperienceEditor({
   value,
   onChange,
+  habilitatedRatingIds,
   ratingsById,
   onRatingResolved,
   onRequestCatalog,
@@ -45,8 +57,10 @@ export function AircraftExperienceEditor({
   const [newRating, setNewRating] = useState<string | null>(null);
   const [newYears, setNewYears] = useState('');
 
+  const alreadyHabilitated = newRating !== null && habilitatedRatingIds.includes(newRating);
+
   function addExperience() {
-    if (!newRating) return;
+    if (!newRating || alreadyHabilitated) return;
     // La UNIQUE (technician_id, aircraft_type_rating_id) rechazaría el
     // duplicado en Postgres; se corta aquí para que el técnico vea que no
     // pasa nada en vez de un error al guardar, mucho después del gesto.
@@ -101,6 +115,12 @@ export function AircraftExperienceEditor({
       {alreadyDeclared ? (
         <Text style={styles.warning}>Already in your list. Remove it above to change the years.</Text>
       ) : null}
+      {alreadyHabilitated ? (
+        <Text style={styles.warning}>
+          You already hold a type rating on this aircraft, which already proves you have worked on it. Add it above,
+          under Habilitations, if you want to record the years.
+        </Text>
+      ) : null}
 
       <View style={styles.fieldGap} />
       <Text style={styles.fieldLabel}>Years on this aircraft (optional)</Text>
@@ -116,9 +136,9 @@ export function AircraftExperienceEditor({
 
       <View style={styles.fieldGap} />
       <TouchableOpacity
-        style={[styles.addButton, (!newRating || alreadyDeclared) && styles.addButtonDisabled]}
+        style={[styles.addButton, (!newRating || alreadyDeclared || alreadyHabilitated) && styles.addButtonDisabled]}
         onPress={addExperience}
-        disabled={!newRating || alreadyDeclared}
+        disabled={!newRating || alreadyDeclared || alreadyHabilitated}
         activeOpacity={0.75}
       >
         <Text style={styles.addButtonText}>Add aircraft</Text>

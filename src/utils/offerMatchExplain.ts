@@ -84,6 +84,22 @@ const QUALIFICATION_WEIGHTS = { verified: 15, habilitation: 45, license: 20, con
 // (25/25/10 → 30/30/15), así que el máximo de esta rama no cambia.
 const NO_REQUIREMENTS_WEIGHTS = { verified: 30, habilitation: 0, license: 0, contractFit: 30, location: 15 } as const;
 
+// Fase 6 tanda E — ofertas que NO exigen certificar ("ayudante para el A320,
+// sin licencia"). No hay licencia que puntuar (el CHECK de la 053 la fuerza a
+// NULL), así que sus 20 puntos van ÍNTEGROS a habilitación, no repartidos.
+//
+// Es el mismo criterio, y el mismo precedente, que cuando se retiró el
+// componente `experience`: repartir habría reforzado las señales DÉBILES
+// (perfil verificado, ubicación), que no son cualificación. Sin licencia, la
+// AERONAVE es toda la cualificación que la oferta pide, así que se lleva el
+// bloque entero — 65, exactamente el mismo que en la rama que certifica.
+//
+// Y suma 100, no 80. El motivo no es estético: la pantalla del técnico lista
+// ofertas con su porcentaje al lado, así que un techo estructural más bajo en
+// las ofertas de ayudante se leería como "encajo peor aquí" cuando lo que
+// cambia es la escala, no el encaje.
+const NO_CERTIFICATION_WEIGHTS = { verified: 15, habilitation: 65, license: 0, contractFit: 15, location: 5 } as const;
+
 export interface MatchScoreWeights {
   verified: number;
   habilitation: number;
@@ -105,9 +121,18 @@ export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWe
   // fuera NOT NULL, TODA oferta tendría licencia, NO_REQUIREMENTS_WEIGHTS no
   // se aplicaría nunca y las ofertas sin certificar saltarían de la escala de
   // 75 a la de 100 — cambiar el scorer por la puerta de atrás.
-  const hasQualificationRequirements =
-    offer.requiredHabilitations.length > 0 || offer.licenseCode != null;
-  return hasQualificationRequirements ? QUALIFICATION_WEIGHTS : NO_REQUIREMENTS_WEIGHTS;
+  //
+  // Fase 6 tanda E: tres ramas, no dos. Una oferta que no certifica PERO
+  // nombra aeronaves sí tiene cualificación que pedir — sólo que no de papel.
+  if (!offerAsksForQualification(offer)) return NO_REQUIREMENTS_WEIGHTS;
+  return offer.requiresCertification ? QUALIFICATION_WEIGHTS : NO_CERTIFICATION_WEIGHTS;
+}
+
+// ¿La oferta pide ALGO comprobable sobre la cualificación? Una licencia, una
+// aeronave, o las dos. Si no pide nada, no hay nada que confirmar ni que
+// penalizar y se cae en NO_REQUIREMENTS_WEIGHTS.
+function offerAsksForQualification(offer: Pick<OfferWithRequirements, 'requiredHabilitations' | 'licenseCode'>): boolean {
+  return offer.requiredHabilitations.length > 0 || offer.licenseCode != null;
 }
 
 // Within the habilitation budget: T1 (exact) gets the full amount; T2
@@ -176,7 +201,18 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 //                     one, and low enough that a blocked pair sinks to the
 //                     bottom of any total-descending sort on its own — no
 //                     special-casing in the ordering code (matchingV2.ts).
-const BROAD_ONLY_CAP = 79;
+// Fase 6 tanda E: AQUÍ VIVÍA `BROAD_ONLY_CAP = 79`, y se retira porque era
+// INALCANZABLE — no por un cambio de criterio. El máximo bruto de la rama que
+// lo alimentaba es 15 (verified) + round(45 × 0,29) = 13 + 20 (license) + 15
+// (contractFit) + 5 (location) = 68, así que su `Math.min(total, 79)` nunca
+// recortó nada en ninguna entrada posible. Retirarlo no mueve ni un score.
+//
+// La frase que se le atribuía —"sabes de la aeronave pero no lo has demostrado
+// con papel"— no era suya: describe el tier `related_family` (0,57), que sí
+// tiene esa semántica y sigue en pie.
+//
+// Si algún día sube `BROAD_TIER_FRACTIONS.legacy_category_only`, revisa si
+// hace falta un techo para esa rama; hoy no lo hay porque no puede pasar de 68.
 const INCOMPLETE_AIRCRAFT_SET_CAP = 59;
 const ZERO_QUALIFICATION_CAP = 39;
 const BLOCKER_CAP = 19;
@@ -189,10 +225,9 @@ const BLOCKER_CAP = 19;
 // combination in practice (see scripts/testMatching.ts).
 export function applyScoreCeilings(
   total: number,
-  flags: { isBroadOnlyMatch: boolean; hasIncompleteAircraftSet: boolean; isZeroQualification: boolean; hasBlocker: boolean },
+  flags: { hasIncompleteAircraftSet: boolean; isZeroQualification: boolean; hasBlocker: boolean },
 ): number {
   let capped = total;
-  if (flags.isBroadOnlyMatch) capped = Math.min(capped, BROAD_ONLY_CAP);
   if (flags.hasIncompleteAircraftSet) capped = Math.min(capped, INCOMPLETE_AIRCRAFT_SET_CAP);
   if (flags.isZeroQualification) capped = Math.min(capped, ZERO_QUALIFICATION_CAP);
   if (flags.hasBlocker) capped = Math.min(capped, BLOCKER_CAP);
@@ -218,11 +253,33 @@ interface RequirementOutcome {
   clarificationText?: string;
   vigenciaDegraded?: boolean;
   vigenciaNotice?: VigenciaNotice;
+  // Fase 6 tanda E: la cualificación EXISTE pero está caducada, en una oferta
+  // que exige certificar. Se distingue de "no la tiene" porque el mensaje es
+  // distinto y accionable — renovar, no formarse.
+  expiredText?: string;
 }
 
 function toYearMonth(iso: string): string {
   return iso.slice(0, 7); // 'YYYY-MM-DD' -> 'YYYY-MM'
 }
+
+/**
+ * Fase 6 tanda E — la vigencia deja de ser un solo booleano.
+ *
+ * `expired` (licencia o rating con fecha pasada) y `not_current` (el técnico
+ * ha marcado a mano que hace tiempo que no lo toca) degradaban IGUAL hasta
+ * ahora, y no son lo mismo:
+ *
+ *  - Una caducidad es un hecho REGISTRAL con fecha. En una oferta que exige
+ *    certificar, no autoriza a firmar: cuenta como no tener la cualificación.
+ *  - `isCurrent = false` es una AUTODECLARACIÓN en un campo opcional.
+ *    Excluir por ella castigaría al técnico por ser honesto, que es
+ *    justamente lo que el resto del modelo evita.
+ *
+ * Sin certificación las tres siguen degradando sin excluir: para trabajar de
+ * ayudante la vigencia del papel no decide nada.
+ */
+type VigenciaOutcome = { kind: 'ok' | 'expired' | 'not_current'; notice?: VigenciaNotice };
 
 // Fase 3 — vigencia. Checked against whichever row actually produced the
 // match (T1/T2), plus the technician's own TechnicianLicense row for the
@@ -246,11 +303,11 @@ function evaluateVigencia(
   licenseCode: string,
   ratingLabel: string,
   today: string,
-): { degraded: boolean; notice?: VigenciaNotice } {
+): VigenciaOutcome {
   const licenseExpired = Boolean(license?.expiresAt && license.expiresAt < today);
   if (licenseExpired) {
     return {
-      degraded: true,
+      kind: 'expired',
       notice: {
         label: 'Expired',
         detail: `License ${licenseCode} expired ${toYearMonth(license!.expiresAt!)} — all its ratings affected, including ${ratingLabel}.`,
@@ -261,19 +318,19 @@ function evaluateVigencia(
   const rowExpired = Boolean(row.expiresAt && row.expiresAt < today);
   if (rowExpired) {
     return {
-      degraded: true,
+      kind: 'expired',
       notice: { label: 'Expired', detail: `Rating expired ${toYearMonth(row.expiresAt!)}: ${ratingLabel}.` },
     };
   }
 
   if (row.isCurrent === false) {
     return {
-      degraded: true,
+      kind: 'not_current',
       notice: { label: 'Not current', detail: `Rating marked as not current: ${ratingLabel}.` },
     };
   }
 
-  return { degraded: false };
+  return { kind: 'ok' };
 }
 
 // Fase 6 tanda D: la licencia ya no viene en `req` — es de la OFERTA, y se
@@ -306,10 +363,18 @@ function evaluateHabilitationRequirement(
   const exactRow = sameLicenseRows.find((h) => h.aircraftTypeRatingId === req.aircraftTypeRatingId);
   if (exactRow) {
     const vigencia = evaluateVigencia(exactRow, license, offerLicenseCode, reqLabel, today);
+    // Fase 6 tanda E: una CADUCIDAD (licencia o rating) en una oferta que
+    // exige certificar no es una degradación, es una descalificación —
+    // legalmente no puede firmar ese trabajo. Cae a 'not_met', que arrastra
+    // la habilitación a 0 y con ella el ZERO_QUALIFICATION_CAP (39).
+    // `isCurrent = false` sigue degradando y nunca excluye.
+    if (vigencia.kind === 'expired') {
+      return { tier: 'not_met', expiredText: `${offerLicenseCode} + ${reqLabel}`, vigenciaNotice: vigencia.notice };
+    }
     return {
       tier: 'exact',
       matchText: `${offerLicenseCode} + ${reqLabel}`,
-      vigenciaDegraded: vigencia.degraded,
+      vigenciaDegraded: vigencia.kind === 'not_current',
       vigenciaNotice: vigencia.notice,
     };
   }
@@ -324,10 +389,13 @@ function evaluateHabilitationRequirement(
   if (relatedRow) {
     const heldLabel = getAircraftTypeRatingLabel(relatedRow.aircraftTypeRatingId, ratingIndex);
     const vigencia = evaluateVigencia(relatedRow, license, offerLicenseCode, heldLabel, today);
+    if (vigencia.kind === 'expired') {
+      return { tier: 'not_met', expiredText: `${offerLicenseCode} + ${heldLabel}`, vigenciaNotice: vigencia.notice };
+    }
     return {
       tier: 'related_family',
       clarificationText: `Same family, different engine: ${reqLabel} vs ${heldLabel}.`,
-      vigenciaDegraded: vigencia.degraded,
+      vigenciaDegraded: vigencia.kind === 'not_current',
       vigenciaNotice: vigencia.notice,
     };
   }
@@ -339,6 +407,10 @@ function evaluateHabilitationRequirement(
   // drops. Nothing replaces it: a habilitation row either resolves to a
   // catalog rating (T1/T2) or contributes no aircraft evidence at all.
   //
+  // Fase 6 tanda E: la rama SIN certificación no pasa por aquí — tiene su
+  // propio evaluador (evaluateAircraftKnowledgeRequirement), porque su
+  // pregunta es otra: no "¿puede firmar esto?" sino "¿ha trabajado en esto?".
+  //
   // NOTE for anyone reading the original Fase 5 plan: its step 3 said "T3
   // stays, only for needsReview habilitations, labeled". That step is VOID
   // — a needsReview row had a NULL rating id AND (after 029) no code, so
@@ -346,6 +418,78 @@ function evaluateHabilitationRequirement(
   // goes with it. See docs/MISSION_PART66.md.
 
   // T3 — not_met (was T4 before the old T3 was removed above).
+  return { tier: 'not_met' };
+}
+
+/**
+ * Fase 6 tanda E — el evaluador de las ofertas que NO exigen certificar.
+ *
+ * Pregunta distinta, evidencia distinta: aquí no importa quién puede FIRMAR el
+ * trabajo sino quién SABE HACERLO, así que cuentan las dos tablas.
+ *
+ * ── La regla "la licencia cuenta también como experiencia, nunca al revés" ──
+ * Se aplica como UNIÓN DE CONJUNTOS sobre `aircraftTypeRatingId`, calculada
+ * aquí en lectura y NUNCA persistida: las dos tablas apuntan al mismo catálogo
+ * de ratings, así que una habilitación en el A320 ya demuestra experiencia en
+ * el A320 sin copiar ninguna fila. Al revés no vale, y por eso este evaluador
+ * no lo usa la rama que certifica.
+ *
+ * La licencia de la habilitación NO se mira: para trabajar de ayudante en un
+ * A320 da igual bajo qué categoría lo tocaste. Eso no rompe la invariante de
+ * misma fila — la invariante impide combinar "tiene B1.1" con "tiene A320"
+ * para concluir "tiene B1.1 EN A320", una afirmación sobre certificación. Aquí
+ * no se afirma nada sobre certificación: sólo que estuvo en ese avión.
+ */
+function evaluateAircraftKnowledgeRequirement(
+  req: Pick<OfferRequiredHabilitation, 'aircraftTypeRatingId'>,
+  technician: TechnicianWithRelations,
+  ratingIndex: AircraftRatingIndex,
+  today: string,
+): RequirementOutcome {
+  const reqLabel = getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex);
+
+  // T1 — la aeronave pedida está en la unión. Se busca PRIMERO en las
+  // habilitaciones para poder arrastrar su vigencia (la experiencia declarada
+  // no tiene fechas que degradar).
+  const exactHab = technician.habilitations.find((h) => h.aircraftTypeRatingId === req.aircraftTypeRatingId);
+  if (exactHab) {
+    const license = technician.licenses.find((l) => l.licenseCode === exactHab.licenseCode);
+    const vigencia = evaluateVigencia(exactHab, license, exactHab.licenseCode, reqLabel, today);
+    // Sin certificación una caducidad NO excluye: degrada, como siempre. Para
+    // trabajar de ayudante el papel vencido no borra la experiencia.
+    return {
+      tier: 'exact',
+      matchText: `Worked on ${reqLabel}`,
+      vigenciaDegraded: vigencia.kind !== 'ok',
+      vigenciaNotice: vigencia.notice,
+    };
+  }
+
+  const exactExperience = technician.aircraftExperience.find((e) => e.aircraftTypeRatingId === req.aircraftTypeRatingId);
+  if (exactExperience) {
+    return {
+      tier: 'exact',
+      matchText:
+        exactExperience.years != null
+          ? `Worked on ${reqLabel} — ${exactExperience.years} years declared`
+          : `Worked on ${reqLabel}`,
+    };
+  }
+
+  // T2 — misma familia, otro motor. Misma fracción (0,57) y mismo significado
+  // que en la rama que certifica: evidencia real, nunca igual a la exacta.
+  const relatedIds = [
+    ...technician.habilitations.map((h) => h.aircraftTypeRatingId),
+    ...technician.aircraftExperience.map((e) => e.aircraftTypeRatingId),
+  ].filter((id): id is string => Boolean(id));
+  const relatedId = relatedIds.find((id) => areRatingsRelated(id, req.aircraftTypeRatingId, ratingIndex));
+  if (relatedId) {
+    return {
+      tier: 'related_family',
+      clarificationText: `Same family, different engine: ${reqLabel} vs ${getAircraftTypeRatingLabel(relatedId, ratingIndex)}.`,
+    };
+  }
+
   return { tier: 'not_met' };
 }
 
@@ -428,8 +572,7 @@ export function calculateOfferTechnicianMatch(
   ratingIndex: AircraftRatingIndex,
   now: Date = new Date(),
 ): MatchScore {
-  const hasQualificationRequirements =
-    offer.requiredHabilitations.length > 0 || offer.licenseCode != null;
+  const hasQualificationRequirements = offerAsksForQualification(offer);
   const weights = getMatchScoreWeights(offer);
   const today = localDateToIso(now);
 
@@ -445,27 +588,30 @@ export function calculateOfferTechnicianMatch(
   const missingRequirements: string[] = [];
   const blockers: string[] = [];
   let level: MatchLevel = 'not_met';
-  // True only when the qualification evidence came exclusively from the
-  // approximate broad filter — never from a confirmed exact rating. Drives
-  // BROAD_ONLY_CAP (see applyScoreCeilings).
-  let isBroadOnlyMatch = false;
 
   if (technician.verificationStatus === 'verified') {
     verified = weights.verified;
     matches.push('Verified profile');
   }
 
-  // Fase 6 tanda D: la licencia de la oferta. Sólo se entra en la rama exacta
-  // si la oferta nombra aeronaves Y licencia — sin licencia no hay con qué
-  // cruzarlas, y el CHECK de la 053 impide esa combinación en la base (una
-  // oferta sin certificar no tiene licencia y por tanto tampoco aeronaves).
   const offerLicenseCode = offer.licenseCode;
 
-  if (offer.requiredHabilitations.length > 0 && offerLicenseCode) {
-    // Exact aircraft requirements exist — every one is evaluated against the
-    // technician's own habilitation rows for THE OFFER'S license, never by
-    // combining an independent license check with an independent aircraft
-    // check.
+  if (offer.requiredHabilitations.length > 0) {
+    // Fase 6 tanda E — LA FUENTE DE EVIDENCIA LA ELIGE LA OFERTA.
+    //
+    //   requiresCertification = true  -> sólo technician_habilitations, y sólo
+    //     las de LA licencia de la oferta. La experiencia declarada no puntúa
+    //     por mucha que sea: es un requisito legal, no una preferencia. Quien
+    //     no puede firmar no sirve para el puesto, sepa lo que sepa.
+    //
+    //   requiresCertification = false -> habilitaciones Y experiencia
+    //     declarada, en unión. La pregunta es si sabe hacer el trabajo.
+    //
+    // Es el interruptor que la tanda C dejó montado sin conectar.
+    const evaluate = offer.requiresCertification && offerLicenseCode
+      ? (req: OfferRequiredHabilitation) => evaluateHabilitationRequirement(req, offerLicenseCode, technician, ratingIndex, today)
+      : (req: OfferRequiredHabilitation) => evaluateAircraftKnowledgeRequirement(req, technician, ratingIndex, today);
+
     //
     // Evaluated once up front (not inline in the loop below) so the
     // vigencia degradation can be scoped correctly: only the row(s) that
@@ -473,10 +619,7 @@ export function calculateOfferTechnicianMatch(
     // score, even though every degraded row's notice is still surfaced —
     // same "always show, only the best one scores" pattern T2
     // clarifications already follow.
-    const evaluations = offer.requiredHabilitations.map((req) => ({
-      req,
-      outcome: evaluateHabilitationRequirement(req, offerLicenseCode, technician, ratingIndex, today),
-    }));
+    const evaluations = offer.requiredHabilitations.map((req) => ({ req, outcome: evaluate(req) }));
 
     let bestTier: HabilitationTier = 'not_met';
     for (const { outcome } of evaluations) {
@@ -497,7 +640,20 @@ export function calculateOfferTechnicianMatch(
       }
       if (outcome.vigenciaNotice) vigenciaNotices.push(outcome.vigenciaNotice);
 
-      const aircraftLabel = `${offerLicenseCode} + ${getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}`;
+      // La etiqueta lleva la licencia SÓLO cuando la oferta la exige: en una
+      // oferta de ayudante, "B1.1 + A320" prometería una certificación que
+      // nadie ha pedido ni comprobado.
+      const ratingLabel = getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex);
+      const aircraftLabel = offer.requiresCertification && offerLicenseCode
+        ? `${offerLicenseCode} + ${ratingLabel}`
+        : ratingLabel;
+
+      // Fase 6 tanda E: una cualificación CADUCADA en oferta que certifica
+      // llega aquí como 'not_met' con su propio texto. Se nombra siempre —
+      // aunque la oferta no exija todas las aeronaves — porque no es "te
+      // falta esto", es "lo tienes pero vencido", y eso es accionable.
+      if (outcome.expiredText) missingRequirements.push(`${outcome.expiredText} — expired`);
+
       if (outcome.tier !== 'exact') {
         // Cualquier cosa por debajo de T1 significa que esta aeronave no
         // está cumplida exactamente. Una coincidencia degradada por vigencia
@@ -517,9 +673,15 @@ export function calculateOfferTechnicianMatch(
     // Con una sola licencia por oferta, "¿tiene la licencia?" es UNA pregunta,
     // no una por fila: antes era `licenseHeldForAll`, que recorría requisitos
     // que en la práctica repetían siempre el mismo código.
+    //
+    // Fase 6 tanda E: en una oferta que no certifica, `weights.license` es 0
+    // (NO_CERTIFICATION_WEIGHTS), así que este cálculo no puede sumar nada
+    // aunque el técnico tenga licencias. No hace falta condicionarlo: los 20
+    // puntos ya están en habilitación.
     const licenseHeld =
-      technician.licenses.some((l) => l.licenseCode === offerLicenseCode) ||
-      technician.habilitations.some((h) => h.licenseCode === offerLicenseCode);
+      offerLicenseCode != null &&
+      (technician.licenses.some((l) => l.licenseCode === offerLicenseCode) ||
+        technician.habilitations.some((h) => h.licenseCode === offerLicenseCode));
 
     // `everyAircraftExact` sólo degrada el nivel cuando la oferta EXIGE todas
     // las aeronaves. Con "basta con una", cubrir una de tres es un match
@@ -538,14 +700,11 @@ export function calculateOfferTechnicianMatch(
     const broad = evaluateLicenseCategoryMatch(offer, technician);
     if (broad.tier !== 'not_met') {
       level = 'legacy';
-      isBroadOnlyMatch = true;
       if (broad.matchText) matches.push(broad.matchText);
       if (broad.clarificationText) clarifications.push(broad.clarificationText);
       // Never full/exact credit (Fase 5.3 fix) — holding the category is
       // real evidence but never a confirmed exact rating, so it scores at
-      // 0.29 (BROAD_TIER_FRACTIONS.legacy_category_only). See
-      // applyScoreCeilings() for the label ceiling this also imposes
-      // (never "Excellent").
+      // 0.29 (BROAD_TIER_FRACTIONS.legacy_category_only).
       habilitation = Math.round(weights.habilitation * BROAD_TIER_FRACTIONS[broad.tier]);
       license = weights.license;
     } else {
@@ -614,37 +773,26 @@ export function calculateOfferTechnicianMatch(
   // Neither rule touches breakdown — a blocker caps the total (BLOCKER_CAP,
   // see applyScoreCeilings), it never awards or subtracts component points.
 
-  // Technician type. The list is an OR: the offer accepts ANY of the types
-  // it names. Empty means the offer does not restrict the type at all, so
-  // there is nothing to evaluate — never a blocker, and no match line
-  // either (claiming a match for a requirement the offer never stated would
-  // be noise).
+  // ── El tipo de perfil YA NO PUNTÚA NI FILTRA (Fase 6 tanda E) ────────
   //
-  // Fase 6 tanda A (2026-08-10): un técnico lleva VARIOS tipos, así que la
-  // comprobación pasa de igualdad-contra-uno a INTERSECCIÓN NO VACÍA. Un
-  // "aviónico + mecánico" casa con una oferta de mecánicos, que es la razón
-  // de ser de la tanda. Pesos, caps y el resto del scorer, sin tocar: para
-  // un perfil de un solo tipo el resultado es idéntico al de antes.
+  // Aquí vivía un blocker: el tipo de la oferta contra los del técnico. Se
+  // retira ENTERO — ni suma, ni resta, ni descalifica, y tampoco deja línea
+  // de match.
   //
-  // Que el tipo deje de puntuar y de bloquear del todo es la Tanda E.
+  // El motivo es el de toda la fase: la licencia y la experiencia ya dicen
+  // todo lo que importa sobre si alguien sirve para el puesto. Si además el
+  // tipo puntúa o bloquea, hay dos cosas midiendo lo mismo — y la peor de las
+  // dos, porque es la etiqueta que el técnico eligió al registrarse, no lo que
+  // ha demostrado. Ese era exactamente el portero que la tanda A destituyó del
+  // perfil y la C del lado de la oferta.
   //
-  // Fase 6 tanda C (2026-08-10): la oferta declara UN SOLO tipo
-  // (`offers.technician_type`), así que la comprobación pasa de "intersección
-  // con el array de la oferta" a "¿está el tipo de la oferta entre los del
-  // técnico?". Misma semántica para todo perfil que antes casaba, sin tocar
-  // pesos ni caps: la oferta seguía siendo un OR y ahora es un OR de uno.
+  // Sigue sirviendo para MOSTRAR (las pantallas lo pintan) y para BUSCAR (el
+  // filtro por intersección de technicianRepositoryV2), que es donde una
+  // etiqueta declarada sí vale: para que una empresa encuentre candidatos,
+  // no para juzgarlos.
   //
-  // Ya no hay caso "lista vacía = sin restricción": la columna es NOT NULL,
-  // así que toda oferta nombra su tipo. El técnico sí puede llevar varios
-  // (tanda A) y basta con que uno encaje.
-  if (technician.technicianTypes.includes(offer.technicianType)) {
-    matches.push(`Technician type: ${technicianTypeLabel(offer.technicianType)}`);
-  } else {
-    const profileIs = technician.technicianTypes.map(technicianTypeLabel).join(', ');
-    blockers.push(
-      `The offer is for ${technicianTypeLabel(offer.technicianType)}; this profile is ${profileIs || 'of no declared type'}.`,
-    );
-  }
+  // Y no se le deja "aunque sea un poco" de peso a propósito: un peso pequeño
+  // no evita el doble conteo, sólo lo hace más difícil de detectar.
 
   // Minimum declared experience. `yearsExperience` absent (undefined/NULL)
   // is NOT a blocker — deliberate product rule, the same one the server-side
@@ -667,7 +815,6 @@ export function calculateOfferTechnicianMatch(
   // and the ladder documented above it. Most restrictive always wins,
   // however many apply at once.
   const total = applyScoreCeilings(rawTotal, {
-    isBroadOnlyMatch,
     hasIncompleteAircraftSet: missingRequirements.length > 0,
     isZeroQualification: hasQualificationRequirements && habilitation === 0,
     hasBlocker: blockers.length > 0,

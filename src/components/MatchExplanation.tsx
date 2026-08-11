@@ -103,7 +103,7 @@ export function MatchExplanation({
             ? 'Score capped: this profile does not meet a hard requirement of the offer (see above).'
             : score.missingRequirements.length > 0
               ? 'Score capped: this offer states a requirement this profile does not meet (see below).'
-              : 'Score capped: the offer requires a qualification this profile does not have.'}
+              : 'Score capped: this offer requires certified work and the profile does not hold the licence for it.'}
         </Text>
       )}
 

@@ -116,9 +116,10 @@ export default function NewOfferScreen() {
     setForm((prev) => ({
       ...prev,
       requiresCertification: next,
-      // Sin certificación no hay eje Part-66 que pedir. Encenderla no
-      // devuelve nada: lo que se quitó, se quitó.
-      ...(next ? {} : { licenseCode: undefined, requiredHabilitations: [], requiresAllAircraft: false }),
+      // Fase 6 tanda E: apagar el interruptor se lleva la LICENCIA y nada
+      // mas. Las aeronaves se quedan: "ayudante para el A320" sigue siendo
+      // una oferta para el A320. Encenderla no devuelve la licencia.
+      ...(next ? {} : { licenseCode: undefined }),
     }));
   }
 
@@ -367,7 +368,10 @@ export default function NewOfferScreen() {
           />
         )}
 
-        {requiresCertification && (
+        {/* Fase 6 tanda E: las AERONAVES se piden siempre, certifique o no —
+            "ayudante para el A320" tiene que poder decir A320. Lo que
+            desaparece sin certificacion es la LICENCIA, no el avion. */}
+        {(
           <TypeRatingRequirementsEditor
             value={form.requiredHabilitations}
             onChange={(next) => set('requiredHabilitations', next)}

@@ -1185,6 +1185,7 @@ export default function TechnicianProfileScreen() {
           <AircraftExperienceEditor
             value={aircraftExperience}
             onChange={onChangeAircraftExperience}
+            habilitatedRatingIds={habilitations.map((h) => h.aircraftTypeRatingId)}
             ratingsById={ratingsById}
             onRatingResolved={(r) => setRatingsById((prev) => new Map(prev).set(r.id, r))}
             onRequestCatalog={() => setRequestPanelOpen((v) => !v)}
