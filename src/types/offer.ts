@@ -15,15 +15,27 @@ export type OfferProductType = Exclude<
   'Gas Airship'
 >;
 
-// An exact category+rating requirement row (offer_required_habilitations).
-// Unlike requiredLicenses (a flat set of categories), each row here pairs a
-// single licenseCode with a single aircraftTypeRatingId — the offer-side
-// equivalent of technician_habilitations.
+/**
+ * UNA AERONAVE que la oferta pide (fila de `offer_required_habilitations`).
+ *
+ * Fase 6 tanda D: perdió `licenseCode` y `requirementLevel`.
+ *  - La licencia es de la OFERTA (`Offer.licenseCode`), no de cada fila:
+ *    repetirla por fila permitía pedir B1.3 y B2 a la vez, que son dos
+ *    profesiones y por tanto dos ofertas.
+ *  - `requirementLevel` (mandatory/preferred) se evaluaba por fila y nadie
+ *    entendía cómo se combinaban varias — el scorer se quedaba con la mejor,
+ *    así que "tres obligatorias" significaba en la práctica "una cualquiera".
+ *    Lo sustituye `Offer.requiresAllAircraft`, una decisión por oferta.
+ *
+ * ⚠ La invariante de MISMA FILA de CLAUDE.md sigue viva y NO se ha relajado:
+ * es una regla sobre el TÉCNICO (`technician_habilitations`, cuyo
+ * `licenseCode` sigue siendo NOT NULL). Aquí desaparece la ambigüedad que la
+ * hacía necesaria — con una sola licencia por oferta no hay dos entre las
+ * que confundirse al cruzarla con cada aeronave.
+ */
 export interface OfferRequiredHabilitation {
   offerId: string;
-  licenseCode: LicenseCode;
   aircraftTypeRatingId: string;
-  requirementLevel: RequirementLevel;
   notes?: string;
   createdAt: string;
 }
@@ -71,6 +83,27 @@ export interface Offer {
    * experiencia declarada— es la Tanda E.
    */
   requiresCertification: boolean;
+  /**
+   * UNA sola licencia por oferta (Fase 6 tanda D, migración 053).
+   *
+   * `undefined` EXACTAMENTE cuando `requiresCertification` es false — una
+   * oferta que no exige certificar no puede exigir licencia (invariante de
+   * la tanda C). No es opcional en el sentido de "puedes no rellenarlo": la
+   * base lo ata con un CHECK en las dos direcciones.
+   *
+   * Antes eran `requiredLicenses: LicenseCode[]` más una `licenseCode` por
+   * cada fila de requisito, que permitían pedir B1.3 y B2 a la vez.
+   */
+  licenseCode?: LicenseCode;
+  /**
+   * ¿Basta con UNA de las aeronaves listadas, o hacen falta TODAS?
+   *
+   * `false` por defecto — "basta con una" — porque es la respuesta esperada
+   * en la mayoría de casos y porque coincide con lo que el scorer ya hacía
+   * (se quedaba con la mejor coincidencia). `true` es lo que hereda el cap
+   * que antes disparaba una fila `mandatory` incumplida.
+   */
+  requiresAllAircraft: boolean;
   locationCityId: string;
   // Controlled snapshot copied from the canonical location catalog at create/update time.
   locationCountry: string;
@@ -88,11 +121,16 @@ export interface OfferWithRequirements extends Offer {
   // Fase 6 tanda C: aquí vivía `requiredTechnicianTypes: TechnicianTypeCode[]`.
   // Ahora es `Offer.technicianType`, un valor único y una columna de `offers`.
   // La tabla puente `offer_required_technician_types` se retira en la 052.
-  requiredLicenses: LicenseCode[];
+  //
+  // Fase 6 tanda D: y aquí vivía `requiredLicenses: LicenseCode[]`. Ahora es
+  // `Offer.licenseCode`, una sola y también columna de `offers`.
+  //
   // Fase 5 (2026-08-04): requiredAircraftTypes — the approximate by-family
   // requirement — was retired with offer_required_aircraft_types. Aircraft is
-  // now only ever expressed exactly, as a license+rating pair below.
-  // Optional exact category+rating requirements. Empty for offers that only
-  // require a license category (or nothing at all).
+  // now only ever expressed exactly.
+  //
+  // Lista de AERONAVES, a secas: la licencia con la que se cruzan es la de la
+  // oferta. Vacía para una oferta que sólo exige la categoría de licencia (o
+  // que no exige nada).
   requiredHabilitations: OfferRequiredHabilitation[];
 }

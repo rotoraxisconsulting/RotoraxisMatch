@@ -227,7 +227,10 @@ function OfferCard({
     // aquí se revisa si la oferta es coherente, y "exige licencia" es tan
     // revisable como "no la exige".
     offer.requiresCertification ? 'Licence required' : 'No licence needed',
-    ...offer.requiredLicenses,
+    ...(offer.licenseCode ? [offer.licenseCode] : []),
+    // Fase 6 tanda D: si la oferta exige TODAS las aeronaves, el moderador
+    // tiene que verlo — es lo que separa "pido tres" de "me vale una".
+    ...(offer.requiresAllAircraft ? ['All listed aircraft'] : []),
     `${offer.minYearsExperience}+ years`,
   ];
 

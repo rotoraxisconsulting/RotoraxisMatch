@@ -12,11 +12,13 @@
 // Business principle (see CLAUDE.md "Backend / data model notes"): a
 // technician who holds exactly what an offer requires must score clearly
 // above one who does not, regardless of how good the rest of their profile
-// looks — a missing mandatory qualification is a legal blocker, not a minor
+// looks — a missing required qualification is a legal blocker, not a minor
 // preference gap. Three mechanisms enforce this, applied after the raw
 // breakdown is summed:
-//   - an unmet MANDATORY exact-habilitation requirement caps the total at
-//     MANDATORY_UNMET_CAP (stays in the "Partial" label range at most);
+//   - an offer that requires ALL its listed aircraft (requiresAllAircraft)
+//     with any of them unmet at T1 caps the total at
+//     INCOMPLETE_AIRCRAFT_SET_CAP (stays in the "Partial" label range at
+//     most);
 //   - a qualification-requiring offer where the technician's habilitation
 //     score is zero caps the total further, at ZERO_QUALIFICATION_CAP
 //     (stays "Weak" — verified/availability/location alone can
@@ -34,6 +36,7 @@
 // catalog request, never a real catalog row) simply resolves to no match,
 // never a crash.
 import { Offer, OfferRequiredHabilitation, OfferWithRequirements } from '../types/offer';
+import { LicenseCode } from '../types/catalog';
 import { TechnicianHabilitation, TechnicianLicense, TechnicianWithRelations } from '../types/technician';
 import {
   MatchScore,
@@ -96,8 +99,14 @@ export interface MatchScoreWeights {
 // hardcoded maximums silently drift out of sync whenever these weights
 // change here.
 export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWeights {
+  // Fase 6 tanda D: `licenseCode != null` sustituye a
+  // `requiredLicenses.length > 0`. Es la razón por la que la columna quedó
+  // NULLABLE con un CHECK atado a `requiresCertification` (migración 053): si
+  // fuera NOT NULL, TODA oferta tendría licencia, NO_REQUIREMENTS_WEIGHTS no
+  // se aplicaría nunca y las ofertas sin certificar saltarían de la escala de
+  // 75 a la de 100 — cambiar el scorer por la puerta de atrás.
   const hasQualificationRequirements =
-    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0;
+    offer.requiredHabilitations.length > 0 || offer.licenseCode != null;
   return hasQualificationRequirements ? QUALIFICATION_WEIGHTS : NO_REQUIREMENTS_WEIGHTS;
 }
 
@@ -129,7 +138,7 @@ const BROAD_TIER_FRACTIONS = { legacy_category_only: 0.29 } as const;
 // already applies, whenever the row that produced the winning match is
 // expired or explicitly marked not current. Deliberately small — holding an
 // expired-but-real qualification is not the same as not holding it (T1
-// stays T1, mandatoryMissing is never triggered by this alone); it is a
+// stays T1, missingRequirements is never triggered by this alone); it is a
 // paperwork/renewal flag, not a disqualification.
 const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 
@@ -144,8 +153,14 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 //                     approximate broad license/aircraft filter
 //                     (evaluateLegacyBroadMatch), never a confirmed exact
 //                     rating — can never read as "Excellent" (>=80).
-//   MANDATORY_UNMET_CAP — an exact MANDATORY habilitation requirement was
-//                     not met at T1.
+//   INCOMPLETE_AIRCRAFT_SET_CAP — la oferta declaró que hacen falta TODAS
+//                     las aeronaves listadas (requiresAllAircraft) y alguna
+//                     no se cumple en T1.
+//                     Fase 6 tanda D: era MANDATORY_UNMET_CAP, disparado por
+//                     una fila marcada `mandatory`. Mismo valor y misma
+//                     posición en la escalera — lo único que cambia es de
+//                     dónde sale el flag: de una etiqueta por fila que nadie
+//                     entendía, a una decisión declarada de la oferta.
 //   ZERO_QUALIFICATION_CAP — the offer asks for real qualification (exact
 //                     or broad) and the technician's habilitation score
 //                     came out to zero — stricter than the two above,
@@ -162,7 +177,7 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 //                     bottom of any total-descending sort on its own — no
 //                     special-casing in the ordering code (matchingV2.ts).
 const BROAD_ONLY_CAP = 79;
-const MANDATORY_UNMET_CAP = 59;
+const INCOMPLETE_AIRCRAFT_SET_CAP = 59;
 const ZERO_QUALIFICATION_CAP = 39;
 const BLOCKER_CAP = 19;
 
@@ -174,11 +189,11 @@ const BLOCKER_CAP = 19;
 // combination in practice (see scripts/testMatching.ts).
 export function applyScoreCeilings(
   total: number,
-  flags: { isBroadOnlyMatch: boolean; hasMandatoryUnmet: boolean; isZeroQualification: boolean; hasBlocker: boolean },
+  flags: { isBroadOnlyMatch: boolean; hasIncompleteAircraftSet: boolean; isZeroQualification: boolean; hasBlocker: boolean },
 ): number {
   let capped = total;
   if (flags.isBroadOnlyMatch) capped = Math.min(capped, BROAD_ONLY_CAP);
-  if (flags.hasMandatoryUnmet) capped = Math.min(capped, MANDATORY_UNMET_CAP);
+  if (flags.hasIncompleteAircraftSet) capped = Math.min(capped, INCOMPLETE_AIRCRAFT_SET_CAP);
   if (flags.isZeroQualification) capped = Math.min(capped, ZERO_QUALIFICATION_CAP);
   if (flags.hasBlocker) capped = Math.min(capped, BLOCKER_CAP);
   return capped;
@@ -261,16 +276,21 @@ function evaluateVigencia(
   return { degraded: false };
 }
 
+// Fase 6 tanda D: la licencia ya no viene en `req` — es de la OFERTA, y se
+// pasa aparte. El emparejamiento sigue siendo exactamente igual de estricto:
+// se cruza contra las filas del técnico que tienen ESA licencia, nunca
+// combinando un chequeo de licencia con otro de aeronave por separado.
 function evaluateHabilitationRequirement(
-  req: Pick<OfferRequiredHabilitation, 'licenseCode' | 'aircraftTypeRatingId'>,
+  req: Pick<OfferRequiredHabilitation, 'aircraftTypeRatingId'>,
+  offerLicenseCode: LicenseCode,
   technician: TechnicianWithRelations,
   ratingIndex: AircraftRatingIndex,
   today: string,
 ): RequirementOutcome {
   const reqLabel = getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex);
   const rating = ratingIndex.get(req.aircraftTypeRatingId);
-  const sameLicenseRows = technician.habilitations.filter((h) => h.licenseCode === req.licenseCode);
-  const license = technician.licenses.find((l) => l.licenseCode === req.licenseCode);
+  const sameLicenseRows = technician.habilitations.filter((h) => h.licenseCode === offerLicenseCode);
+  const license = technician.licenses.find((l) => l.licenseCode === offerLicenseCode);
 
   // T1 — exact: same license, same rating, in the same row. Deliberately
   // does not look at experienceYears — optional, informational only, never
@@ -285,10 +305,10 @@ function evaluateHabilitationRequirement(
   // category pre-filter planned for a later phase.
   const exactRow = sameLicenseRows.find((h) => h.aircraftTypeRatingId === req.aircraftTypeRatingId);
   if (exactRow) {
-    const vigencia = evaluateVigencia(exactRow, license, req.licenseCode, reqLabel, today);
+    const vigencia = evaluateVigencia(exactRow, license, offerLicenseCode, reqLabel, today);
     return {
       tier: 'exact',
-      matchText: `${req.licenseCode} + ${reqLabel}`,
+      matchText: `${offerLicenseCode} + ${reqLabel}`,
       vigenciaDegraded: vigencia.degraded,
       vigenciaNotice: vigencia.notice,
     };
@@ -303,7 +323,7 @@ function evaluateHabilitationRequirement(
   );
   if (relatedRow) {
     const heldLabel = getAircraftTypeRatingLabel(relatedRow.aircraftTypeRatingId, ratingIndex);
-    const vigencia = evaluateVigencia(relatedRow, license, req.licenseCode, heldLabel, today);
+    const vigencia = evaluateVigencia(relatedRow, license, offerLicenseCode, heldLabel, today);
     return {
       tier: 'related_family',
       clarificationText: `Same family, different engine: ${reqLabel} vs ${heldLabel}.`,
@@ -362,18 +382,23 @@ interface BroadOutcome {
 // in evaluateHabilitationRequirement and CLAUDE.md). Nothing here combines
 // an independent license check with an independent aircraft check, because
 // there is no aircraft check left to combine.
+// Fase 6 tanda D: `offer.requiredLicenses` (array) pasó a `offer.licenseCode`
+// (una sola, y ausente exactamente cuando la oferta no exige certificar).
+// Esta rama pasa de residual a NORMAL: "exijo B1.1, me da igual la aeronave"
+// es justo lo que la tanda hace fácil de expresar.
 function evaluateLicenseCategoryMatch(
   offer: OfferWithRequirements,
   technician: TechnicianWithRelations,
 ): BroadOutcome {
-  if (offer.requiredLicenses.length === 0) return { tier: 'not_met' };
+  const required = offer.licenseCode;
+  if (!required) return { tier: 'not_met' };
 
   // The offer never asked for a specific aircraft, so there is nothing to
   // confirm beyond the license category itself — the technician could hold
   // this license with zero aircraft experience on record.
   const holds =
-    technician.licenses.some((l) => offer.requiredLicenses.includes(l.licenseCode)) ||
-    technician.habilitations.some((h) => offer.requiredLicenses.includes(h.licenseCode));
+    technician.licenses.some((l) => l.licenseCode === required) ||
+    technician.habilitations.some((h) => h.licenseCode === required);
 
   return holds
     ? {
@@ -404,7 +429,7 @@ export function calculateOfferTechnicianMatch(
   now: Date = new Date(),
 ): MatchScore {
   const hasQualificationRequirements =
-    offer.requiredHabilitations.length > 0 || offer.requiredLicenses.length > 0;
+    offer.requiredHabilitations.length > 0 || offer.licenseCode != null;
   const weights = getMatchScoreWeights(offer);
   const today = localDateToIso(now);
 
@@ -417,7 +442,7 @@ export function calculateOfferTechnicianMatch(
   const matches: string[] = [];
   const clarifications: string[] = [];
   const vigenciaNotices: VigenciaNotice[] = [];
-  const mandatoryMissing: string[] = [];
+  const missingRequirements: string[] = [];
   const blockers: string[] = [];
   let level: MatchLevel = 'not_met';
   // True only when the qualification evidence came exclusively from the
@@ -430,9 +455,15 @@ export function calculateOfferTechnicianMatch(
     matches.push('Verified profile');
   }
 
-  if (offer.requiredHabilitations.length > 0) {
-    // Exact category+rating requirements exist — every requirement is
-    // evaluated against the technician's own habilitation rows, never by
+  // Fase 6 tanda D: la licencia de la oferta. Sólo se entra en la rama exacta
+  // si la oferta nombra aeronaves Y licencia — sin licencia no hay con qué
+  // cruzarlas, y el CHECK de la 053 impide esa combinación en la base (una
+  // oferta sin certificar no tiene licencia y por tanto tampoco aeronaves).
+  const offerLicenseCode = offer.licenseCode;
+
+  if (offer.requiredHabilitations.length > 0 && offerLicenseCode) {
+    // Exact aircraft requirements exist — every one is evaluated against the
+    // technician's own habilitation rows for THE OFFER'S license, never by
     // combining an independent license check with an independent aircraft
     // check.
     //
@@ -444,7 +475,7 @@ export function calculateOfferTechnicianMatch(
     // clarifications already follow.
     const evaluations = offer.requiredHabilitations.map((req) => ({
       req,
-      outcome: evaluateHabilitationRequirement(req, technician, ratingIndex, today),
+      outcome: evaluateHabilitationRequirement(req, offerLicenseCode, technician, ratingIndex, today),
     }));
 
     let bestTier: HabilitationTier = 'not_met';
@@ -453,8 +484,11 @@ export function calculateOfferTechnicianMatch(
     }
     const vigenciaDegraded = evaluations.some(({ outcome }) => outcome.tier === bestTier && outcome.vigenciaDegraded);
 
-    let everyMandatoryExact = true;
-    let licenseHeldForAll = true;
+    // Fase 6 tanda D: `everyMandatoryExact` (por fila) pasa a
+    // `everyAircraftExact` (por oferta). El cálculo es el mismo — "¿está
+    // TODO cumplido en T1?" — pero ahora sólo importa cuando la oferta ha
+    // declarado que hacen falta todas las aeronaves.
+    let everyAircraftExact = true;
 
     for (const { req, outcome } of evaluations) {
       if (outcome.tier === 'exact' && outcome.matchText) matches.push(outcome.matchText);
@@ -463,34 +497,43 @@ export function calculateOfferTechnicianMatch(
       }
       if (outcome.vigenciaNotice) vigenciaNotices.push(outcome.vigenciaNotice);
 
-      const licenseLabel = `${req.licenseCode} + ${getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}`;
-      if (req.requirementLevel === 'mandatory') {
-        // Anything short of an exact (T1) match means the mandatory
-        // requirement was not met exactly — surfaced so the technician can
-        // still appear as "related" without ever being presented as a full
-        // match, and so the mandatory cap below has a reason to point to.
-        // A vigencia-degraded exact match is still tier 'exact' — degrading
-        // never demotes a requirement into mandatoryMissing.
-        if (outcome.tier !== 'exact') {
-          everyMandatoryExact = false;
-          mandatoryMissing.push(licenseLabel);
+      const aircraftLabel = `${offerLicenseCode} + ${getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}`;
+      if (outcome.tier !== 'exact') {
+        // Cualquier cosa por debajo de T1 significa que esta aeronave no
+        // está cumplida exactamente. Una coincidencia degradada por vigencia
+        // SIGUE siendo tier 'exact' — degradar nunca degrada a "no cumplida".
+        everyAircraftExact = false;
+        if (offer.requiresAllAircraft) {
+          // La oferta dijo que hacen falta TODAS: esto es lo que dispara el
+          // cap y hay que nombrarlo.
+          missingRequirements.push(aircraftLabel);
+        } else if (outcome.tier === 'not_met') {
+          // Basta con una: no cumplir ésta no es un fallo, es información.
+          clarifications.push(`The offer also lists ${aircraftLabel}; not present in the profile`);
         }
-      } else if (outcome.tier === 'not_met') {
-        clarifications.push(`The offer prefers ${licenseLabel}; not present in the profile`);
       }
-
-      const licenseHeld =
-        technician.licenses.some((l) => l.licenseCode === req.licenseCode) ||
-        technician.habilitations.some((h) => h.licenseCode === req.licenseCode);
-      if (!licenseHeld) licenseHeldForAll = false;
     }
 
-    level = bestTier === 'exact' && everyMandatoryExact ? 'exact' : bestTier !== 'not_met' ? 'related' : 'not_met';
+    // Con una sola licencia por oferta, "¿tiene la licencia?" es UNA pregunta,
+    // no una por fila: antes era `licenseHeldForAll`, que recorría requisitos
+    // que en la práctica repetían siempre el mismo código.
+    const licenseHeld =
+      technician.licenses.some((l) => l.licenseCode === offerLicenseCode) ||
+      technician.habilitations.some((h) => h.licenseCode === offerLicenseCode);
+
+    // `everyAircraftExact` sólo degrada el nivel cuando la oferta EXIGE todas
+    // las aeronaves. Con "basta con una", cubrir una de tres es un match
+    // exacto y punto — que es exactamente lo que hacía el modelo anterior:
+    // `everyMandatoryExact` sólo lo ponían a false las filas `mandatory`, así
+    // que una lista toda `preferred` lo dejaba en true. Sin esta condición,
+    // "basta con una" degradaría a 'related' un match que sí es exacto.
+    const requiredSetSatisfied = !offer.requiresAllAircraft || everyAircraftExact;
+    level = bestTier === 'exact' && requiredSetSatisfied ? 'exact' : bestTier !== 'not_met' ? 'related' : 'not_met';
     const vigenciaFraction = vigenciaDegraded ? 1 - VIGENCIA_DEGRADATION_FRACTION : 1;
     habilitation = Math.round(weights.habilitation * HABILITATION_TIER_FRACTIONS[bestTier] * vigenciaFraction);
-    license = licenseHeldForAll ? weights.license : 0;
+    license = licenseHeld ? weights.license : 0;
   } else if (hasQualificationRequirements) {
-    // No exact requirements — the offer only names license categories, so
+    // No aircraft named — the offer only states its license category, so
     // fall back to the category check.
     const broad = evaluateLicenseCategoryMatch(offer, technician);
     if (broad.tier !== 'not_met') {
@@ -509,7 +552,10 @@ export function calculateOfferTechnicianMatch(
       level = 'not_met';
       habilitation = 0;
       license = 0;
-      mandatoryMissing.push(`Required license: ${offer.requiredLicenses.join(', ')}`);
+      // La SEGUNDA fuente de missingRequirements, y la que sobrevive intacta
+      // a la tanda D: no depende de mandatory/preferred, sino de que la
+      // oferta pida una licencia que el técnico no tiene.
+      missingRequirements.push(`Required license: ${offer.licenseCode}`);
     }
   } else {
     // The offer specifies no qualification requirement at all — habilitation
@@ -559,7 +605,7 @@ export function calculateOfferTechnicianMatch(
   }
 
   // ── Hard blockers ────────────────────────────────────────────────────
-  // Not a weak-evidence signal like mandatoryMissing — these say the offer
+  // Not a weak-evidence signal like missingRequirements — these say the offer
   // was never for this technician. They live HERE, in the pure function,
   // rather than in either matchingV2.ts wrapper on purpose: the wrappers
   // cover one direction each (company→technicians, technician→offers) and
@@ -622,7 +668,7 @@ export function calculateOfferTechnicianMatch(
   // however many apply at once.
   const total = applyScoreCeilings(rawTotal, {
     isBroadOnlyMatch,
-    hasMandatoryUnmet: mandatoryMissing.length > 0,
+    hasIncompleteAircraftSet: missingRequirements.length > 0,
     isZeroQualification: hasQualificationRequirements && habilitation === 0,
     hasBlocker: blockers.length > 0,
   });
@@ -637,7 +683,7 @@ export function calculateOfferTechnicianMatch(
     matches,
     clarifications,
     vigenciaNotices,
-    mandatoryMissing,
+    missingRequirements,
     blockers,
   };
 }

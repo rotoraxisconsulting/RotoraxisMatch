@@ -59,7 +59,7 @@ export function MatchExplanation({
     score.matches.length === 0 &&
     score.clarifications.length === 0 &&
     score.vigenciaNotices.length === 0 &&
-    score.mandatoryMissing.length === 0 &&
+    score.missingRequirements.length === 0 &&
     score.blockers.length === 0
   ) {
     return null;
@@ -101,8 +101,8 @@ export function MatchExplanation({
         <Text style={styles.cappedNote}>
           {score.blockers.length > 0
             ? 'Score capped: this profile does not meet a hard requirement of the offer (see above).'
-            : score.mandatoryMissing.length > 0
-              ? 'Score capped: a mandatory requirement is not met exactly (see below).'
+            : score.missingRequirements.length > 0
+              ? 'Score capped: this offer states a requirement this profile does not meet (see below).'
               : 'Score capped: the offer requires a qualification this profile does not have.'}
         </Text>
       )}
@@ -139,10 +139,14 @@ export function MatchExplanation({
         </View>
       )}
 
-      {score.mandatoryMissing.length > 0 && (
+      {score.missingRequirements.length > 0 && (
         <View style={styles.block}>
-          <Text style={styles.blockTitle}>Mandatory requirements not met exactly</Text>
-          {score.mandatoryMissing.map((m, i) => (
+          {/* Fase 6 tanda D: el título ya no dice "mandatory" porque el
+              concepto no existe. Cubre las DOS fuentes del campo: una
+              aeronave que falta cuando la oferta las exige todas, y la
+              licencia de la oferta que el perfil no tiene. */}
+          <Text style={styles.blockTitle}>Requirements not met</Text>
+          {score.missingRequirements.map((m, i) => (
             <Text key={i} style={styles.missingLine}>• {m}</Text>
           ))}
         </View>

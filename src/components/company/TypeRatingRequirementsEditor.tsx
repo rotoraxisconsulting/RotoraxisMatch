@@ -12,19 +12,26 @@ import { getOfferProductTypeLabel } from '../../constants/offerProductTypes';
 import { LicenseCode, RequirementLevel } from '../../types/catalog';
 import { OfferProductType } from '../../types/offer';
 
+// Fase 6 tanda D: una fila es UNA AERONAVE. Perdió `licenseCode` (la licencia
+// es de la oferta, una sola) y `requirementLevel` (la exigencia es de la
+// oferta, `requiresAllAircraft`).
 export interface ExactHabilitationRow {
-  licenseCode: LicenseCode;
   aircraftTypeRatingId: string;
-  requirementLevel: RequirementLevel;
   notes?: string;
 }
 
 interface Props {
   value: ExactHabilitationRow[];
   onChange: (next: ExactHabilitationRow[]) => void;
-  // El producto declarado por la OFERTA. Acota a la vez las categorías
-  // ofrecidas y el catálogo de ratings — ver el comentario del componente.
+  // El producto declarado por la OFERTA. Acota el catálogo de ratings.
   productType: OfferProductType;
+  // La licencia de la oferta, sólo para etiquetar las filas: cada aeronave se
+  // cruza con ella. El selector de licencia vive en el formulario, no aquí.
+  licenseCode?: LicenseCode;
+  // ¿Basta con una de las aeronaves, o hacen falta todas? La casilla vive
+  // BAJO la lista (paso 6 del formulario), no como un paso propio.
+  requiresAll: boolean;
+  onChangeRequiresAll: (next: boolean) => void;
 }
 
 // Fase 3b screen 1 — the PRIMARY requirements block on the offer form
@@ -45,7 +52,14 @@ interface Props {
 // productos: con B2 seleccionada no se filtraba NADA. Por ese agujero
 // entraron ofertas tituladas "Helicópteros" con requisitos B1.1/B1.2. Ahora
 // el producto lo declara la empresa una sola vez y acota las dos listas.
-export function TypeRatingRequirementsEditor({ value, onChange, productType }: Props) {
+export function TypeRatingRequirementsEditor({
+  value,
+  onChange,
+  productType,
+  licenseCode,
+  requiresAll,
+  onChangeRequiresAll,
+}: Props) {
   const { ratingIndex: activeRatingIndex } = useAircraftTypeRatingsCatalog();
   const [resolvedIndex, setResolvedIndex] = useState<AircraftRatingIndex>(new Map());
 
@@ -70,34 +84,22 @@ export function TypeRatingRequirementsEditor({ value, onChange, productType }: P
   const [newRatingId, setNewRatingId] = useState<string | null>(null);
   const [newNotes, setNewNotes] = useState('');
 
-  const categories = useMemo(
-    () => LICENSE_CATEGORIES.filter((l) => isLicenseCompatibleWithProductType(l.code as LicenseCode, productType)),
-    [productType],
-  );
-
-  // Cambiar el producto deja en la fila en construcción una categoría o un
-  // rating del producto anterior, que ya no aparecen en ninguna de las dos
-  // listas: seleccionados pero invisibles, y rechazados por Postgres al
-  // guardar. Se limpian. `value` lo limpia el formulario, que es quien pide
-  // confirmación cuando hay algo que perder.
+  // Cambiar el producto deja en la fila en construcción un rating del
+  // producto anterior, que ya no aparece en la lista: seleccionado pero
+  // invisible, y rechazado por Postgres al guardar. Se limpia. `value` lo
+  // limpia el formulario, que es quien pide confirmación cuando hay algo
+  // que perder.
   useEffect(() => {
-    setNewLicense(null);
     setNewRatingId(null);
   }, [productType]);
 
-  function selectCategory(code: LicenseCode) {
-    setNewLicense(code);
-    setNewRatingId(null); // a rating picked for a different category may no longer make sense, especially once the pre-filter kicks in
-  }
-
   function addRow() {
-    if (!newLicense || !newRatingId) return;
-    if (value.some((h) => h.licenseCode === newLicense && h.aircraftTypeRatingId === newRatingId)) return;
-    onChange([
-      ...value,
-      { licenseCode: newLicense, aircraftTypeRatingId: newRatingId, requirementLevel: 'preferred', notes: newNotes.trim() || undefined },
-    ]);
-    setNewLicense(null);
+    if (!newRatingId) return;
+    // La PK (offer_id, aircraft_type_rating_id) que instala la 054 rechazaría
+    // el duplicado; se corta aquí para que la empresa vea que no pasa nada en
+    // vez de un error al guardar.
+    if (value.some((h) => h.aircraftTypeRatingId === newRatingId)) return;
+    onChange([...value, { aircraftTypeRatingId: newRatingId, notes: newNotes.trim() || undefined }]);
     setNewRatingId(null);
     setNewNotes('');
   }
@@ -106,59 +108,52 @@ export function TypeRatingRequirementsEditor({ value, onChange, productType }: P
     onChange(value.filter((_, i) => i !== index));
   }
 
-  function setRowLevel(index: number, level: RequirementLevel) {
-    onChange(value.map((h, i) => (i === index ? { ...h, requirementLevel: level } : h)));
-  }
-
   return (
     <CompanyCard style={styles.card}>
-      <Text style={styles.title}>Type rating requirements</Text>
+      <Text style={styles.title}>Aircraft</Text>
       <Text style={styles.subtitle}>
-        Search and add the exact ratings this role requires. Each one is marked Mandatory or Preferred — tap a
-        badge to change it. Limited to {getOfferProductTypeLabel(productType).toLowerCase()}, as set above.
+        {licenseCode
+          ? `Search and add the aircraft this role works on. All of them count against the offer's ${licenseCode} licence. Limited to ${getOfferProductTypeLabel(productType).toLowerCase()}, as set above.`
+          : `Search and add the aircraft this role works on. Limited to ${getOfferProductTypeLabel(productType).toLowerCase()}, as set above.`}
       </Text>
 
       {value.map((h, index) => (
-        <View key={`${h.licenseCode}-${h.aircraftTypeRatingId}`} style={styles.row}>
+        <View key={h.aircraftTypeRatingId} style={styles.row}>
           <View style={styles.rowInfo}>
-            <Text style={styles.rowText}>{h.licenseCode} + {getAircraftTypeRatingLabel(h.aircraftTypeRatingId, labelIndex)}</Text>
+            <Text style={styles.rowText}>
+              {licenseCode ? `${licenseCode} + ` : ''}
+              {getAircraftTypeRatingLabel(h.aircraftTypeRatingId, labelIndex)}
+            </Text>
             {h.notes ? <Text style={styles.rowNotes}>{h.notes}</Text> : null}
-          </View>
-          <View style={styles.levelToggle}>
-            <TouchableOpacity
-              onPress={() => setRowLevel(index, 'mandatory')}
-              style={[styles.levelPill, h.requirementLevel === 'mandatory' ? styles.levelPillMandatoryOn : styles.levelPillOff]}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.levelPillText, h.requirementLevel === 'mandatory' ? styles.levelPillTextMandatoryOn : styles.levelPillTextOff]}>
-                Mandatory
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setRowLevel(index, 'preferred')}
-              style={[styles.levelPill, h.requirementLevel === 'preferred' ? styles.levelPillPreferredOn : styles.levelPillOff]}
-              accessibilityRole="button"
-            >
-              <Text style={[styles.levelPillText, h.requirementLevel === 'preferred' ? styles.levelPillTextPreferredOn : styles.levelPillTextOff]}>
-                Preferred
-              </Text>
-            </TouchableOpacity>
           </View>
           <TouchableOpacity onPress={() => removeRow(index)} accessibilityRole="button">
             <Text style={styles.removeText}>Remove</Text>
           </TouchableOpacity>
         </View>
       ))}
-      {value.length === 0 ? <Text style={styles.emptyText}>No exact requirements yet.</Text> : null}
+      {value.length === 0 ? <Text style={styles.emptyText}>No aircraft yet.</Text> : null}
+
+      {/* Paso 6 del formulario: una casilla pequeña BAJO la lista, no un paso
+          propio. Sólo tiene sentido con dos o más aeronaves — con una sola,
+          "basta con una" y "hacen falta todas" dicen lo mismo, y preguntarlo
+          sería pedirle a la empresa que decida algo que no cambia nada. */}
+      {value.length > 1 ? (
+        <TouchableOpacity
+          style={styles.requiresAllRow}
+          onPress={() => onChangeRequiresAll(!requiresAll)}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: requiresAll }}
+        >
+          <View style={[styles.checkbox, requiresAll && styles.checkboxOn]}>
+            {requiresAll ? <Text style={styles.checkboxMark}>✓</Text> : null}
+          </View>
+          <Text style={styles.requiresAllText}>
+            The technician needs ALL of these aircraft, not just one of them
+          </Text>
+        </TouchableOpacity>
+      ) : null}
 
       <View style={styles.addBlock}>
-        <Text style={styles.fieldLabel}>Category</Text>
-        <View style={styles.chipRow}>
-          {categories.map((l) => (
-            <CompanyChip key={l.code} label={l.code} selected={newLicense === l.code} onPress={() => selectCategory(l.code as LicenseCode)} />
-          ))}
-        </View>
-
         <Text style={styles.fieldLabel}>Aircraft + engine rating</Text>
         <AircraftTypeRatingPicker
           value={newRatingId}
@@ -176,12 +171,12 @@ export function TypeRatingRequirementsEditor({ value, onChange, productType }: P
         />
 
         <TouchableOpacity
-          style={[styles.addButton, (!newLicense || !newRatingId) && styles.addButtonDisabled]}
+          style={[styles.addButton, !newRatingId && styles.addButtonDisabled]}
           onPress={addRow}
-          disabled={!newLicense || !newRatingId}
+          disabled={!newRatingId}
           activeOpacity={0.75}
         >
-          <Text style={styles.addButtonText}>Add requirement</Text>
+          <Text style={styles.addButtonText}>Add aircraft</Text>
         </TouchableOpacity>
       </View>
     </CompanyCard>
@@ -203,6 +198,19 @@ const styles = StyleSheet.create({
   rowInfo: { flex: 1, minWidth: 0, gap: 2 },
   rowText: { fontSize: 13, lineHeight: 18, fontWeight: '700', color: companyUi.text },
   rowNotes: { fontSize: 12, lineHeight: 16, fontWeight: '500', color: companyUi.textSoft },
+  requiresAllRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.xs },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: companyUi.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: { borderColor: companyUi.accent, backgroundColor: companyUi.accentSoft },
+  checkboxMark: { fontSize: 12, lineHeight: 14, fontWeight: '700', color: companyUi.accent },
+  requiresAllText: { flex: 1, minWidth: 0, fontSize: 12, lineHeight: 17, fontWeight: '600', color: companyUi.textSoft },
   levelToggle: { flexDirection: 'row', gap: 6 },
   levelPill: {
     borderWidth: 1,

@@ -344,11 +344,14 @@ export default function OfferDetailScreen() {
               label="Certified work"
               items={[offer.requiresCertification ? 'Licence required' : 'No licence needed']}
             />
-            {offer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={offer.requiredLicenses} />}
+            {offer.licenseCode && <ReqRow label="Licence" items={[offer.licenseCode]} />}
             {offer.requiredHabilitations.length > 0 && (
+              // Fase 6 tanda D: la exigencia se dice UNA vez en la etiqueta,
+              // no "(preferred)" por fila. El técnico tiene que saber si le
+              // piden todas o le basta con una ANTES de aplicar.
               <ReqRow
-                label="Type rating requirements"
-                items={offer.requiredHabilitations.map((h) => `${h.licenseCode} + ${getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex)} (${h.requirementLevel})`)}
+                label={offer.requiresAllAircraft ? 'Aircraft — ALL of these' : 'Aircraft — any one of these'}
+                items={offer.requiredHabilitations.map((h) => getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex))}
               />
             )}
           </TechnicianCard>

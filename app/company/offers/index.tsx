@@ -84,7 +84,7 @@ function compactRequirements(offer: OfferWithRequirements): string[] {
     // técnico no da por supuesto. "Licence required" es el caso normal y
     // llenaría la tira de ruido en todas las tarjetas.
     ...(offer.requiresCertification ? [] : ['No licence needed']),
-    ...offer.requiredLicenses,
+    ...(offer.licenseCode ? [offer.licenseCode] : []),
   ].slice(0, 5);
 }
 
@@ -211,7 +211,7 @@ export default function OffersListScreen() {
           // se pinta arriba, o el "+N más" mentiría.
           const hiddenReqs = Math.max(
             0,
-            1 + (offer.requiresCertification ? 0 : 1) + offer.requiredLicenses.length - requirements.length,
+            1 + (offer.requiresCertification ? 0 : 1) + (offer.licenseCode ? 1 : 0) - requirements.length,
           );
 
           return (

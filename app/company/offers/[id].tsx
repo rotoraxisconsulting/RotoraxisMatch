@@ -498,11 +498,16 @@ export default function OfferDetailScreen() {
             label="Certified work"
             items={[offer.requiresCertification ? 'Licence required' : 'No licence needed']}
           />
-          <RequirementRow label="Licenses" items={offer.requiredLicenses} />
+          {offer.licenseCode ? <RequirementRow label="Licence" items={[offer.licenseCode]} /> : null}
           {offer.requiredHabilitations.length > 0 ? (
-            <TypeRatingRequirementsRow habilitations={offer.requiredHabilitations} ratingIndex={ratingIndex} />
+            <TypeRatingRequirementsRow
+              habilitations={offer.requiredHabilitations}
+              licenseCode={offer.licenseCode}
+              requiresAll={offer.requiresAllAircraft}
+              ratingIndex={ratingIndex}
+            />
           ) : null}
-          {offer.requiredLicenses.length === 0 && offer.requiredHabilitations.length === 0 ? (
+          {!offer.licenseCode && offer.requiredHabilitations.length === 0 ? (
             <Text style={styles.noRequirementsText}>
               {offer.requiresCertification
                 ? 'No licence or type rating required beyond the profile type.'
@@ -803,30 +808,36 @@ function RequirementRow({ label, items }: { label: string; items: string[] }) {
   );
 }
 
+// Fase 6 tanda D: la píldora Mandatory/Preferred por fila desaparece. Era la
+// que nadie sabía combinar — tres "obligatorias" significaban en la práctica
+// "una cualquiera". Ahora la exigencia se dice UNA vez, arriba, y vale para
+// toda la lista.
 function TypeRatingRequirementsRow({
   habilitations,
+  licenseCode,
+  requiresAll,
   ratingIndex,
 }: {
   habilitations: OfferRequiredHabilitation[];
+  licenseCode?: string;
+  requiresAll: boolean;
   ratingIndex: AircraftRatingIndex;
 }) {
   return (
     <View style={styles.requirementRow}>
       <View style={styles.requirementLabelRow}>
         <ListChecks color={companyUi.textMuted} size={14} strokeWidth={2} />
-        <Text style={styles.requirementLabel}>Type rating requirements</Text>
+        <Text style={styles.requirementLabel}>
+          {requiresAll ? 'Aircraft — ALL of these' : 'Aircraft — any one of these'}
+        </Text>
       </View>
       <View style={styles.habilitationReqList}>
         {habilitations.map((req, i) => (
-          <View key={`${req.licenseCode}-${req.aircraftTypeRatingId}-${i}`} style={styles.habilitationReqItem}>
+          <View key={`${req.aircraftTypeRatingId}-${i}`} style={styles.habilitationReqItem}>
             <Text style={styles.habilitationReqText}>
-              {req.licenseCode} + {getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}
+              {licenseCode ? `${licenseCode} + ` : ''}
+              {getAircraftTypeRatingLabel(req.aircraftTypeRatingId, ratingIndex)}
             </Text>
-            <CompanyBadge
-              label={req.requirementLevel === 'mandatory' ? 'Mandatory' : 'Preferred'}
-              tone={req.requirementLevel === 'mandatory' ? 'error' : 'muted'}
-              small
-            />
           </View>
         ))}
       </View>
@@ -850,8 +861,8 @@ function CapReasonPanel({ score }: { score: MatchScore }) {
         <AlertTriangle color={companyUi.amber} size={14} strokeWidth={2} />
         <Text style={styles.capTitle}>Score capped ({rawSum}% raw before cap)</Text>
       </View>
-      {score.mandatoryMissing.map((m, i) => (
-        <Text key={`mm-${i}`} style={styles.capMissingLine}>Missing mandatory requirement: {m}</Text>
+      {score.missingRequirements.map((m: string, i: number) => (
+        <Text key={`mm-${i}`} style={styles.capMissingLine}>Not met: {m}</Text>
       ))}
       {score.clarifications.map((c, i) => (
         <Text key={`cl-${i}`} style={styles.capClarificationLine}>{c}</Text>

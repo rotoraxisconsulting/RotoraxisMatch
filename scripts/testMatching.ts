@@ -96,22 +96,25 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     visible: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    requiredLicenses: [],
+    // Fase 6 tanda D: UNA licencia por oferta y la exigencia declarada por
+    // la oferta. 'B1.1' + false reproducen el caso normal de los tests
+    // previos (una licencia, basta con una aeronave).
+    licenseCode: 'B1.1',
+    requiresAllAircraft: false,
     requiredHabilitations: [],
     ...overrides,
   };
 }
 
-function makeHabReq(
-  licenseCode: string,
-  aircraftTypeRatingId: string,
-  requirementLevel: 'mandatory' | 'preferred',
-): OfferRequiredHabilitation {
+// Fase 6 tanda D: una fila de requisito es UNA AERONAVE, y este helper sólo
+// recibe eso. La licencia la declara la OFERTA (makeOffer -> licenseCode) y la
+// exigencia también (requiresAllAircraft). Dejar aquí un parámetro de licencia
+// que el scorer ignora habría sido una trampa: el test diría B1.3 y la oferta
+// exigiría B1.1.
+function makeHabReq(aircraftTypeRatingId: string): OfferRequiredHabilitation {
   return {
     offerId: 'offer-test',
-    licenseCode: licenseCode as any,
     aircraftTypeRatingId,
-    requirementLevel,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
@@ -287,18 +290,25 @@ async function main() {
   // ── Matching ─────────────────────────────────────────────────────────
 
   await test('Matching — Case 1: exact category+rating match', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.level, 'exact', `expected level 'exact', got '${result.level}'`);
-    assert.equal(result.mandatoryMissing.length, 0);
+    assert.equal(result.missingRequirements.length, 0);
   });
 
   await test('Matching — Case 2: no false combination across categories', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.3', 'fx-aw139-pt6', 'mandatory')] });
+    // Fase 6 tanda D: la licencia la declara la OFERTA. `requiresAllAircraft`
+    // para que la aeronave no cumplida entre en missingRequirements — antes
+    // eso lo pedía la etiqueta `mandatory` de la fila.
+    const offer = makeOffer({
+      licenseCode: 'B1.3',
+      requiresAllAircraft: true,
+      requiredHabilitations: [makeHabReq('fx-aw139-pt6')],
+    });
     const technician = makeTechnician({
       licenses: [makeLicense('B2'), makeLicense('B1.3')],
       // AW139 habilitation exists ONLY under B2, never under B1.3.
@@ -307,13 +317,13 @@ async function main() {
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.notEqual(result.level, 'exact', 'must not report exact — B1.3+AW139 was never held together');
     assert.ok(
-      result.mandatoryMissing.some((m) => m.includes('B1.3')),
-      'mandatoryMissing should flag the unmet B1.3 + AW139 requirement',
+      result.missingRequirements.some((m) => m.includes('B1.3')),
+      'missingRequirements should flag the unmet B1.3 + AW139 requirement',
     );
   });
 
   await test('Matching — Case 3: same family, different engine => related + clarification', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
@@ -335,7 +345,7 @@ async function main() {
     // Each one independently resolves to an exact match for its own requirement.
     const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations });
     for (const ratingId of ['fx-a320-cfm56', 'fx-a320-v2500', 'fx-a320neo-leap1a']) {
-      const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', ratingId, 'mandatory')] });
+      const offer = makeOffer({ requiredHabilitations: [makeHabReq(ratingId)] });
       const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
       assert.equal(result.level, 'exact', `expected exact match for ${ratingId}`);
     }
@@ -354,37 +364,41 @@ async function main() {
   // exactly that, and Case 5b's family-vs-engine coverage is Case 3's job.
 
   await test('Matching — Case 6: preferred requirement mismatch stays related, never excluded', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.level, 'related');
-    assert.equal(result.mandatoryMissing.length, 0, 'preferred misses must not appear in mandatoryMissing');
+    assert.equal(result.missingRequirements.length, 0, 'preferred misses must not appear in missingRequirements');
   });
 
-  await test('Matching — Case 7: mandatory requirement mismatch is flagged but the profile still surfaces as related', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+  await test('Matching — Case 7: una aeronave exigida y no cumplida se señala, y el perfil sigue apareciendo como related', () => {
+    const offer = makeOffer({ requiresAllAircraft: true, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.level, 'related', 'unmet mandatory must not silently become exact');
-    assert.ok(result.mandatoryMissing.length > 0, 'expected the unmet mandatory requirement to be listed');
+    assert.ok(result.missingRequirements.length > 0, 'expected the unmet mandatory requirement to be listed');
   });
 
   await test('Matching — Case 8: a pending catalog request id is never a resolvable rating', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.3', NOT_A_REAL_RATING, 'mandatory')] });
+    const offer = makeOffer({
+      licenseCode: 'B1.3',
+      requiresAllAircraft: true,
+      requiredHabilitations: [makeHabReq(NOT_A_REAL_RATING)],
+    });
     const technician = makeTechnician({ licenses: [makeLicense('B1.3')], habilitations: [] });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.notEqual(result.level, 'exact');
-    assert.ok(result.mandatoryMissing.length > 0);
+    assert.ok(result.missingRequirements.length > 0);
   });
 
   await test('Matching — Case 9: no match from sharing only a manufacturer (Boeing 777 vs Boeing 787)', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-b787-genx', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-b787-genx')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-b777-ge90' })],
@@ -395,7 +409,7 @@ async function main() {
   });
 
   await test('Matching — Case 10: a habilitation referencing a deactivated rating still matches exactly, and its label still resolves', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.3', 'fx-bell412-pt6-inactive', 'mandatory')] });
+    const offer = makeOffer({ licenseCode: 'B1.3', requiredHabilitations: [makeHabReq('fx-bell412-pt6-inactive')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.3')],
       habilitations: [makeHab('B1.3', { aircraftTypeRatingId: 'fx-bell412-pt6-inactive' })],
@@ -413,7 +427,7 @@ async function main() {
   //    as a ceiling, absent data stays neutral) ─────────────────────────
 
   await test('Fase 2 — T1 (exact rating) awards the full habilitation weight (45)', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
@@ -424,7 +438,7 @@ async function main() {
   });
 
   await test('Fase 2 — T2 (same family, different engine) awards a partial habilitation weight', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
@@ -444,7 +458,7 @@ async function main() {
     // 029 drops. A row that names no catalog rating is now indistinguishable
     // from no evidence at all, and must never produce the 0.29 credit or the
     // "Approximate match without engine data" clarification T3 used to emit.
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1')] });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
 
@@ -456,7 +470,7 @@ async function main() {
   });
 
   await test('Fase 2 — T4 (no match at all) awards zero habilitation', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'preferred')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({ licenses: [makeLicense('B1.1')], habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-b777-ge90' })] });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.breakdown.habilitation, 0);
@@ -466,7 +480,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 1,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({
       verificationStatus: 'verified',
@@ -496,7 +510,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 5,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
 
     const weakProfileExactRating = makeTechnician({
@@ -522,11 +536,12 @@ async function main() {
     assert.equal(resultA.level, 'exact');
   });
 
-  await test('Fase 2 — an unmet mandatory requirement never lets the total exceed 59, even with a maxed-out rest of profile', () => {
+  await test('Fase 2 — una aeronave exigida y no cumplida nunca deja pasar de 59, ni con el resto del perfil al máximo', () => {
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 1,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiresAllAircraft: true,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({
       verificationStatus: 'verified',
@@ -535,12 +550,12 @@ async function main() {
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-v2500' })],
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.ok(result.mandatoryMissing.length > 0);
+    assert.ok(result.missingRequirements.length > 0);
     assert.ok(result.total <= 59, `expected the mandatory cap (59), got ${result.total}`);
   });
 
   await test('Fase 2 — a rating endorsed with no declared experience still scores a full T1 match (absent data is neutral)', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })], // experienceYears/isCurrent left undefined
@@ -548,7 +563,7 @@ async function main() {
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.breakdown.habilitation, 45, 'undefined experienceYears/isCurrent must not reduce the T1 score');
     assert.equal(result.level, 'exact');
-    assert.equal(result.mandatoryMissing.length, 0);
+    assert.equal(result.missingRequirements.length, 0);
   });
 
   await test('Fase 2 — getMatchLabel boundaries include the renamed "Weak match" tier', () => {
@@ -571,7 +586,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 1,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({
       verificationStatus: 'verified',
@@ -581,7 +596,7 @@ async function main() {
     });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
     assert.equal(result.level, 'exact');
-    assert.equal(result.mandatoryMissing.length, 0);
+    assert.equal(result.missingRequirements.length, 0);
     assert.equal(result.breakdown.habilitation, 45, 'exact match keeps the full habilitation weight');
     assert.ok(result.total >= 80, `exact match must stay in the Excellent band, got ${result.total}`);
     assert.equal(result.label, 'Excellent match');
@@ -593,7 +608,7 @@ async function main() {
   // 0.29 below and BROAD_ONLY_CAP are deliberately unchanged.
 
   await test('Fase 5 — a license-only requirement scores at the category fraction, with its own clarification', () => {
-    const licenseOnlyOffer = makeOffer({ requiredLicenses: ['B1.1'] as any });
+    const licenseOnlyOffer = makeOffer({ licenseCode: 'B1.1' });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
@@ -617,10 +632,10 @@ async function main() {
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
     const categoryOnly = calculateOfferTechnicianMatch(
-      makeOffer({ requiredLicenses: ['B1.1'] as any }), technician, RATING_INDEX,
+      makeOffer({ licenseCode: 'B1.1' }), technician, RATING_INDEX,
     );
     const exact = calculateOfferTechnicianMatch(
-      makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] }), technician, RATING_INDEX,
+      makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }), technician, RATING_INDEX,
     );
     assert.equal(exact.breakdown.habilitation, 45);
     assert.ok(
@@ -633,7 +648,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 1,
-      requiredLicenses: ['B1.1'] as any,
+      licenseCode: 'B1.1',
     });
     const technician = makeTechnician({
       verificationStatus: 'verified',
@@ -653,26 +668,26 @@ async function main() {
     // param is deliberately all-required (a forgotten flag would silently
     // mean "no cap", and the ladder is most-restrictive-wins). Only the
     // fixture gained the field; every expectation below is unchanged.
-    const none = { isBroadOnlyMatch: false, hasMandatoryUnmet: false, isZeroQualification: false, hasBlocker: false };
+    const none = { isBroadOnlyMatch: false, hasIncompleteAircraftSet: false, isZeroQualification: false, hasBlocker: false };
     assert.equal(applyScoreCeilings(100, none), 100, 'no ceiling applies to a confirmed exact match');
     assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true }), 79);
-    assert.equal(applyScoreCeilings(100, { ...none, hasMandatoryUnmet: true }), 59);
+    assert.equal(applyScoreCeilings(100, { ...none, hasIncompleteAircraftSet: true }), 59);
     assert.equal(applyScoreCeilings(100, { ...none, isZeroQualification: true }), 39);
     assert.equal(applyScoreCeilings(100, { ...none, hasBlocker: true }), 19);
     // Overlaps — the stricter one wins regardless of declaration order.
     assert.equal(
-      applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasMandatoryUnmet: true }),
+      applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasIncompleteAircraftSet: true }),
       59,
       'broad-only (79) + mandatory unmet (59) must land on 59, not 79',
     );
-    assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true }), 39);
+    assert.equal(applyScoreCeilings(100, { ...none, isBroadOnlyMatch: true, hasIncompleteAircraftSet: true, isZeroQualification: true }), 39);
     assert.equal(
-      applyScoreCeilings(100, { isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true, hasBlocker: true }),
+      applyScoreCeilings(100, { isBroadOnlyMatch: true, hasIncompleteAircraftSet: true, isZeroQualification: true, hasBlocker: true }),
       19,
       'the blocker cap is the tightest rung — it wins over all three qualification ceilings',
     );
     // A ceiling never RAISES a score that was already below it.
-    assert.equal(applyScoreCeilings(20, { ...none, isBroadOnlyMatch: true, hasMandatoryUnmet: true, isZeroQualification: true }), 20);
+    assert.equal(applyScoreCeilings(20, { ...none, isBroadOnlyMatch: true, hasIncompleteAircraftSet: true, isZeroQualification: true }), 20);
     assert.equal(applyScoreCeilings(5, { ...none, hasBlocker: true }), 5);
   });
 
@@ -680,7 +695,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 1,
-      requiredLicenses: ['B1.1'] as any,
+      licenseCode: 'B1.1',
     });
     const technician = makeTechnician({
       // Fase 5: the fixture used to hold B1.1 and fail on a separate aircraft
@@ -709,7 +724,7 @@ async function main() {
   const NOW = new Date(2026, 5, 15); // 2026-06-15
 
   await test('Vigencia — absent issuedAt/expiresAt/isCurrent is neutral: full T1 score, no notice', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const tech = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
@@ -717,11 +732,11 @@ async function main() {
     const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
     assert.equal(result.breakdown.habilitation, 45);
     assert.deepEqual(result.vigenciaNotices, []);
-    assert.equal(result.mandatoryMissing.length, 0);
+    assert.equal(result.missingRequirements.length, 0);
   });
 
   await test('Vigencia — an expired rating degrades slightly (never excludes) and adds one "Expired" notice', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const tech = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01' })],
@@ -729,14 +744,14 @@ async function main() {
     const result = calculateOfferTechnicianMatch(offer, tech, buildAircraftRatingIndex(FIXTURES), NOW);
     assert.ok(result.breakdown.habilitation < 45 && result.breakdown.habilitation > 0, `expected a slight cut, got ${result.breakdown.habilitation}`);
     assert.equal(result.level, 'exact', 'still tier exact — degraded, never excluded');
-    assert.equal(result.mandatoryMissing.length, 0, 'a degraded exact match never becomes mandatoryMissing');
+    assert.equal(result.missingRequirements.length, 0, 'a degraded exact match never becomes missingRequirements');
     assert.equal(result.vigenciaNotices.length, 1);
     assert.equal(result.vigenciaNotices[0].label, 'Expired');
     assert.ok(result.vigenciaNotices[0].detail.includes('2026-03'));
   });
 
   await test('Vigencia — precedence: an expired date wins even when isCurrent is explicitly true', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const tech = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-03-01', isCurrent: true })],
@@ -747,7 +762,7 @@ async function main() {
   });
 
   await test('Vigencia — inverse case: a future/absent expiry with isCurrent=false is a distinct "Not current" notice', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const tech = makeTechnician({
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2027-01-01', isCurrent: false })],
@@ -758,7 +773,7 @@ async function main() {
   });
 
   await test('Vigencia — an expired license affects a rating with no vigencia issues of its own, with one combined notice', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const tech = makeTechnician({
       licenses: [{ ...makeLicense('B1.1'), expiresAt: '2026-01-01' }],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
@@ -771,7 +786,7 @@ async function main() {
   });
 
   await test('Vigencia — license AND rating both expired produce exactly one combined notice, not two', () => {
-    const offer = makeOffer({ requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const tech = makeTechnician({
       licenses: [{ ...makeLicense('B1.1'), expiresAt: '2026-01-01' }],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56', expiresAt: '2026-02-01' })],
@@ -1613,7 +1628,7 @@ async function main() {
     // cambia es quien ANTES sacaba cero por no rellenar un campo opcional.
     const offer = makeOffer({
       contractType: 'permanent',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const base = {
       verificationStatus: 'verified' as const,
@@ -1630,7 +1645,7 @@ async function main() {
   });
 
   // ── Blockers — hard disqualifiers (BLOCKER_CAP = 19) ─────────────────
-  // Distinct from mandatoryMissing: that one says the qualification evidence
+  // Distinct from missingRequirements: that one says the qualification evidence
   // is weak, these say the pair should not exist at all. Both rules live in
   // the pure function, never in a matchingV2.ts wrapper — see Case 8.
 
@@ -1642,7 +1657,7 @@ async function main() {
   await test('Blockers — Case 1: right technician type + exact rating produces no blocker at all', () => {
     const offer = makeOffer({
       technicianType: 'mechanic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
@@ -1658,7 +1673,7 @@ async function main() {
   await test('Blockers — Case 2: wrong technician type blocks even with an exact rating, and caps the total at 19', () => {
     const offer = makeOffer({
       technicianType: 'avionic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
     const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
@@ -1673,7 +1688,7 @@ async function main() {
     // never rewrites the breakdown into a fake "no qualification" story.
     assert.equal(result.breakdown.habilitation, 45, 'the exact rating still scores in the breakdown');
     assert.equal(result.level, 'exact');
-    assert.equal(result.mandatoryMissing.length, 0, 'a type blocker is not a missing qualification');
+    assert.equal(result.missingRequirements.length, 0, 'a type blocker is not a missing qualification');
   });
 
   await test('Blockers — Case 3: toda oferta nombra su tipo, así que siempre hay match o blocker', () => {
@@ -1682,7 +1697,7 @@ async function main() {
     // NOT NULL, una oferta siempre dice para qué puesto es. Lo que se fija
     // ahora es que no queda ningún tercer camino: o casa (línea de match) o
     // no casa (blocker), nunca silencio.
-    const base = { requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] };
+    const base = { requiredHabilitations: [makeHabReq('fx-a320-cfm56')] };
     const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
 
     const met = calculateOfferTechnicianMatch(makeOffer({ ...base, technicianType: 'mechanic' }), technician, RATING_INDEX);
@@ -1702,7 +1717,7 @@ async function main() {
     const base = {
       contractType: 'permanent' as const,
       technicianType: 'mechanic' as const,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     };
     const technician = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
 
@@ -1715,6 +1730,84 @@ async function main() {
     assert.deepEqual(exige.matches, noExige.matches);
   });
 
+  // ── Fase 6 tanda D: "basta con una" vs "hacen falta todas" ────────────
+  await test('requiresAllAircraft=false — cubrir UNA de tres puntúa completo y sin cap', () => {
+    // Criterio de verificación de la tanda. Coincide EXACTAMENTE con lo que
+    // hoy hacían tres filas `preferred`: bestTier manda, la habilitación
+    // puntúa entera y no hay techo. Frente a tres filas `mandatory` esto SUBE
+    // el resultado, y es deliberado — "tres obligatorias" nunca significó lo
+    // que la empresa creía, porque el scorer ya se quedaba con la mejor.
+    const offer = makeOffer({
+      contractType: 'permanent',
+      requiresAllAircraft: false,
+      requiredHabilitations: [
+        makeHabReq('fx-a320-cfm56'),
+        makeHabReq('fx-b737-cfm56'),
+        makeHabReq('fx-b787-genx'),
+      ],
+    });
+    const technician = makeTechnician({ verificationStatus: 'verified', ...EXACT_A320 });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
+
+    assert.deepEqual(result.missingRequirements, [], 'sin exigir todas, lo no cubierto no es un incumplimiento');
+    assert.equal(result.level, 'exact');
+    assert.equal(result.breakdown.habilitation, 45, 'la habilitación puntúa entera: bestTier sigue mandando');
+    assert.ok(result.total > 59, `sin cap: ${result.total} debería superar el techo que sí aplica con requiresAll`);
+  });
+
+  await test('requiresAllAircraft=true — la misma pareja cae al cap de 59', () => {
+    // El mismo par que el test de arriba, cambiando SOLO el booleano. Es la
+    // prueba de que requiresAllAircraft ocupa exactamente el sitio que dejó
+    // `mandatory`: mismo valor de cap, misma posición en la escalera.
+    const base = {
+      contractType: 'permanent' as const,
+      requiredHabilitations: [
+        makeHabReq('fx-a320-cfm56'),
+        makeHabReq('fx-b737-cfm56'),
+        makeHabReq('fx-b787-genx'),
+      ],
+    };
+    const technician = makeTechnician({ verificationStatus: 'verified', ...EXACT_A320 });
+
+    const bastaUna = calculateOfferTechnicianMatch(makeOffer({ ...base, requiresAllAircraft: false }), technician, RATING_INDEX);
+    const todas = calculateOfferTechnicianMatch(makeOffer({ ...base, requiresAllAircraft: true }), technician, RATING_INDEX);
+
+    assert.equal(todas.missingRequirements.length, 2, 'las dos aeronaves no cubiertas se nombran');
+    assert.ok(todas.total <= 59, `esperaba el cap de 59, got ${todas.total}`);
+    assert.deepEqual(
+      todas.breakdown,
+      bastaUna.breakdown,
+      'el DESGLOSE no cambia: el booleano pone un techo, no reparte puntos distintos',
+    );
+  });
+
+  await test('Una licencia por oferta — cada aeronave se cruza con ELLA, sin ambigüedad', () => {
+    // La invariante de misma fila sigue viva del lado del técnico: tener B2 en
+    // el AW139 no satisface una oferta de B1.3 sobre el AW139. Lo que cambia
+    // es que ya no hay DOS licencias en la oferta entre las que confundirse.
+    const offer = makeOffer({
+      licenseCode: 'B1.3',
+      requiredHabilitations: [makeHabReq('fx-aw139-pt6')],
+    });
+    const otraLicencia = makeTechnician({
+      verificationStatus: 'verified',
+      licenses: [makeLicense('B2')],
+      habilitations: [makeHab('B2', { aircraftTypeRatingId: 'fx-aw139-pt6' })],
+    });
+    const laDeLaOferta = makeTechnician({
+      verificationStatus: 'verified',
+      licenses: [makeLicense('B1.3')],
+      habilitations: [makeHab('B1.3', { aircraftTypeRatingId: 'fx-aw139-pt6' })],
+    });
+
+    assert.notEqual(
+      calculateOfferTechnicianMatch(offer, otraLicencia, RATING_INDEX).level,
+      'exact',
+      'la misma aeronave bajo otra licencia no cumple la oferta',
+    );
+    assert.equal(calculateOfferTechnicianMatch(offer, laDeLaOferta, RATING_INDEX).level, 'exact');
+  });
+
   // ── Fase 6 tanda B: la experiencia declarada NO puntúa (todavía) ──────
   //
   // Criterio de verificación de la tanda, escrito como test: "al desplegar B,
@@ -1724,7 +1817,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       technicianType: 'mechanic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const base = { technicianTypes: ['mechanic' as const], verificationStatus: 'verified' as const, ...EXACT_A320 };
 
@@ -1756,7 +1849,7 @@ async function main() {
     // tocado el scorer sin querer.
     const offer = makeOffer({
       technicianType: 'mechanic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const sinNada = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified' });
     const soloExperiencia = makeTechnician({
@@ -1795,7 +1888,7 @@ async function main() {
 
   // ── Fase 6 tanda A: varios tipos por técnico ──────────────────────────
   await test('Tipos múltiples — un técnico con dos tipos casa con las ofertas de AMBOS', () => {
-    const base = { requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] };
+    const base = { requiredHabilitations: [makeHabReq('fx-a320-cfm56')] };
     const dual = makeTechnician({
       technicianTypes: ['avionic', 'mechanic'],
       verificationStatus: 'verified',
@@ -1831,7 +1924,7 @@ async function main() {
     const base = {
       contractType: 'permanent' as const,
       technicianType: 'mechanic' as const,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     };
     const single = makeTechnician({ technicianTypes: ['mechanic'], verificationStatus: 'verified', ...EXACT_A320 });
     const withExtra = makeTechnician({
@@ -1849,7 +1942,7 @@ async function main() {
   });
 
   await test('Blockers — Case 4: fewer declared years than the offer minimum is a blocker (and exactly the minimum is not)', () => {
-    const offer = makeOffer({ minYearsExperience: 5, requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ minYearsExperience: 5, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
 
     const below = calculateOfferTechnicianMatch(makeOffer({ ...offer }), makeTechnician({ yearsExperience: 2, ...EXACT_A320 }), RATING_INDEX);
     assert.equal(below.blockers.length, 1, 'a declared 2 against a required 5 must block');
@@ -1862,7 +1955,7 @@ async function main() {
   });
 
   await test('Blockers — Case 5: NOT declaring years is never a blocker, however high the offer minimum (absent data never penalizes)', () => {
-    const offer = makeOffer({ minYearsExperience: 5, requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ minYearsExperience: 5, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     // yearsExperience left undefined — "not declared", deliberately distinct
     // from a declared 0. Same product rule the server-side prefilter encodes
     // as `years_experience.is.null OR >= N` (applyMinYearsFilter).
@@ -1879,7 +1972,7 @@ async function main() {
   });
 
   await test('Blockers — Case 6: minYearsExperience = 0 means the offer sets no minimum, so nothing is evaluated', () => {
-    const offer = makeOffer({ minYearsExperience: 0, requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')] });
+    const offer = makeOffer({ minYearsExperience: 0, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
     const undeclared = calculateOfferTechnicianMatch(offer, makeTechnician({ ...EXACT_A320 }), RATING_INDEX);
     assert.deepEqual(undeclared.blockers, []);
     const declaredZero = calculateOfferTechnicianMatch(offer, makeTechnician({ yearsExperience: 0, ...EXACT_A320 }), RATING_INDEX);
@@ -1890,7 +1983,11 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       technicianType: 'avionic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      // `requiresAllAircraft` para que las DOS vías de cap se disparen a la
+      // vez, que es lo que este test comprueba: la del blocker y la de la
+      // aeronave no cumplida son independientes y gana la más restrictiva.
+      requiresAllAircraft: true,
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({
       technicianTypes: ['mechanic'],
@@ -1903,7 +2000,7 @@ async function main() {
 
     assert.equal(result.breakdown.habilitation, 0);
     assert.ok(result.blockers.length > 0);
-    assert.ok(result.mandatoryMissing.length > 0, 'both mechanisms fire at once here — they are independent');
+    assert.ok(result.missingRequirements.length > 0, 'both mechanisms fire at once here — they are independent');
     // The raw sum is verified(15) + contractFit(15) = 30 at least, so
     // ZERO_QUALIFICATION_CAP (39) alone would not have reduced it at all.
     // Landing on 19 proves the blocker rung is what applied.
@@ -1923,7 +2020,7 @@ async function main() {
     const offer = makeOffer({
       technicianType: 'avionic',
       minYearsExperience: 5,
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const technician = makeTechnician({ technicianTypes: ['mechanic'], yearsExperience: 2, ...EXACT_A320 });
 
@@ -1945,7 +2042,7 @@ async function main() {
     const offer = makeOffer({
       contractType: 'permanent',
       technicianType: 'avionic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const blockedButPerfectlyQualified = makeTechnician({
       id: 'tech-blocked',
@@ -2041,7 +2138,7 @@ async function main() {
   await test('Copy — a licensed offer keeps its real band label', () => {
     const offer = makeOffer({
       technicianType: 'mechanic',
-      requiredHabilitations: [makeHabReq('B1.1', 'fx-a320-cfm56', 'mandatory')],
+      requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
     const score = calculateOfferTechnicianMatch(
       offer,

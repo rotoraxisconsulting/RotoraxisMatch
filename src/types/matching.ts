@@ -1,7 +1,7 @@
 // A match score is ALWAYS tied to a specific offer + technician pair.
 // It is never a global score on a technician_profile row.
 //
-// `level` / `matches` / `clarifications` / `mandatoryMissing` make the score
+// `level` / `matches` / `clarifications` / `missingRequirements` make the score
 // explainable instead of an opaque percentage:
 //   - 'exact'    every required habilitation matches license+rating exactly
 //                (tier T1 in offerMatchExplain.ts).
@@ -18,8 +18,9 @@
 //                offers with no qualification requirement at all (nothing to
 //                confirm either way).
 //   - 'not_met'  no requirement could be matched at all. This never removes
-//                the technician from results by itself — only an unmet
-//                *mandatory* requirement is surfaced via mandatoryMissing.
+//                the technician from results by itself — a requirement the
+//                offer states and the profile does not meet is surfaced via
+//                missingRequirements.
 export type MatchLevel = 'exact' | 'related' | 'legacy' | 'not_met';
 
 // A slight, non-excluding degradation signal (Fase 3 — vigencia): an
@@ -36,9 +37,9 @@ export interface MatchScore {
   offerId: string;      // the offer this score belongs to
   technicianId: string; // the technician this score belongs to
   // 0–100 — ordering only, never the sole explanation. May be lower than
-  // breakdown's own sum: an unmet mandatory requirement, a zero habilitation
-  // score on a qualification-requiring offer, or a hard blocker caps this
-  // value (see offerMatchExplain.ts MANDATORY_UNMET_CAP /
+  // breakdown's own sum: an incomplete required aircraft set, a zero
+  // habilitation score on a qualification-requiring offer, or a hard blocker
+  // caps this value (see offerMatchExplain.ts INCOMPLETE_AIRCRAFT_SET_CAP /
   // ZERO_QUALIFICATION_CAP / BLOCKER_CAP).
   // breakdown itself is never capped — compare sum(breakdown) to total to
   // detect whether (and how much) a cap applied.
@@ -63,15 +64,21 @@ export interface MatchScore {
   matches: string[];          // human-readable confirmed matches
   clarifications: string[];   // human-readable points that need confirming
   vigenciaNotices: VigenciaNotice[]; // expired / not-current — informational, never excludes (see VigenciaNotice)
-  mandatoryMissing: string[]; // mandatory requirements not met exactly
+  // Requisitos que la oferta declara y el perfil no cumple. DOS fuentes
+  // (Fase 6 tanda D): una aeronave no cumplida en T1 cuando la oferta exige
+  // TODAS (requiresAllAircraft), y la licencia de la oferta que el técnico no
+  // tiene. Antes se llamaba mandatoryMissing, cuando la primera fuente era
+  // una etiqueta por fila.
+  missingRequirements: string[];
   // Hard disqualifiers — English, human-readable, one entry per broken rule.
   //
-  // blockers ≠ mandatoryMissing, and the distinction is deliberate:
-  //   - mandatoryMissing is a QUALIFICATION requirement that was not met
+  // blockers ≠ missingRequirements, and the distinction is deliberate:
+  //   - missingRequirements is a QUALIFICATION requirement that was not met
   //     exactly. The pair is still a legitimate one to look at — a B1.1
   //     technician with the A320 V2500 rating against an offer asking for
   //     the CFM56 is a real, plausible candidate a recruiter may well want
-  //     to call. It caps the score (MANDATORY_UNMET_CAP) and is surfaced,
+  //     to call. It caps the score (INCOMPLETE_AIRCRAFT_SET_CAP) and is
+  //     surfaced,
   //     never hidden.
   //   - blockers means "this pair should not exist": the offer is not for
   //     this technician at all (wrong technician type, less declared

@@ -2819,6 +2819,87 @@ sigue con 0 filas. Rollback confirmado.
 `validate:state-machine` PASS · `validate:auth-hooks` PASS ·
 `validate:aircraft-ratings` PASS.
 
+### Tanda D — HECHA (10/08/2026)
+
+**Migración 053** (aplicada): `offers.license_code` (NULLABLE + FK) y
+`offers.requires_all_aircraft BOOLEAN NOT NULL DEFAULT false`.
+
+⚠ **`license_code` quedó NULLABLE, no NOT NULL como decía el encargo**, con un
+CHECK que la ata al interruptor: `requires_certification = true` ⇒ NOT NULL,
+`false` ⇒ NULL. Dos motivos, el segundo decisivo:
+1. NOT NULL contradice la tanda C — una oferta que no exige certificar no
+   puede exigir licencia, y tendría que nombrar una inventada.
+2. `getMatchScoreWeights` elige entre `QUALIFICATION_WEIGHTS` (escala 100) y
+   `NO_REQUIREMENTS_WEIGHTS` (75) según si la oferta nombra licencia o
+   aeronaves. Con la columna obligatoria en TODAS, la segunda tabla se queda
+   sin uso y **toda oferta sin certificar salta de 75 a 100** — la migración
+   habría cambiado el scorer por la puerta de atrás.
+
+"Una licencia por oferta" se cumple igual: la columna es escalar. Y el CHECK
+sube a la base la invariante de la tanda C, que hasta ahora sólo vivía en
+`assertRequirementsMatchCertification`.
+
+**Migración 054 escrita y SIN APLICAR**: quita `license_code` y
+`requirement_level` de `offer_required_habilitations`, **reconstruye su PRIMARY
+KEY** a `(offer_id, aircraft_type_rating_id)` —al quitar una columna de la PK,
+Postgres la dropea entera con un simple NOTICE y la tabla admitiría la misma
+aeronave repetida— y dropea `offer_required_licenses`, que se queda sin
+lectores ni escritores en este mismo commit (no estaba en el encargo: apareció
+al implementar, porque `offers.license_code` sustituye también al CONJUNTO de
+categorías, no sólo a la columna por fila).
+
+#### El cap: `mandatory` no se pierde, cambia de dueño
+
+`MANDATORY_UNMET_CAP` → `INCOMPLETE_AIRCRAFT_SET_CAP`, **mismo valor (59) y
+misma posición en la escalera**. El flag pasa de `hasMandatoryUnmet` a
+`hasIncompleteAircraftSet`, alimentado por `requiresAllAircraft`. No es tocar
+el cap: es que "mandatory" deja de existir y un nombre que nombra algo
+inexistente es la deuda que ya costó horas con `offer_required_aircraft_types`.
+
+`mandatoryMissing` → `missingRequirements`, y **no se quedó sin fuente: tenía
+dos**. La que desaparece es la fila `mandatory` incumplida. La que sobrevive
+intacta —y que la tanda vuelve MÁS frecuente— es la rama broad: la oferta pide
+una licencia que el técnico no tiene. Por eso el nombre nuevo es genérico y los
+tres copys de UI se reescribieron para cubrir las dos ("Requirements not met",
+"this offer states a requirement this profile does not meet", "Not met: …").
+
+**Cambio de puntuación que hay que conocer**: con `requiresAllAircraft = false`,
+cubrir una de tres puntúa igual que hoy con tres filas `preferred` (habilitación
+entera, sin cap) y **SUBE** respecto a tres filas `mandatory` (que capaban a
+59). Es intencionado: "tres obligatorias" nunca significó lo que la empresa
+creía, porque el scorer ya se quedaba con la mejor. Con `true` se recupera el
+comportamiento viejo exacto.
+
+Un detalle que sólo apareció al escribir el test: `level` se degradaba a
+`related` aunque la oferta no exigiera todas. En el modelo anterior
+`everyMandatoryExact` sólo lo ponían a false las filas `mandatory`, así que una
+lista toda `preferred` seguía dando `exact`. Corregido con
+`requiredSetSatisfied`.
+
+**Sobre la invariante de misma fila**: sigue viva y NO se ha relajado. Es una
+regla sobre el TÉCNICO (`technician_habilitations`, `license_code` sigue NOT
+NULL, con post-condición en la 053 que aborta si alguien lo cambiara). Del lado
+de la oferta desaparece la ambigüedad que la hacía necesaria: con una sola
+licencia no hay dos entre las que confundirse al cruzarla con cada aeronave.
+Hay test que lo fija — la misma aeronave bajo otra licencia no cumple.
+
+**UI**: fuera el selector de licencia por fila y las píldoras
+Mandatory/Preferred. `RequiredLicensesSection` pasa de conjunto a una sola
+licencia y pierde el plegado (existía porque la licencia era la vía aproximada
+y quedaba anulada por los requisitos exactos; ahora es el eje con el que se
+cruza cada aeronave y se usa siempre). La casilla de "hacen falta todas" va
+BAJO la lista y **sólo aparece con dos o más aeronaves** — con una sola, las
+dos respuestas dicen lo mismo.
+
+**Sonda en transacción con rollback** (6 casos): certificar nombrando licencia
+→ OK · DEFAULT de `requires_all_aircraft` = false · certificar SIN licencia →
+CHECK · no certificar Y nombrar licencia → CHECK · no certificar sin licencia →
+OK · licencia fuera del catálogo → FK. Rollback confirmado.
+
+`tsc` 0 · `test:matching` 154/154 (+3) · `test:url-validation` PASS ·
+`validate:state-machine` PASS · `validate:auth-hooks` PASS ·
+`validate:aircraft-ratings` PASS.
+
 ### Tanda C — HECHA (10/08/2026)
 
 **Migración 051** (aplicada): `offers.requires_certification BOOLEAN NOT NULL

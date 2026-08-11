@@ -303,14 +303,9 @@ export default function BrowseOffersScreen() {
                   <TechnicianBadge label={getMatchDisplayLabel(offer, score)} tone={scoreTone(score.total)} small />
                 </View>
 
-                {offer.requiredLicenses.length > 0 && (
+                {offer.licenseCode && (
                   <View style={styles.reqRow}>
-                    {offer.requiredLicenses.slice(0, 6).map((l, i) => (
-                      <TechnicianChip key={i} label={l} />
-                    ))}
-                    {offer.requiredLicenses.length > 6 && (
-                      <TechnicianChip label={`+${offer.requiredLicenses.length - 6} more`} />
-                    )}
+                    <TechnicianChip label={offer.licenseCode} />
                   </View>
                 )}
 

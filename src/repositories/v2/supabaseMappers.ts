@@ -137,6 +137,11 @@ export function mapOfferRow(row: DbRow): Offer {
     // la dirección peligrosa — haciendo pasar por "exige certificar" a una
     // oferta que declaró lo contrario.
     requiresCertification: Boolean(row.requires_certification),
+    // `?? undefined` y no `?? null`: NULL en la columna significa "esta oferta
+    // no exige certificar", y el CHECK de la 053 garantiza que sólo pasa en
+    // ese caso. Nunca es un dato que falte.
+    licenseCode: (row.license_code as LicenseCode | null) ?? undefined,
+    requiresAllAircraft: Boolean(row.requires_all_aircraft),
     locationCityId: row.location_city_id,
     locationCountry: row.location_country,
     locationCity: row.location_city,
@@ -150,17 +155,12 @@ export function mapOfferRow(row: DbRow): Offer {
   };
 }
 
-type OfferRequirementsPick = Pick<
-  OfferWithRequirements,
-  'requiredLicenses' | 'requiredHabilitations'
->;
+type OfferRequirementsPick = Pick<OfferWithRequirements, 'requiredHabilitations'>;
 
 export function mapOfferRequiredHabilitationRow(row: DbRow): OfferRequiredHabilitation {
   return {
     offerId: row.offer_id,
-    licenseCode: row.license_code as LicenseCode,
     aircraftTypeRatingId: row.aircraft_type_rating_id,
-    requirementLevel: row.requirement_level as RequirementLevel,
     notes: row.notes ?? undefined,
     createdAt: row.created_at,
   };
@@ -170,7 +170,7 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   const uniqueIds = [...new Set(offerIds)].filter(Boolean);
   const empty: Record<string, OfferRequirementsPick> = {};
   for (const id of uniqueIds) {
-    empty[id] = { requiredLicenses: [], requiredHabilitations: [] };
+    empty[id] = { requiredHabilitations: [] };
   }
   if (uniqueIds.length === 0) return empty;
 
@@ -184,16 +184,17 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
   // exactamente con la misma forma y el mismo riesgo. Lo sustituye la columna
   // `offers.technician_type` (migración 051), que llega ya en mapOfferRow; el
   // DROP de la tabla va en la 052, después de este cambio.
-  const [licensesRes, habilitationsRes] = await Promise.all([
-    supabase.from('offer_required_licenses').select('offer_id, license_code').in('offer_id', uniqueIds),
-    supabase.from('offer_required_habilitations').select('offer_id, license_code, aircraft_type_rating_id, requirement_level, notes, created_at').in('offer_id', uniqueIds),
+  // Fase 6 tanda D: `offer_required_licenses` deja de leerse — la licencia es
+  // `offers.license_code`, una sola, y llega ya en mapOfferRow. Y de
+  // `offer_required_habilitations` se dejan de pedir `license_code` y
+  // `requirement_level`: las dos columnas se dropean en la migración 054,
+  // DESPUÉS de este cambio, porque pedirlas por nombre cuando ya no existen
+  // no degrada nada — tumba el listado de ofertas entero.
+  const [habilitationsRes] = await Promise.all([
+    supabase.from('offer_required_habilitations').select('offer_id, aircraft_type_rating_id, notes, created_at').in('offer_id', uniqueIds),
   ]);
-  throwIfError(licensesRes.error);
   throwIfError(habilitationsRes.error);
 
-  for (const row of (licensesRes.data ?? []) as DbRow[]) {
-    empty[row.offer_id]?.requiredLicenses.push(row.license_code as LicenseCode);
-  }
   for (const row of (habilitationsRes.data ?? []) as DbRow[]) {
     empty[row.offer_id]?.requiredHabilitations.push(mapOfferRequiredHabilitationRow(row));
   }
@@ -203,7 +204,6 @@ export async function loadOfferRequirements(offerIds: string[]): Promise<Record<
 export function withRequirements(offer: Offer, reqs?: OfferRequirementsPick): OfferWithRequirements {
   return {
     ...offer,
-    requiredLicenses: reqs?.requiredLicenses ?? [],
     requiredHabilitations: reqs?.requiredHabilitations ?? [],
   };
 }

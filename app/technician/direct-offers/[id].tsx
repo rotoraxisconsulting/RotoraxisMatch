@@ -323,11 +323,11 @@ export default function DirectOfferDetailScreen() {
                   label="Certified work"
                   items={[visibleOffer.requiresCertification ? 'Licence required' : 'No licence needed']}
                 />
-                {visibleOffer.requiredLicenses.length > 0 && <ReqRow label="Licenses" items={visibleOffer.requiredLicenses} />}
+                {visibleOffer.licenseCode && <ReqRow label="Licence" items={[visibleOffer.licenseCode]} />}
                 {visibleOffer.requiredHabilitations.length > 0 && (
                   <ReqRow
-                    label="Type rating requirements"
-                    items={visibleOffer.requiredHabilitations.map((h) => `${h.licenseCode} + ${getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex)} (${h.requirementLevel})`)}
+                    label={visibleOffer.requiresAllAircraft ? 'Aircraft — ALL of these' : 'Aircraft — any one of these'}
+                    items={visibleOffer.requiredHabilitations.map((h) => getAircraftTypeRatingLabel(h.aircraftTypeRatingId, ratingIndex))}
                   />
                 )}
               </View>

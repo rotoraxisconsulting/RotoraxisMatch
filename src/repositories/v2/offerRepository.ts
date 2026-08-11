@@ -103,16 +103,19 @@ export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible
  */
 function assertRequirementsMatchCertification(requirements: {
   requiresCertification: boolean;
-  licenses: readonly LicenseCode[];
+  // Fase 6 tanda D: `licenses` desapareció del parámetro. La licencia es
+  // ahora `offers.license_code`, y su coherencia con el interruptor la impone
+  // el CHECK chk_offers_license_matches_certification (migración 053) — en la
+  // base, no sólo aquí. Lo que sigue sin poder comprobar un CHECK es la
+  // relación entre el interruptor y las filas de OTRA tabla, que es
+  // exactamente lo que queda en esta función.
   habilitations?: readonly unknown[];
 }): void {
   if (requirements.requiresCertification) return;
-
-  const part66 = requirements.licenses.length + (requirements.habilitations?.length ?? 0);
-  if (part66 === 0) return;
+  if ((requirements.habilitations?.length ?? 0) === 0) return;
 
   throw new Error(
-    'This offer does not require certified work, so it cannot require a licence or a type rating. ' +
+    'This offer does not require certified work, so it cannot require an aircraft type rating. ' +
       'Remove those requirements, or turn certification back on.',
   );
 }
@@ -265,14 +268,14 @@ export const offerRepository = {
     locationBaseAirport?: string;
     minYearsExperience: number;
     status?: OfferStatus;
-    requiredLicenses?: LicenseCode[];
-    requiredHabilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
+    licenseCode?: LicenseCode;
+    requiresAllAircraft?: boolean;
+    requiredHabilitations?: { aircraftTypeRatingId: string; notes?: string }[];
   }): Promise<OfferWithRequirements> {
     // Checked BEFORE the insert: failing after it would leave an orphan
     // offer row behind for a save the caller was told had failed.
     assertRequirementsMatchCertification({
       requiresCertification: data.requiresCertification,
-      licenses: data.requiredLicenses ?? [],
       habilitations: data.requiredHabilitations ?? [],
     });
     const status = data.status ?? 'draft';
@@ -287,6 +290,10 @@ export const offerRepository = {
         product_type: data.productType,
         technician_type: data.technicianType,
         requires_certification: data.requiresCertification,
+        // `?? null`: sin licencia elegida la columna va a NULL, que es lo que
+        // el CHECK exige cuando no se certifica — y lo que rechaza cuando sí.
+        license_code: data.licenseCode ?? null,
+        requires_all_aircraft: data.requiresAllAircraft ?? false,
         location_city_id: location.locationCityId,
         location_country: location.locationCountry,
         location_city: location.locationCity,
@@ -300,16 +307,15 @@ export const offerRepository = {
     throwIfError(error);
 
     const offer = mapOfferRow(inserted as any);
-    const requirements = {
-      licenses: data.requiredLicenses ?? [],
-      habilitations: data.requiredHabilitations ?? [],
-    };
+    const habilitations = data.requiredHabilitations ?? [];
     // `offer.requiresCertification` y no `data.`: lo que vale es lo que la
     // base acaba de guardar, no lo que el llamante creía estar mandando.
-    await this.replaceRequirements(offer.id, { ...requirements, requiresCertification: offer.requiresCertification });
+    await this.replaceRequirements(offer.id, {
+      requiresCertification: offer.requiresCertification,
+      habilitations,
+    });
     return withRequirements(offer, {
-      requiredLicenses: requirements.licenses,
-      requiredHabilitations: requirements.habilitations.map((h) => ({ ...h, offerId: offer.id, createdAt: offer.createdAt })),
+      requiredHabilitations: habilitations.map((h) => ({ ...h, offerId: offer.id, createdAt: offer.createdAt })),
     });
   },
 
@@ -378,51 +384,33 @@ export const offerRepository = {
     return { action: 'archived' };
   },
 
+  /**
+   * Fase 6 tanda D: este método se ha quedado sin nada propio que escribir.
+   *
+   * Escribía `offer_required_licenses` (el conjunto de categorías que la
+   * oferta pedía). Esa tabla la sustituye `offers.license_code` — UNA sola
+   * licencia, columna de `offers`, escrita por create()/update(). La tabla
+   * queda sin lectores ni escritores y se dropea en la migración 054.
+   *
+   * Se conserva como puerta de entrada porque sigue haciendo dos cosas que
+   * importan: valida la coherencia con el interruptor de certificación ANTES
+   * de tocar nada, y delega en replaceRequiredHabilitations. Las pantallas
+   * llaman a un solo sitio para guardar requisitos, como hasta ahora.
+   */
   async replaceRequirements(offerId: string, requirements: {
     // Fase 6 tanda C: ya no se recibe `technicianTypes`. El tipo es una
     // columna de `offers` y lo escribe update()/create(), no este método.
     // Lo que sí llega es el interruptor, porque es lo que decide si estos
     // requisitos son legales siquiera.
     requiresCertification: boolean;
-    licenses: LicenseCode[];
-    // Optional — omit to leave existing exact habilitation requirements
-    // untouched (callers that only manage the broad requirement chips don't
-    // need to know about this table).
-    habilitations?: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[];
+    // Optional — omit to leave existing aircraft requirements untouched.
+    habilitations?: { aircraftTypeRatingId: string; notes?: string }[];
   }): Promise<void> {
-    // Before the deletes, never after: a rejected save must leave the offer's
-    // existing requirements exactly as they were.
-    assertRequirementsMatchCertification(requirements);
-
-    const { error: deleteError } = await supabase
-      .from('offer_required_licenses')
-      .delete()
-      .eq('offer_id', offerId);
-    throwIfError(deleteError);
-
-    const inserts = [];
-    if (requirements.licenses.length > 0) {
-      inserts.push(
-        supabase.from('offer_required_licenses').insert(
-          requirements.licenses.map((code) => ({ offer_id: offerId, license_code: code })),
-        ),
-      );
-    }
-    // Fase 5 (2026-08-04): aquí se escribía también offer_required_aircraft_types
-    // (el requisito aproximado por familia). Se retiró con el resto del filtro
-    // aproximado; la tabla se dropea en la migración 045, DESPUÉS de este
-    // cambio de código, nunca antes.
-    //
-    // Los DELETE de arriba no llevan comprobación de filas a propósito: una
-    // oferta sin requisitos borra cero filas legítimamente. Los INSERT sí,
-    // porque sólo se encolan cuando hay algo que escribir — cero filas ahí
-    // significa que RLS lo bloqueó (p. ej. un rol `viewer`, que no pasa
-    // can_act_for_company) y la pantalla habría dicho "guardado" tras haber
-    // borrado los requisitos anteriores.
-    const results = await Promise.all(inserts.map((q) => q.select('offer_id')));
-    results.forEach((result) => {
-      throwIfError(result.error);
-      throwIfNoRows(result.data, 'Could not save the offer requirements — you may not have permission to edit this offer.');
+    // Before anything is written, never after: a rejected save must leave the
+    // offer's existing requirements exactly as they were.
+    assertRequirementsMatchCertification({
+      requiresCertification: requirements.requiresCertification,
+      habilitations: requirements.habilitations,
     });
 
     if (requirements.habilitations !== undefined) {
@@ -430,12 +418,16 @@ export const offerRepository = {
     }
   },
 
-  // Exact category+rating requirements. Independent from replaceRequirements()
-  // above so a caller that only edits the broad chips never has to reload or
-  // resend the exact-habilitation rows it doesn't manage.
+  // Aircraft requirements. Independent from replaceRequirements() above so a
+  // caller that only flips the certification switch never has to reload or
+  // resend the aircraft rows it doesn't manage.
+  //
+  // Fase 6 tanda D: cada fila es UNA AERONAVE. La licencia con la que se
+  // cruza es la de la oferta (`offers.license_code`) y ya no se repite aquí;
+  // `requirement_level` desaparece con mandatory/preferred.
   async replaceRequiredHabilitations(
     offerId: string,
-    habilitations: { licenseCode: LicenseCode; aircraftTypeRatingId: string; requirementLevel: RequirementLevel; notes?: string }[],
+    habilitations: { aircraftTypeRatingId: string; notes?: string }[],
   ): Promise<void> {
     const { error: deleteError } = await supabase
       .from('offer_required_habilitations')
@@ -463,9 +455,7 @@ export const offerRepository = {
         habilitations.map((h) => ({
           offer_id: offerId,
           product_type: offer.productType,
-          license_code: h.licenseCode,
           aircraft_type_rating_id: h.aircraftTypeRatingId,
-          requirement_level: h.requirementLevel,
           notes: h.notes ?? null,
         })),
       )

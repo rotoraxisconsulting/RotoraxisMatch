@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, StyleSheet } from 'react-native';
 import { spacing } from '../../theme';
 import { CompanyCard, CompanyChip, companyUi } from './CompanyUI';
 import { LicenseCode } from '../../types/catalog';
@@ -8,101 +8,63 @@ import { LICENSE_CATEGORIES } from '../../constants/licenses';
 import { isLicenseCompatibleWithProductType } from '../../utils/licenseCategoryProductType';
 
 interface Props {
-  requiredLicenses: LicenseCode[];
-  onChangeLicenses: (next: LicenseCode[]) => void;
-  // Migración 047 — el requisito amplio se acota por el mismo producto que el
-  // exacto. Una oferta de helicópteros no puede ofrecer B1.1 por ninguna de
-  // las dos vías: aquí no lo impide una FK (esta tabla no la tiene), pero
-  // presentar la opción sería incoherente con el resto del formulario y
-  // volvería a producir el mismo tipo de oferta imposible.
+  // Fase 6 tanda D: UNA licencia por oferta, no un conjunto. `undefined`
+  // mientras la empresa no ha elegido — el guardado lo exige (el CHECK de la
+  // migración 053 lo ata a requiresCertification).
+  licenseCode?: LicenseCode;
+  onChangeLicense: (next: LicenseCode) => void;
+  // Migración 047 — la licencia se acota por el producto declarado por la
+  // oferta. Una oferta de helicópteros no puede pedir B1.1.
   productType: OfferProductType;
-  // requiredLicenses is the broad/approximate scoring path —
-  // offerMatchExplain.ts disables it entirely the moment requiredHabilitations
-  // is non-empty ("el exacto ANULA al amplio"). Drives the default collapse.
-  hasExactRequirements: boolean;
 }
 
-function toggle<T>(list: T[], item: T): T[] {
-  return list.includes(item) ? list.filter((i) => i !== item) : [...list, item];
-}
-
-// Fase 5 (2026-08-04) — this replaces ApproximateFilterSection, which paired
-// "Required licenses" with a "Required aircraft types" family picker. The
-// aircraft half was the approximate-by-family filter and is gone with
-// offer_required_aircraft_types (see docs/MISSION_PART66.md Fase 5); the
-// license half is a LIVE requirement, shown in the offer detail and still
-// scored by offerMatchExplain.ts's license-category branch, so it keeps its
-// editor here rather than disappearing with the section that hosted it.
+// Fase 6 tanda D — de "Required licenses" (un conjunto) a "Licence" (una).
 //
-// The collapse behaviour is retained and still accurate: an offer with exact
-// type-rating requirements does not score licenses at all, so the block
-// demotes itself to a one-line summary instead of competing for attention
-// with the primary picker. Never hides the data or blocks editing: tap to
-// expand.
-export function RequiredLicensesSection({
-  requiredLicenses,
-  onChangeLicenses,
-  hasExactRequirements,
-  productType,
-}: Props) {
+// Pedir B1.3 y B2 a la vez era pedir un mecánico y un aviónico en el mismo
+// anuncio: dos profesiones, dos puestos, dos ofertas. Misma regla que ya rige
+// el tipo de perfil (tanda C) y el producto (migración 047).
+//
+// Con ello desaparece también el plegado del bloque. Existía porque la
+// licencia era la vía APROXIMADA de puntuación y quedaba anulada en cuanto
+// había requisitos exactos ("el exacto ANULA al amplio"), así que competía por
+// atención sin puntuar. Ahora la licencia no es una vía alternativa: es el eje
+// con el que se cruza cada aeronave, y se usa SIEMPRE.
+export function RequiredLicensesSection({ licenseCode, onChangeLicense, productType }: Props) {
   const categories = useMemo(
     () => LICENSE_CATEGORIES.filter((l) => isLicenseCompatibleWithProductType(l.code as LicenseCode, productType)),
     [productType],
   );
-  const [manuallyExpanded, setManuallyExpanded] = useState(false);
-  useEffect(() => {
-    if (!hasExactRequirements) setManuallyExpanded(false);
-  }, [hasExactRequirements]);
-  const expanded = !hasExactRequirements || manuallyExpanded;
 
   return (
     <CompanyCard style={styles.card}>
-      <TouchableOpacity
-        style={styles.header}
-        onPress={() => hasExactRequirements && setManuallyExpanded((v) => !v)}
-        activeOpacity={hasExactRequirements ? 0.7 : 1}
-        accessibilityRole={hasExactRequirements ? 'button' : undefined}
-      >
-        <View style={styles.headerText}>
-          <Text style={styles.title}>Required licenses</Text>
-          <Text style={styles.subtitle}>
-            {hasExactRequirements
-              ? `${requiredLicenses.length} selected — not used for scoring while exact requirements are set`
-              : 'Broad license-category matching. Add exact requirements above for precise scoring.'}
-          </Text>
-        </View>
-        {hasExactRequirements ? <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text> : null}
-      </TouchableOpacity>
+      <Text style={styles.title}>Licence</Text>
+      <Text style={styles.subtitle}>
+        One per offer. Every aircraft you add below is required under this licence — two licences would be two
+        different jobs.
+      </Text>
 
-      {expanded && (
-        <>
-          {hasExactRequirements ? (
-            <Text style={styles.inlineHint}>Not used for scoring while exact requirements are set.</Text>
-          ) : null}
+      <View style={styles.chipRow}>
+        {categories.map((l) => (
+          <CompanyChip
+            key={l.code}
+            label={l.code}
+            selected={licenseCode === l.code}
+            onPress={() => onChangeLicense(l.code as LicenseCode)}
+          />
+        ))}
+      </View>
 
-          <View style={styles.chipRow}>
-            {categories.map((l) => (
-              <CompanyChip
-                key={l.code}
-                label={l.code}
-                selected={requiredLicenses.includes(l.code as LicenseCode)}
-                onPress={() => onChangeLicenses(toggle(requiredLicenses, l.code as LicenseCode))}
-              />
-            ))}
-          </View>
-        </>
-      )}
+      {!licenseCode ? (
+        <Text style={styles.inlineHint}>Pick the licence this role certifies under.</Text>
+      ) : null}
     </CompanyCard>
   );
 }
 
 const styles = StyleSheet.create({
   card: { gap: spacing.sm, marginBottom: spacing.md },
-  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  headerText: { flex: 1, minWidth: 0, gap: 2 },
   title: { fontSize: 15, lineHeight: 20, fontWeight: '700', color: companyUi.text },
   subtitle: { fontSize: 12, lineHeight: 17, fontWeight: '500', color: companyUi.textSoft },
-  chevron: { fontSize: 14, fontWeight: '700', color: companyUi.textMuted },
   inlineHint: {
     fontSize: 11,
     lineHeight: 15,

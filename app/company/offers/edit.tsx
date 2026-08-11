@@ -49,7 +49,8 @@ interface FormState {
   minYearsExperience: number;
   technicianType: TechnicianTypeCode;
   requiresCertification: boolean;
-  requiredLicenses: LicenseCode[];
+  licenseCode?: LicenseCode;
+  requiresAllAircraft: boolean;
   requiredHabilitations: ExactHabilitationRow[];
   status: OfferStatus;
 }
@@ -61,9 +62,13 @@ function computeErrors(form: FormState) {
       : undefined,
     description: !form.description.trim() ? 'Description is required.' : undefined,
     location: !form.locationCityId ? 'Please select a country and city.' : undefined,
+    // Fase 6 tanda D: exigir certificar sin decir QUÉ licencia es el estado
+    // que el CHECK de la 053 rechaza. Se avisa aquí en vez de dejar que
+    // Postgres devuelva un error de constraint.
+    license: form.requiresCertification && !form.licenseCode ? 'Select the licence this role certifies under.' : undefined,
   };
 }
-type FormErrors = { title?: string; description?: string; location?: string };
+type FormErrors = { title?: string; description?: string; location?: string; license?: string };
 
 export default function EditOfferScreen() {
   const router = useRouter();
@@ -94,11 +99,10 @@ export default function EditOfferScreen() {
           minYearsExperience: o.minYearsExperience,
           technicianType: o.technicianType,
           requiresCertification: o.requiresCertification,
-          requiredLicenses: o.requiredLicenses as LicenseCode[],
+          licenseCode: o.licenseCode,
+          requiresAllAircraft: o.requiresAllAircraft,
           requiredHabilitations: o.requiredHabilitations.map((h) => ({
-            licenseCode: h.licenseCode,
             aircraftTypeRatingId: h.aircraftTypeRatingId,
-            requirementLevel: h.requirementLevel,
             notes: h.notes,
           })),
           status: o.status,
@@ -133,8 +137,8 @@ export default function EditOfferScreen() {
 
     if (!next) {
       const dropped: string[] = [];
-      if (form.requiredLicenses.length > 0) {
-        dropped.push(`the ${form.requiredLicenses.join(', ')} licence requirement${form.requiredLicenses.length !== 1 ? 's' : ''}`);
+      if (form.licenseCode) {
+        dropped.push(`the ${form.licenseCode} licence requirement`);
       }
       if (form.requiredHabilitations.length > 0) {
         dropped.push(`${form.requiredHabilitations.length} type rating requirement${form.requiredHabilitations.length !== 1 ? 's' : ''}`);
@@ -156,7 +160,42 @@ export default function EditOfferScreen() {
     setForm((prev) => prev ? {
       ...prev,
       requiresCertification: next,
-      ...(next ? {} : { requiredLicenses: [], requiredHabilitations: [] }),
+      ...(next ? {} : { licenseCode: undefined, requiredHabilitations: [], requiresAllAircraft: false }),
+    } : prev);
+  }
+
+  /**
+   * Cambiar la licencia con aeronaves ya metidas (Fase 6 tanda D). Mismo
+   * patrón que el producto y el interruptor: editando se avisa, porque lo que
+   * se descarta ya está en la base; si cancela, el selector no se mueve.
+   *
+   * Las aeronaves caen SIEMPRE que hay licencia nueva, no sólo si "dejan de
+   * encajar": estaban puestas para cruzarse con la licencia anterior, y
+   * conservarlas las dejaría exigiendo un rating bajo una licencia que la
+   * empresa acaba de descartar.
+   */
+  async function onSelectLicense(next: LicenseCode) {
+    if (!form || next === form.licenseCode) return;
+
+    if (form.requiredHabilitations.length > 0) {
+      const n = form.requiredHabilitations.length;
+      const confirmed = await confirmAction({
+        title: `Switch the licence to ${next}?`,
+        message:
+          `The ${n} aircraft requirement${n !== 1 ? 's' : ''} on this offer ${n !== 1 ? 'were' : 'was'} added under ` +
+          `${form.licenseCode ?? 'the previous licence'}, so switching clears ${n !== 1 ? 'them' : 'it'}. ` +
+          'You will need to add the aircraft again under the new licence.',
+        confirmLabel: 'Switch and clear',
+        destructive: true,
+      });
+      if (!confirmed) return;
+    }
+
+    setForm((prev) => prev ? {
+      ...prev,
+      licenseCode: next,
+      requiredHabilitations: [],
+      requiresAllAircraft: false,
     } : prev);
   }
 
@@ -174,9 +213,10 @@ export default function EditOfferScreen() {
   async function onSelectProductType(productType: OfferProductType) {
     if (!form || productType === form.productType) return;
 
-    const droppedLicenses = form.requiredLicenses.filter(
-      (code) => !isLicenseCompatibleWithProductType(code, productType),
-    );
+    const droppedLicenses =
+      form.licenseCode && !isLicenseCompatibleWithProductType(form.licenseCode, productType)
+        ? [form.licenseCode]
+        : [];
     const droppedRatings = form.requiredHabilitations.length;
 
     if (droppedRatings > 0 || droppedLicenses.length > 0) {
@@ -199,7 +239,11 @@ export default function EditOfferScreen() {
       ...prev,
       productType,
       requiredHabilitations: [],
-      requiredLicenses: prev.requiredLicenses.filter((code) => isLicenseCompatibleWithProductType(code, productType)),
+      requiresAllAircraft: false,
+      licenseCode:
+        prev.licenseCode && isLicenseCompatibleWithProductType(prev.licenseCode, productType)
+          ? prev.licenseCode
+          : undefined,
     } : prev);
   }
 
@@ -231,6 +275,8 @@ export default function EditOfferScreen() {
         // cambia.
         productType: form.productType,
         technicianType: form.technicianType,
+        licenseCode: form.licenseCode,
+        requiresAllAircraft: form.requiresAllAircraft,
         // Igual que productType: va en el update() y no en
         // replaceRequirements(), y el repositorio limpia los requisitos
         // Part-66 si ve que se apaga — la invariante lo exige aunque aquí no
@@ -243,7 +289,6 @@ export default function EditOfferScreen() {
       });
       await offerRepository.replaceRequirements(id, {
         requiresCertification: form.requiresCertification,
-        licenses: form.requiredLicenses,
         habilitations: form.requiredHabilitations,
       });
       router.back();
@@ -428,9 +473,8 @@ export default function EditOfferScreen() {
         {/* 4) licencia y 5) aeronaves, solo si la oferta exige certificar. */}
         {requiresCertification && (
           <RequiredLicensesSection
-            requiredLicenses={form.requiredLicenses}
-            onChangeLicenses={(next) => setField('requiredLicenses', next)}
-            hasExactRequirements={form.requiredHabilitations.length > 0}
+            licenseCode={form.licenseCode}
+            onChangeLicense={(next) => { void onSelectLicense(next); }}
             productType={form.productType}
           />
         )}
@@ -440,6 +484,9 @@ export default function EditOfferScreen() {
             value={form.requiredHabilitations}
             onChange={(next) => setField('requiredHabilitations', next)}
             productType={form.productType}
+            licenseCode={form.licenseCode}
+            requiresAll={form.requiresAllAircraft}
+            onChangeRequiresAll={(next) => setField('requiresAllAircraft', next)}
           />
         )}
 

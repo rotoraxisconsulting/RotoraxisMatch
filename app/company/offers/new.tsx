@@ -48,7 +48,8 @@ interface FormState {
   minYearsExperience: number;
   technicianType: TechnicianTypeCode;
   requiresCertification: boolean;
-  requiredLicenses: LicenseCode[];
+  licenseCode?: LicenseCode;
+  requiresAllAircraft: boolean;
   requiredHabilitations: ExactHabilitationRow[];
 }
 
@@ -59,9 +60,13 @@ function computeErrors(form: FormState) {
       : undefined,
     description: !form.description.trim() ? 'Description is required.' : undefined,
     location: !form.locationCityId ? 'Please select a country and city.' : undefined,
+    // Fase 6 tanda D: exigir certificar sin decir QUÉ licencia es el estado
+    // que el CHECK de la 053 rechaza. Se avisa aquí en vez de dejar que
+    // Postgres devuelva un error de constraint.
+    license: form.requiresCertification && !form.licenseCode ? 'Select the licence this role certifies under.' : undefined,
   };
 }
-type FormErrors = { title?: string; description?: string; location?: string };
+type FormErrors = { title?: string; description?: string; location?: string; license?: string };
 
 export default function NewOfferScreen() {
   const router = useRouter();
@@ -88,7 +93,11 @@ export default function NewOfferScreen() {
     // interruptor conserva el comportamiento previo a que existiera.
     technicianType: 'mechanic',
     requiresCertification: true,
-    requiredLicenses: [],
+    // Sin licencia elegida al arrancar: el guardado la exige (CHECK de la
+    // 053) y un valor por defecto haria pasar por elegida una que nadie
+    // eligio. `requiresAllAircraft` arranca en false — "basta con una".
+    licenseCode: undefined,
+    requiresAllAircraft: false,
     requiredHabilitations: [],
   });
   const [saving, setSaving] = useState(false);
@@ -109,7 +118,7 @@ export default function NewOfferScreen() {
       requiresCertification: next,
       // Sin certificación no hay eje Part-66 que pedir. Encenderla no
       // devuelve nada: lo que se quitó, se quitó.
-      ...(next ? {} : { requiredLicenses: [], requiredHabilitations: [] }),
+      ...(next ? {} : { licenseCode: undefined, requiredHabilitations: [], requiresAllAircraft: false }),
     }));
   }
 
@@ -126,9 +135,27 @@ export default function NewOfferScreen() {
       // Los ratings son del producto anterior, sin excepción posible: las FK
       // compuestas de la 047 los rechazarían al guardar.
       requiredHabilitations: [],
-      // Las licencias solo se caen si dejan de encajar: B2/B2L/C/L cubren
-      // ambos productos y no hay motivo para quitarlas.
-      requiredLicenses: prev.requiredLicenses.filter((code) => isLicenseCompatibleWithProductType(code, productType)),
+      requiresAllAircraft: false,
+      // La licencia solo se cae si deja de encajar: B2/B2L/C/L cubren ambos
+      // productos y no hay motivo para quitarlas.
+      licenseCode:
+        prev.licenseCode && isLicenseCompatibleWithProductType(prev.licenseCode, productType)
+          ? prev.licenseCode
+          : undefined,
+    }));
+  }
+
+  // Creando, cambiar la licencia con aeronaves ya metidas repinta SOBRE LA
+  // MARCHA, sin aviso — mismo criterio que el producto y el interruptor. Las
+  // aeronaves se van porque estaban puestas para OTRA licencia: conservarlas
+  // las dejaría cruzadas contra una que la empresa acaba de descartar.
+  function onSelectLicense(next: LicenseCode) {
+    if (next === form.licenseCode) return;
+    setForm((prev) => ({
+      ...prev,
+      licenseCode: next,
+      requiredHabilitations: [],
+      requiresAllAircraft: false,
     }));
   }
 
@@ -162,7 +189,8 @@ export default function NewOfferScreen() {
         status,
         technicianType: form.technicianType,
         requiresCertification: form.requiresCertification,
-        requiredLicenses: form.requiredLicenses,
+        licenseCode: form.licenseCode,
+        requiresAllAircraft: form.requiresAllAircraft,
         requiredHabilitations: form.requiredHabilitations,
       });
       router.back();
@@ -333,9 +361,8 @@ export default function NewOfferScreen() {
             este eje. */}
         {requiresCertification && (
           <RequiredLicensesSection
-            requiredLicenses={form.requiredLicenses}
-            onChangeLicenses={(next) => set('requiredLicenses', next)}
-            hasExactRequirements={form.requiredHabilitations.length > 0}
+            licenseCode={form.licenseCode}
+            onChangeLicense={onSelectLicense}
             productType={form.productType}
           />
         )}
@@ -345,6 +372,9 @@ export default function NewOfferScreen() {
             value={form.requiredHabilitations}
             onChange={(next) => set('requiredHabilitations', next)}
             productType={form.productType}
+            licenseCode={form.licenseCode}
+            requiresAll={form.requiresAllAircraft}
+            onChangeRequiresAll={(next) => set('requiresAllAircraft', next)}
           />
         )}
 
