@@ -148,6 +148,22 @@ export default function TermsOfServiceScreen() {
             Legal: <Bold>[LEGAL_ENTITY_NAME]</Bold>, <Bold>[LEGAL_ADDRESS]</Bold>
           </P>
         </Section>
+
+        {/* Atribución obligatoria, no un crédito de cortesía: la CC BY 4.0 de
+            GeoNames exige el reconocimiento allí donde se usan los datos.
+            También aparece junto a los resultados, en CountryCityPicker.
+            No la quites sin sustituir antes la fuente de datos. */}
+        <Section title="15. Data sources and attribution">
+          <P>
+            City names and coordinates used in our location fields are derived from the <Bold>GeoNames</Bold> geographical database, served through the countries.dev API. GeoNames data is licensed under <Bold>Creative Commons Attribution 4.0 (CC BY 4.0)</Bold>.
+          </P>
+          <P>
+            Source: geonames.org · Licence: creativecommons.org/licenses/by/4.0/
+          </P>
+          <P>
+            Map tiles, where shown, are © <Bold>OpenStreetMap</Bold> contributors, available under the Open Database Licence (ODbL).
+          </P>
+        </Section>
       </ScrollView>
     </SafeAreaView>
   );

@@ -9,7 +9,9 @@ import {
   mapAircraftTypeRatingRow,
 } from '../../constants/aircraftTypeRatings';
 import { createAircraftTypeRatingsCache } from './aircraftTypeRatingsCache';
+import { createLocationCountriesCache } from './locationCountriesCache';
 import { ContractTypeCode, TechnicianTypeCode, CompanyTypeCode, AircraftTypeRatingCatalog } from '../../types/catalog';
+import { CountryCatalogEntry } from '../../types/location';
 import { throwIfError } from './supabaseMappers';
 
 // public.aircraft_type_ratings is the ONLY source of truth for this catalog
@@ -131,6 +133,57 @@ const aircraftTypeRatingsCache = createAircraftTypeRatingsCache({
   fetchByIds: fetchAircraftTypeRatingsByIds,
 });
 
+// ── location_countries (Fase 7, F2a) ───────────────────────────────────
+//
+// El catálogo de países que las migraciones 055/056 sembraron: 250 filas,
+// 249 activas (UM está desactivado porque su centroide es (0,0)). Sustituirá
+// a `location_airports` como fuente de localización, pero AÚN NO: a día de
+// hoy ninguna pantalla ni ningún repositorio lee esto. La retirada de
+// aeropuertos es F2b/F2c.
+//
+// Sin paginar, y aquí sí se puede razonar: son 250 filas contra el tope de
+// 1000 de PostgREST, y el número no puede crecer solo — lo fija ISO-3166-1 y
+// sólo cambia si alguien aplica una migración. No es el caso de
+// aircraft_type_ratings, que creció de 80 a 606 durante una misión. Aun así
+// se pide `count: 'exact'` y se compara, por el mismo motivo que allí: un
+// catálogo truncado en silencio esconde países sin ningún error visible.
+const LOCATION_COUNTRIES_SELECT = 'code, name, latitude, longitude';
+
+interface LocationCountryRow {
+  code: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+async function fetchActiveCountries(): Promise<CountryCatalogEntry[]> {
+  const { data, error, count } = await supabase
+    .from('location_countries')
+    .select(LOCATION_COUNTRIES_SELECT, { count: 'exact' })
+    .eq('is_active', true)
+    .order('name', { ascending: true });
+  throwIfError(error);
+
+  const rows = (data ?? []) as unknown as LocationCountryRow[];
+
+  if (count !== null && count !== undefined && rows.length !== count) {
+    throw new Error(
+      `Country catalog is incomplete: fetched ${rows.length} of ${count} rows. ` +
+        'Refusing to populate the catalog cache with a partial list — a truncated country list ' +
+        'silently hides countries from every location field.',
+    );
+  }
+
+  return rows.map((r) => ({
+    code: r.code,
+    name: r.name,
+    latitude: r.latitude,
+    longitude: r.longitude,
+  }));
+}
+
+const locationCountriesCache = createLocationCountriesCache({ fetchActive: fetchActiveCountries });
+
 // public.aircraft_types (the legacy, coarser 33-row catalog) had a
 // getAircraftTypes()/getAircraftType() pair here that queried it directly.
 // Removed 2026-07-22 (migration 022): reading that table was never the
@@ -210,5 +263,20 @@ export const catalogRepository = {
 
   invalidateAircraftTypeRatingsCache(): void {
     aircraftTypeRatingsCache.invalidate();
+  },
+
+  // --- location_countries — Supabase-backed, cached (Fase 7 F2a) ---
+
+  /** Países activos, ya ordenados por nombre. Sin lectores en producción todavía. */
+  async getCountries(options: { forceRefresh?: boolean } = {}): Promise<CountryCatalogEntry[]> {
+    return locationCountriesCache.getActiveCountries(options);
+  },
+
+  getCountriesCacheStatus() {
+    return locationCountriesCache.getState();
+  },
+
+  invalidateCountriesCache(): void {
+    locationCountriesCache.invalidate();
   },
 };
