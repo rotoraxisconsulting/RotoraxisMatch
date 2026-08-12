@@ -217,7 +217,7 @@ BEGIN
     RAISE EXCEPTION 'La vista sigue nombrando location_airports.';
   END IF;
 
-  -- (6) Los GRANT, que es lo que el DROP se lleva por delante.
+  -- (6) Los GRANT, que es lo que el DROP se lleva por delante. 
   SELECT count(DISTINCT grantee) INTO v_grants
   FROM information_schema.role_table_grants
   WHERE table_schema='public' AND table_name='technician_public_view'
