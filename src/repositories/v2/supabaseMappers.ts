@@ -464,7 +464,13 @@ export function publicRowToPrivateCompat(row: DbRow, relations?: Awaited<ReturnT
     // que veía una empresa.
     birthDate: '',
     technicianTypes: relations?.technicianTypes ?? [],
-    locationCityId: row.location_city_id,
+    // Fase 7 F2d: aquí se leía `row.location_city_id`, y era la última fuga.
+    // `technician_public_view` ya no lo expone —PUBLIC_SELECT dejó de pedirlo
+    // y la migración 061 recrea la vista sin él—, así que el campo llegaba
+    // `undefined` sin que nada avisara. Mismo patrón que OFFER_COLUMNS sin
+    // `license_code` y que los dos fallos de `offerPatchToDb`: un dato que
+    // deja de viajar en silencio. La línea de abajo ya aporta la
+    // localización entera desde las columnas nuevas.
     ...persistedLocationFromRow(row),
     availability: mapAvailability(row.availability),
     yearsExperience: row.years_experience ?? undefined,

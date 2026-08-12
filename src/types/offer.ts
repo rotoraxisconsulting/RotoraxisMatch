@@ -41,11 +41,10 @@ export interface OfferRequiredHabilitation {
   createdAt: string;
 }
 
-// Fase 7 F2b: `PersistedLocation` trae el modelo nuevo (país ISO obligatorio
-// + ciudad opcional con o sin coordenadas). Los cuatro campos de abajo
-// —locationCityId, locationCountry, locationCity, locationBaseAirport— son el
-// modelo VIEJO y siguen aquí porque las pantallas y el scorer los leen. F2c
-// los retira.
+// Fase 7: `PersistedLocation` trae el modelo nuevo (país ISO obligatorio +
+// ciudad opcional con o sin coordenadas). `locationCityId` se retiró en F2d;
+// `locationCountry` (el nombre) y `locationCity` siguen porque las pantallas
+// de oferta los leen.
 export interface Offer extends PersistedLocation {
   id: string;
   companyId: string;
@@ -110,8 +109,6 @@ export interface Offer extends PersistedLocation {
    * que antes disparaba una fila `mandatory` incumplida.
    */
   requiresAllAircraft: boolean;
-  // ⚠ LEGADO (Fase 7 F2c) — ver la nota de TechnicianProfile.
-  locationCityId?: string;
   // Controlled snapshot copied from the canonical location catalog at create/update time.
   locationCountry: string;
   locationCity: string;

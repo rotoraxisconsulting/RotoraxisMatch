@@ -625,6 +625,94 @@ async function main() {
 
   // ── La regla arquitectónica, como test ──────────────────────────────────
 
+  await test('Arquitectura — ningún mapper lee una columna que su SELECT no pide', () => {
+    // ⚠ ESTE ES EL BUG QUE MÁS VECES HA VUELTO en esta misión:
+    //   · OFFER_COLUMNS sin `product_type`                        (migración 047)
+    //   · OFFER_COLUMNS sin `license_code` / `requires_all_aircraft` (F2b)
+    //   · offerPatchToDb sin esas dos                             (Fase 6 tanda D)
+    //   · publicRowToPrivateCompat leyendo `location_city_id`     (F2d)
+    //
+    // Siempre igual: el SELECT deja de pedir una columna, el mapper la sigue
+    // leyendo, y el campo llega `undefined` SIN QUE NADA FALLE. Los tipos
+    // cuadran, no hay excepción, y el dato deja de viajar en silencio.
+    //
+    // Escrito como comentario se erosiona. Escrito como test, no.
+    const root = process.cwd();
+    const mappers = readFileSync(join(root, 'src/repositories/v2/supabaseMappers.ts'), 'utf8');
+    const techRepo = readFileSync(join(root, 'src/repositories/v2/technicianRepositoryV2.ts'), 'utf8');
+    const offerRepo = readFileSync(join(root, 'src/repositories/v2/offerRepository.ts'), 'utf8');
+
+    /** Las columnas que un SELECT pide, sin los embeds de PostgREST. */
+    function columnsOf(source: string, constName: string): Set<string> {
+      const at = source.indexOf('const ' + constName);
+      assert.ok(at >= 0, 'No encuentro ' + constName);
+      const eq = source.indexOf('=', at);
+      const quote = source[source.search(/[`']/) >= 0 ? 0 : 0]; // no usado
+      void quote;
+      // El literal va entre backticks o comillas simples; se toma hasta el
+      // siguiente ';' de la declaración, que es donde termina en los tres casos.
+      const raw = source.slice(eq + 1, source.indexOf(';', eq));
+      return new Set(
+        raw
+          .replace(/[`']/g, '')
+          // fuera los embeds `tabla ( col )`: sus columnas no son de la fila
+          .replace(/[a-z_]+\s*\([^)]*\)/gi, '')
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean),
+      );
+    }
+
+    /** Los `row.x` que lee el cuerpo de una función exportada. */
+    function rowReadsOf(source: string, fnName: string): string[] {
+      const start = source.indexOf('export function ' + fnName + '(');
+      assert.ok(start >= 0, 'No encuentro ' + fnName);
+      const next = source.indexOf('export function ', start + 1);
+      const body = source
+        .slice(start, next < 0 ? undefined : next)
+        // Sin comentarios: si no, el guardián se delata a sí mismo — un
+        // comentario que EXPLICA que ya no se lee `row.location_city_id`
+        // contaba como si lo leyera.
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '');
+      const found = body.match(/\brow\.[a-z_][a-z0-9_]*/g) ?? [];
+      return [...new Set(found.map((m) => m.slice(4)))];
+    }
+
+    const pares = [
+      { select: 'PUBLIC_SELECT', from: techRepo, fn: 'mapPublicTechnicianRow' },
+      { select: 'PUBLIC_SELECT', from: techRepo, fn: 'publicRowToPrivateCompat' },
+      { select: 'PRIVATE_SELECT', from: techRepo, fn: 'mapPrivateTechnicianRow' },
+      { select: 'OFFER_COLUMNS', from: offerRepo, fn: 'mapOfferRow' },
+    ];
+
+    // Cada exención va justificada, o no es una exención sino un bug tapado.
+    //
+    //   user_id, location_countries — llegan por otra vía (la vista los expone
+    //     sin que el SELECT los nombre, o vienen de un embed).
+    //
+    //   created_at, updated_at — ⚠ `technician_public_view` NO LOS EXPONE, y
+    //     `publicRowToPrivateCompat` los resuelve con `?? now`: inventa la
+    //     fecha actual. No es la fuga silenciosa que este test persigue (el
+    //     fallback es explícito), pero SÍ es dato inventado — la misma familia
+    //     que el `birthDate: '1970-01-01'` que hacía a todos los técnicos
+    //     "56 años" ante una empresa. Anotado aquí, sin arreglar: cambiarlo
+    //     toca el contrato de TechnicianWithRelations y es su propia tanda.
+    const EXENTAS = new Set(['user_id', 'location_countries', 'created_at', 'updated_at']);
+
+    const fugas: string[] = [];
+    for (const { select, from, fn } of pares) {
+      const pedidas = columnsOf(from, select);
+      assert.ok(pedidas.size > 3, `${select} parece vacío: el guardián no comprobaría nada`);
+      for (const col of rowReadsOf(mappers, fn)) {
+        if (EXENTAS.has(col)) continue;
+        if (!pedidas.has(col)) fugas.push(`${fn} lee row.${col}, que ${select} no pide`);
+      }
+    }
+
+    assert.deepEqual(fugas, [], fugas.join(' | '));
+  });
+
   await test('Arquitectura — sólo cityDirectoryRepository conoce la URL del proveedor', () => {
     // "Toda la app pide ciudades a este módulo, nunca a la URL directamente."
     // Escrito como comentario se erosiona; escrito como test, no.

@@ -58,8 +58,6 @@ export interface SafeTechnicianPreview extends PersistedLocation {
   // `licenses` y `habilitations` de más abajo — no por technician_public_view,
   // que sólo existe para anular los campos de IDENTIDAD.
   technicianTypes: TechnicianTypeCode[];
-  // ⚠ LEGADO (Fase 7 F2c) — ver la nota de TechnicianProfile.
-  locationCityId?: string;
   country: string;
   city: string;
   baseAirport?: string;

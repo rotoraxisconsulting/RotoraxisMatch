@@ -87,7 +87,6 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     // invariancia de más abajo.
     technicianType: 'mechanic',
     requiresCertification: true,
-    locationCityId: 'airport:XXXX',
     // Fase 7 F2b: el tipo lo exige (NOT NULL en Postgres), pero el scorer NO
     // lo lee todavía — sigue puntuando por locationCityId. Que pase a
     // puntuar por país es F2c, y ahí sí se moverán los números.
@@ -147,7 +146,6 @@ function makeTechnician(overrides: Partial<TechnicianWithRelations> = {}): Techn
     email: 'test@example.com',
     birthDate: '1990-01-01',
     technicianTypes: ['mechanic'],
-    locationCityId: 'airport:YYYY',
     // Distinto del de la oferta a propósito, igual que locationCityId: así
     // el caso por defecto de estos tests sigue siendo "no coinciden".
     locationCountryCode: 'YY',
@@ -660,7 +658,6 @@ async function main() {
     const technician = makeTechnician({
       verificationStatus: 'verified',
       availability: { immediately: true, contractTypes: ['permanent'] },
-      locationCityId: 'airport:TEST',
       licenses: [makeLicense('B1.1')],
       habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
@@ -2383,15 +2380,11 @@ async function main() {
     assert.equal(dentro.total - fuera.total, getMatchScoreWeights(offer).location);
   });
 
-  await test('Localización — el aeropuerto ya no influye', () => {
-    // Mismo país, aeropuertos distintos: antes de F2c esto daba 0 puntos.
-    const offer = makeOffer({ locationCountryCode: 'ES', locationCityId: 'airport:LEMD' });
-    const tech = makeTechnician({ locationCountryCode: 'ES', locationCityId: 'airport:LEVC' });
-    assert.equal(
-      calculateOfferTechnicianMatch(offer, tech, RATING_INDEX).breakdown.location,
-      getMatchScoreWeights(offer).location,
-    );
-  });
+  // El test 'el aeropuerto ya no influye' vivía aquí y se retira en F2d: su
+  // sujeto ya no existe. `locationCityId` salió de Offer y de
+  // TechnicianWithRelations al quedarse sin lectores, así que el compilador
+  // impide ahora lo que ese test comprobaba en ejecución — una garantía más
+  // fuerte, no una menos.
 
   await test('Huérfanas — sin tipos quitados, o sin licencias afectadas, no se pregunta nada', () => {
     // AÑADIR un tipo nunca dispara la pregunta.

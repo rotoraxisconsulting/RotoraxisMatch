@@ -57,7 +57,6 @@ export interface Technician {
   fullName: string;
   email: string;
   phone: string;
-  locationCityId?: string;
   country: string;
   city: string;
   baseAirport: string;
@@ -222,8 +221,8 @@ export interface SocialLinks {
  * (private fields gated by CASE WHEN offer_accepted_between()).
  */
 // Fase 7 F2b: `PersistedLocation` trae el país ISO (obligatorio) y la ciudad
-// opcional. `locationCityId`, más abajo, es el modelo viejo y sigue vivo
-// porque el scorer y 27 ficheros lo leen. F2c lo retira.
+// opcional. Es TODA la localización de un perfil: `locationCityId` se retiró
+// en F2d al quedarse sin un solo lector, y la migración 061 dropea su columna.
 export interface TechnicianProfile extends PersistedLocation {
   id: string;
   userId: string;
@@ -254,11 +253,6 @@ export interface TechnicianProfile extends PersistedLocation {
   technicianTypes: TechnicianTypeCode[];
   // Location FK only. Country, city, base airport and coordinates are derived
   // from the canonical location catalog when building views.
-  // ⚠ LEGADO (Fase 7 F2c). El perfil ya NO elige aeropuerto: elige país y
-  // ciudad. La migración 060 hizo esta columna opcional y sólo la conservan
-  // las filas anteriores; su DROP, y el de location_airports, van en su
-  // propia migración cuando no queden lectores.
-  locationCityId?: string;
 
   availability: Availability;
 
