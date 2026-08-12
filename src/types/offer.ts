@@ -110,7 +110,8 @@ export interface Offer extends PersistedLocation {
    * que antes disparaba una fila `mandatory` incumplida.
    */
   requiresAllAircraft: boolean;
-  locationCityId: string;
+  // ⚠ LEGADO (Fase 7 F2c) — ver la nota de TechnicianProfile.
+  locationCityId?: string;
   // Controlled snapshot copied from the canonical location catalog at create/update time.
   locationCountry: string;
   locationCity: string;

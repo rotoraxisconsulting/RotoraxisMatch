@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
-import { assertNoDirectLocationWrite, locationColumnsFromAirport } from '../../utils/locationBridge';
+import { locationColumns } from '../../utils/locationBridge';
+import { PersistedLocation } from '../../types/location';
 import {
   TechnicianProfile,
   TechnicianWithRelations,
@@ -108,9 +109,6 @@ function warnIfTruncated(context: string, fetched: number, total: number | null)
 }
 
 function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId' | 'createdAt' | 'technicianTypes'>>): Record<string, unknown> {
-  // Fase 7 F2b: la localización nueva se DERIVA del aeropuerto, nunca se
-  // acepta suelta. Ver assertNoDirectLocationWrite — se retira en F2c.
-  assertNoDirectLocationWrite(patch, 'technicianRepositoryV2.privatePatchToDb');
   return {
     ...(patch.anonymousCode !== undefined ? { anonymous_code: patch.anonymousCode } : {}),
     ...(patch.firstName !== undefined ? { first_name: patch.firstName } : {}),
@@ -120,12 +118,15 @@ function privatePatchToDb(patch: Partial<Omit<TechnicianProfile, 'id' | 'userId'
     ...(patch.birthDate !== undefined ? { birth_date: patch.birthDate } : {}),
     // `technicianTypes` NO se escribe aquí: vive en la tabla puente, no en una
     // columna de technician_profiles. Va por replaceProfileTypes().
-    // Un solo origen: cambiar de aeropuerto reescribe TAMBIÉN las cinco
-    // columnas del modelo nuevo, juntas. Escribir el aeropuerto sin ellas
-    // dejaría el país anterior pegado a una ciudad nueva.
-    ...(patch.locationCityId !== undefined
-      ? { location_city_id: patch.locationCityId, ...locationColumnsFromAirport(patch.locationCityId) }
-      : {}),
+    // Fase 7 F2c: escritura DIRECTA de país y ciudad. Las cinco columnas van
+    // siempre juntas — `locationColumns()` no deja escribir sólo algunas, y
+    // por eso cambiar de país limpia las coordenadas de la ciudad anterior en
+    // vez de dejarlas colgando.
+    //
+    // `location_city_id` ya no se escribe: el perfil dejó de elegir
+    // aeropuerto. La columna sigue existiendo (la 060 sólo la hizo opcional)
+    // para las filas anteriores, hasta su propia migración de retirada.
+    ...(patch.locationCountryCode !== undefined ? locationColumns(patch as PersistedLocation) : {}),
     ...(patch.availability !== undefined ? {
       // Sólo `immediately` y `contract_types`. `status` es etiqueta de UI y
       // NUNCA se persiste; `available_from` se retiró en la 041.

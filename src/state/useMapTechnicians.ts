@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SafeTechnicianView } from '../types';
+import { indexCountriesByCode, resolveMapPin } from '../utils/locationBridge';
+import { useCountryCatalog } from './useCountryCatalog';
 import { MapFilters } from '../types/filters';
 import { AvailabilityStatus, TechnicianHabilitation } from '../types/technician';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
@@ -60,6 +62,9 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
   const [technicians, setTechnicians] = useState<SafeTechnicianView[]>([]);
   const [habilitationsById, setHabilitationsById] = useState<Record<string, TechnicianHabilitation[]>>({});
   const [loading, setLoading] = useState(true);
+  // El catálogo de países: sin él no hay centroide al que caer cuando la
+  // ciudad no vino del directorio. Comparte caché con el resto de la app.
+  const { countries } = useCountryCatalog();
 
   const load = useCallback(async () => {
     // companyId hydrates asynchronously in SessionContext (a separate
@@ -123,11 +128,37 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
       }),
     );
 
+    // ── EL PIN, POR REGLA (Fase 7 F2c) ──────────────────────────────
+    //
+    //   Ciudad elegida del directorio  -> sus coordenadas
+    //   Ciudad a mano, o sin ciudad    -> centroide del país
+    //
+    // La distinción NO se re-deriva aquí: `resolveMapPin` la lee de si hay
+    // coordenadas guardadas, que es lo que el CHECK de la 057 garantiza que
+    // sólo ocurre cuando la ciudad vino del directorio.
+    //
+    // `precision` viaja hasta el mapa a propósito: un centroide dibujado
+    // igual que una ciudad se lee como una dirección exacta, y el de
+    // Argelia cae en mitad del Sáhara.
+    const countriesByCode = indexCountriesByCode(countries);
     const scored = views
-      .map((technician) => ({
-        ...technician,
-        matchingScore: scoreMapMatch(technician, selected),
-      }))
+      .map((technician) => {
+        const pin = resolveMapPin(
+          {
+            locationCountryCode: technician.locationCountryCode ?? '',
+            locationCityLat: technician.latitude,
+            locationCityLng: technician.longitude,
+          },
+          countriesByCode,
+        );
+        return {
+          ...technician,
+          latitude: pin?.latitude,
+          longitude: pin?.longitude,
+          locationPrecision: pin?.precision,
+          matchingScore: scoreMapMatch(technician, selected),
+        };
+      })
       .sort((a, b) => (b.matchingScore ?? 0) - (a.matchingScore ?? 0));
     setTechnicians(scored);
     setHabilitationsById(nextHabilitationsById);
@@ -141,6 +172,9 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
     filters.verificationStatuses,
     filters.availabilityStatuses,
     companyId,
+    // El catálogo llega asíncrono: sin esta dependencia, los técnicos
+    // cargados antes se quedarían para siempre sin pin de país.
+    countries,
   ]);
 
   useEffect(() => {

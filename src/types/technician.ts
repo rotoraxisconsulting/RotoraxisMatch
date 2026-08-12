@@ -61,8 +61,18 @@ export interface Technician {
   country: string;
   city: string;
   baseAirport: string;
+  // Fase 7 F2c: el codigo ISO viaja hasta el mapa para poder caer al
+  // centroide del pais cuando la ciudad no trae coordenadas.
+  locationCountryCode?: string;
   latitude?: number;
   longitude?: number;
+  /**
+   * De donde salio el punto: 'city' = la ciudad que el usuario eligio del
+   * directorio; 'country' = el centroide del pais, que NO señala donde esta
+   * nadie. El mapa TIENE que distinguirlos: pintar un centroide igual que
+   * una ciudad lo convierte en una direccion exacta que nadie dio.
+   */
+  locationPrecision?: 'city' | 'country';
   licenseCategories: string[];
   aircraftTypes: string[];
   specialties: string[];
@@ -244,8 +254,11 @@ export interface TechnicianProfile extends PersistedLocation {
   technicianTypes: TechnicianTypeCode[];
   // Location FK only. Country, city, base airport and coordinates are derived
   // from the canonical location catalog when building views.
-  // Required: every persisted technician profile must reference a valid location_airports entry.
-  locationCityId: string;
+  // ⚠ LEGADO (Fase 7 F2c). El perfil ya NO elige aeropuerto: elige país y
+  // ciudad. La migración 060 hizo esta columna opcional y sólo la conservan
+  // las filas anteriores; su DROP, y el de location_airports, van en su
+  // propia migración cuando no queden lectores.
+  locationCityId?: string;
 
   availability: Availability;
 

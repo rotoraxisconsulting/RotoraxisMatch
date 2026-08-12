@@ -2,9 +2,8 @@ import { supabase } from '../../lib/supabase';
 import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
-import { resolveLocationSnapshot } from '../../constants/locationCities';
-import { PersistedLocation } from '../../types/location';
-import { persistedLocationFromAirport } from '../../utils/locationBridge';
+import { LocationValue, PersistedLocation } from '../../types/location';
+import { locationColumns, persistedLocationFromValue } from '../../utils/locationBridge';
 import {
   loadOfferRequirements,
   mapOfferRow,
@@ -40,55 +39,31 @@ import {
 const OFFER_COLUMNS =
   'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, license_code, requires_all_aircraft, location_city_id, location_country, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, min_years_experience, status, visible, expires_at, created_at, updated_at';
 
-type OfferLocationInput = {
-  locationCityId?: string;
-  locationCountry?: string;
-  locationCity?: string;
-  locationBaseAirport?: string;
-};
-
-type ControlledOfferLocation = Pick<Offer, 'locationCityId' | 'locationCountry' | 'locationCity' | 'locationBaseAirport'> &
-  PersistedLocation;
-
 /**
- * La ÚNICA derivación de localización de una oferta. La usan `create()` y
- * `update()`, y produce a la vez el modelo viejo y el nuevo a partir del
- * mismo aeropuerto — no dos caminos que puedan divergir.
+ * La localización de una oferta, tal y como la produce el selector.
  *
- * Fase 7 F2b: antes devolvía cuatro campos que se escribían en cuatro
- * columnas. Ahora sólo `locationCityId`, `locationCountry` y las del modelo
- * nuevo llegan a Postgres; `locationCity` y `locationBaseAirport` viajan en
- * el objeto porque el tipo `Offer` los tiene y las pantallas los leen, pero
- * NO se persisten: la 059 retira sus columnas y `mapOfferRow` los deriva.
+ * Fase 7 F2c: sustituye a `controlledOfferLocation`, que derivaba los cuatro
+ * campos de un aeropuerto del catálogo. Ya no hay aeropuerto que derivar —
+ * `CountryCityPicker` entrega país y ciudad directamente.
+ *
+ * `locationCountry` (el NOMBRE del país) sigue escribiéndose porque su
+ * columna es NOT NULL y las pantallas la leen; sale del propio selector, no
+ * de una segunda resolución. Muere con `location_city_id` en la migración de
+ * retirada.
  */
-function controlledOfferLocation(reference: OfferLocationInput): ControlledOfferLocation {
-  const location = resolveLocationSnapshot({
-    locationCityId: reference.locationCityId,
-    country: reference.locationCountry,
-    city: reference.locationCity,
-    baseAirport: reference.locationBaseAirport,
-  });
-
-  if (!location) {
-    throw new Error('Offer location must reference a valid catalog city.');
-  }
-
-  return {
-    locationCityId: location.locationCityId,
-    locationCountry: location.country,
-    locationCity: location.city,
-    locationBaseAirport: location.baseAirport,
-    ...persistedLocationFromAirport(location.locationCityId),
-  };
+export interface OfferLocationWrite extends PersistedLocation {
+  /** Nombre del país para la columna `location_country`, NOT NULL. */
+  locationCountry: string;
 }
 
-function hasOfferLocationPatch(patch: Partial<Offer>): boolean {
-  return (
-    patch.locationCityId !== undefined ||
-    patch.locationCountry !== undefined ||
-    patch.locationCity !== undefined ||
-    patch.locationBaseAirport !== undefined
-  );
+export function offerLocationFromValue(value: LocationValue): OfferLocationWrite {
+  if (!value.country) {
+    throw new Error('Offer location must have a country.');
+  }
+  return {
+    ...persistedLocationFromValue(value),
+    locationCountry: value.country.name,
+  };
 }
 
 function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record<string, unknown> {
@@ -120,19 +95,16 @@ function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record
         ? { license_code: patch.licenseCode }
         : {}),
     ...(patch.requiresAllAircraft !== undefined ? { requires_all_aircraft: patch.requiresAllAircraft } : {}),
-    ...(patch.locationCityId !== undefined ? { location_city_id: patch.locationCityId } : {}),
     ...(patch.locationCountry !== undefined ? { location_country: patch.locationCountry } : {}),
-    // Fase 7 F2b — `location_city` y `location_base_airport` ya NO se
-    // escriben: la 059 retira las columnas y sus valores se derivan al leer.
-    // En su lugar van las cinco del modelo nuevo, SIEMPRE juntas: escribir el
-    // país sin limpiar las coordenadas dejaría el punto de la ciudad
-    // anterior atado a un país nuevo. Todas vienen de
-    // `controlledOfferLocation`, que es la única que las produce.
-    ...(patch.locationCountryCode !== undefined ? { location_country_code: patch.locationCountryCode } : {}),
-    ...(patch.locationCityName !== undefined ? { location_city_name: patch.locationCityName ?? null } : {}),
-    ...(patch.locationCountryCode !== undefined
-      ? { location_city_lat: patch.locationCityLat ?? null, location_city_lng: patch.locationCityLng ?? null, location_city_geoname_id: patch.locationCityGeonameId ?? null }
-      : {}),
+    // Fase 7 F2c — la localización se escribe DIRECTA, y las cinco columnas
+    // van SIEMPRE juntas. `locationColumns()` no permite escribir sólo
+    // algunas: cambiar el país sin limpiar las coordenadas dejaría el punto
+    // de la ciudad anterior colgando del país nuevo.
+    //
+    // `location_city_id` YA NO SE ESCRIBE. La migración 060 lo hizo opcional
+    // porque el formulario dejó de preguntar por un aeropuerto; la columna y
+    // su FK siguen ahí, para las filas viejas, hasta su propia migración.
+    ...(patch.locationCountryCode !== undefined ? locationColumns(patch as PersistedLocation) : {}),
     ...(patch.minYearsExperience !== undefined ? { min_years_experience: patch.minYearsExperience } : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
     ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
@@ -294,12 +266,12 @@ export const offerRepository = {
     // UPDATE de abajo en la misma sentencia — que es lo que exige
     // chk_offers_license_matches_certification. Ver offerPatchToDb.
 
-    const locationPatch = hasOfferLocationPatch(patch)
-      ? controlledOfferLocation({ ...existing, ...patch })
-      : {};
+    // Fase 7 F2c: ya no hay "localización controlada" que recalcular. El
+    // patch trae país y ciudad tal y como el selector los produjo, y
+    // `offerPatchToDb` escribe las cinco columnas juntas o ninguna.
     const { data, error } = await supabase
       .from('offers')
-      .update(offerPatchToDb({ ...patch, ...locationPatch }))
+      .update(offerPatchToDb(patch))
       .eq('id', id)
       .select(OFFER_COLUMNS)
       .maybeSingle();
@@ -320,10 +292,8 @@ export const offerRepository = {
     productType: OfferProductType;
     technicianType: TechnicianTypeCode;
     requiresCertification: boolean;
-    locationCityId: string;
-    locationCountry?: string;
-    locationCity?: string;
-    locationBaseAirport?: string;
+    /** Fase 7 F2c: país + ciudad del selector, no un aeropuerto del catálogo. */
+    location: LocationValue;
     minYearsExperience: number;
     status?: OfferStatus;
     licenseCode?: LicenseCode;
@@ -331,7 +301,7 @@ export const offerRepository = {
     requiredHabilitations?: { aircraftTypeRatingId: string; notes?: string }[];
   }): Promise<OfferWithRequirements> {
     const status = data.status ?? 'draft';
-    const location = controlledOfferLocation(data);
+    const location = offerLocationFromValue(data.location);
     const { data: inserted, error } = await supabase
       .from('offers')
       .insert({
@@ -346,18 +316,10 @@ export const offerRepository = {
         // el CHECK exige cuando no se certifica — y lo que rechaza cuando sí.
         license_code: data.licenseCode ?? null,
         requires_all_aircraft: data.requiresAllAircraft ?? false,
-        location_city_id: location.locationCityId,
         location_country: location.locationCountry,
-        // Fase 7 F2b: el modelo nuevo. `location_city` y
-        // `location_base_airport` desaparecen con la 059.
-        location_country_code: location.locationCountryCode,
-        location_city_name: location.locationCityName ?? null,
-        // Explícitas a null y no omitidas: una oferta creada desde el
-        // aeropuerto no tiene coordenadas de ciudad, y decirlo es más claro
-        // que confiar en el DEFAULT de la columna.
-        location_city_lat: null,
-        location_city_lng: null,
-        location_city_geoname_id: null,
+        // Fase 7 F2c: las cinco juntas, y sin `location_city_id` — la oferta
+        // ya no nace de un aeropuerto. La 060 hizo esa columna opcional.
+        ...locationColumns(location),
         min_years_experience: data.minYearsExperience,
         status,
         visible: status === 'published',

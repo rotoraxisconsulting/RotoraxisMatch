@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { AppRole, UserStatus } from '../types/enums';
+import { persistedLocationFromAirport } from '../utils/locationBridge';
 
 export interface SupabaseProfile {
   id: string;
@@ -56,6 +57,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Called on every SIGNED_IN event. When email confirmation is enabled,
   // data.session is null at signUp() time so the RPC is skipped there.
   // This function detects that gap and creates the role profile on first login.
+  /**
+   * Los parámetros de localización para los RPC de alta, sirviendo a los DOS
+   * tipos de metadata que conviven ahora mismo:
+   *
+   *   - Escrita por el formulario de F2c: ya trae país y ciudad.
+   *   - Escrita ANTES: sólo trae `location_city_id`, un aeropuerto. Se
+   *     traduce a país aquí, porque el RPC nuevo ya no acepta aeropuertos.
+   *
+   * El segundo caso no es hipotético: es toda cuenta registrada y pendiente
+   * de confirmar el email en el momento del despliegue. Sin esta rama,
+   * confirmar el correo dejaría al usuario sin perfil y sin ningún error
+   * visible — `ensureRoleProfile` traga las excepciones a propósito.
+   */
+  function signupLocationParams(meta: Record<string, any>): Record<string, unknown> {
+    if (meta.location_country_code) {
+      return {
+        p_location_country_code: meta.location_country_code,
+        p_location_city_name: meta.location_city_name ?? null,
+        p_location_city_lat: meta.location_city_lat ?? null,
+        p_location_city_lng: meta.location_city_lng ?? null,
+        p_location_city_geoname_id: meta.location_city_geoname_id ?? null,
+      };
+    }
+
+    const legacy = meta.location_city_id ? persistedLocationFromAirport(meta.location_city_id) : null;
+    return {
+      // Cadena vacía si ni siquiera eso: el RPC lanza con un mensaje claro
+      // ("Unknown or inactive country") en vez de insertar una fila rota.
+      p_location_country_code: legacy?.locationCountryCode ?? '',
+      p_location_city_name: legacy?.locationCityName ?? null,
+      // Sin coordenadas: las del aeropuerto no son las de la ciudad.
+      p_location_city_lat: null,
+      p_location_city_lng: null,
+      p_location_city_geoname_id: null,
+    };
+  }
+
   async function ensureRoleProfile(user: User): Promise<void> {
     const meta = user.user_metadata ?? {};
     const role = meta.role as string | undefined;
@@ -82,7 +120,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // parámetro, quien confirme el email después de este despliegue
             // se crearía con un solo tipo aunque hubiese elegido tres.
             p_technician_types: meta.technician_types ?? null,
-            p_location_city_id: meta.location_city_id ?? '',
+            // Fase 7 F2c. `legacyLocation()` cubre el caso que se rompería en
+            // silencio: una cuenta creada ANTES de este despliegue tiene en
+            // sus metadatos un aeropuerto y ningún país. Sin la traducción,
+            // quien confirme su correo ahora se queda sin perfil.
+            ...signupLocationParams(meta),
             // `?? null` rather than `?? 0`: an account created before the
             // signup form asked for this has no value in its metadata, and
             // NULL means "not declared" — which never penalizes the
@@ -103,7 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await supabase.rpc('signup_company', {
             p_company_name: meta.company_name ?? '',
             p_company_type: meta.company_type ?? '',
-            p_location_city_id: meta.location_city_id ?? '',
+            ...signupLocationParams(meta),
           });
         }
       }

@@ -30,7 +30,9 @@ import { useCompanySession } from '../../src/state/SessionContext';
 import { companyRepositoryV2 } from '../../src/repositories/v2/companyRepositoryV2';
 import { canManageCompanySettings } from '../../src/utils/companyPermissionsV2';
 import { COMPANY_TYPES } from '../../src/constants/companyTypes';
-import { CountryPickerField, CityPickerField } from '../../src/components/LocationPicker';
+import { CountryCityPicker } from '../../src/components/CountryCityPicker';
+import { LocationValue } from '../../src/types/location';
+import { locationValueFromPersisted } from '../../src/utils/locationBridge';
 import type { CompanyProfileView } from '../../src/types/company';
 import type { CompanyTypeCode } from '../../src/types/catalog';
 import { spacing } from '../../src/theme';
@@ -40,9 +42,8 @@ import { isValidUrl, normalizeUrl } from '../../src/utils/urlValidation';
 type CompanyForm = {
   name: string;
   companyType: CompanyTypeCode;
-  locationCityId: string;
-  country: string;
-  city: string;
+  // Fase 7 F2c: pais + ciudad en un solo campo.
+  location: LocationValue;
   email: string;
   phone: string;
   website: string;
@@ -62,9 +63,7 @@ function profileToForm(profile: CompanyProfileView): CompanyForm {
   return {
     name: profile.name,
     companyType: profile.companyType,
-    locationCityId: profile.locationCityId,
-    country: profile.country,
-    city: profile.city,
+    location: locationValueFromPersisted(profile, profile.country),
     email: profile.email,
     phone: profile.phone ?? '',
     website: profile.website ?? '',
@@ -116,8 +115,8 @@ const companyMemberRole = companySession?.companyMemberRole;
     const phone = form.phone.trim();
     const website = form.website.trim();
 
-    if (!name || !form.locationCityId || !email) {
-      notify('Missing information', 'Company name, country, city and email are required.');
+    if (!name || !form.location.country || !email) {
+      notify('Missing information', 'Company name, country and email are required.');
       return;
     }
 
@@ -137,7 +136,11 @@ const companyMemberRole = companySession?.companyMemberRole;
       const updated = await companyRepositoryV2.update(companyId, {
         name,
         companyType: form.companyType,
-        locationCityId: form.locationCityId,
+        locationCountryCode: form.location.country?.code,
+        locationCityName: form.location.city?.name,
+        locationCityLat: form.location.city?.kind === 'directory' ? form.location.city.latitude : undefined,
+        locationCityLng: form.location.city?.kind === 'directory' ? form.location.city.longitude : undefined,
+        locationCityGeonameId: form.location.city?.kind === 'directory' ? form.location.city.geonameId : undefined,
         email,
         phone: phone || undefined,
         // Normalizada al guardar (le antepone https:// si falta), igual que
@@ -330,30 +333,9 @@ function CompanyEditForm({
           ))}
         </View>
       </View>
-      <View style={styles.formRow}>
-        <View style={styles.formHalf}>
-          <CountryPickerField
-            label="Country"
-            value={form.country}
-            onChange={(country) => onChange({
-              country,
-              city: '',
-              locationCityId: '',
-            })}
-          />
-        </View>
-        <View style={styles.formHalf}>
-          <CityPickerField
-            label="City"
-            country={form.country}
-            value={form.city}
-            onChange={(city, _icao, entry) => onChange({
-              city,
-              locationCityId: entry.id,
-            })}
-          />
-        </View>
-      </View>
+      {/* Fase 7 F2c: un solo componente para país + ciudad. Cambiar de país
+          limpia la ciudad por dentro, así que ya no hay que acordarse aquí. */}
+      <CountryCityPicker value={form.location} onChange={(location) => onChange({ location })} />
       <EditableField
         label="Contact email"
         value={form.email}

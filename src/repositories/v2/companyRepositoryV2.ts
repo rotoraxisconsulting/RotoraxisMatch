@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
-import { assertNoDirectLocationWrite, locationColumnsFromAirport } from '../../utils/locationBridge';
+import { locationColumns } from '../../utils/locationBridge';
+import { PersistedLocation } from '../../types/location';
 import { CompanyProfile, CompanyMember, CompanyProfileView } from '../../types/company';
 import { CompanyMemberRole } from '../../types/enums';
 import { mapCompanyMemberRow, mapCompanyRow, throwIfError } from './supabaseMappers';
@@ -17,9 +18,6 @@ type CompanyProfilePatch = Partial<Omit<CompanyProfile, 'id' | 'createdAt'>> & {
 };
 
 function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
-  // Fase 7 F2b: igual que en técnicos — la localización nueva se deriva del
-  // aeropuerto, nunca se acepta suelta. Se retira en F2c.
-  assertNoDirectLocationWrite(patch, 'companyRepositoryV2.companyPatchToDb');
   return {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.phone !== undefined ? { phone: patch.phone ?? null } : {}),
@@ -28,11 +26,9 @@ function companyPatchToDb(patch: CompanyProfilePatch): Record<string, unknown> {
     // '' -> NULL: la ausencia de web se representa de una sola forma, y el
     // CHECK de la migracion 036 rechaza la cadena vacia de todos modos.
     ...(patch.website !== undefined ? { website: patch.website || null } : {}),
-    // Un solo origen, igual que en técnicos: el aeropuerto arrastra consigo
-    // las cinco columnas del modelo nuevo.
-    ...(patch.locationCityId !== undefined
-      ? { location_city_id: patch.locationCityId, ...locationColumnsFromAirport(patch.locationCityId) }
-      : {}),
+    // Fase 7 F2c: escritura directa, las cinco columnas juntas. Igual que en
+    // técnicos, y por el mismo motivo.
+    ...(patch.locationCountryCode !== undefined ? locationColumns(patch as PersistedLocation) : {}),
   };
 }
 

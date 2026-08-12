@@ -131,21 +131,38 @@ export function computeYearsExperience(yearsExperience: number | undefined): num
 // Location helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Fase 7 F2c — LAS COORDENADAS YA NO SALEN DEL AEROPUERTO.
+ *
+ * Antes, `latitude`/`longitude` eran las del aeropuerto del catálogo. Eso es
+ * justo el pin preciso y falso que esta fase retira: Barajas está a 12 km del
+ * centro de Madrid, así que el punto decía "aquí" señalando otro sitio.
+ *
+ * Ahora sólo se propagan las coordenadas de una ciudad ELEGIDA DEL
+ * DIRECTORIO. Si no las hay, quedan `undefined` y es `useMapTechnicians`
+ * quien decide el pin de país — ver `resolveMapPin`. Dejarlas `undefined`
+ * aquí es deliberado: quien no aplique la regla del pin no pinta nada, en vez
+ * de pintar mal.
+ */
 function compatLocation(reference: {
   locationCityId?: string;
   country?: string;
   city?: string;
   baseAirport?: string;
+  locationCityName?: string;
+  locationCityLat?: number;
+  locationCityLng?: number;
 }) {
   const resolved = resolveLocationSnapshot(reference);
 
   return {
     locationCityId: resolved?.locationCityId ?? reference.locationCityId,
     country: resolved?.country ?? reference.country ?? '',
-    city: resolved?.city ?? reference.city ?? '',
+    // La ciudad del modelo nuevo manda; el aeropuerto sólo cubre filas viejas.
+    city: reference.locationCityName ?? resolved?.city ?? reference.city ?? '',
     baseAirport: resolved?.baseAirport ?? reference.baseAirport ?? '',
-    latitude: resolved?.latitude,
-    longitude: resolved?.longitude,
+    latitude: reference.locationCityLat,
+    longitude: reference.locationCityLng,
   };
 }
 
@@ -170,6 +187,7 @@ export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview, ratingIn
     country: location.country,
     city: location.city,
     baseAirport: location.baseAirport,
+    locationCountryCode: preview.locationCountryCode,
     latitude: location.latitude,
     longitude: location.longitude,
     licenseCategories: preview.licenses,
@@ -220,6 +238,7 @@ export function v2TechnicianToV1(tech: TechnicianWithRelations, ratingIndex: Air
     country: location.country,
     city: location.city,
     baseAirport: location.baseAirport,
+    locationCountryCode: tech.locationCountryCode,
     latitude: location.latitude,
     longitude: location.longitude,
     licenseCategories: tech.licenses.map((l) => l.licenseCode),

@@ -24,9 +24,12 @@ import { createCityDirectory } from '../src/repositories/v2/cityDirectoryReposit
 import { createLocationCountriesCache } from '../src/repositories/v2/locationCountriesCache';
 import { CountryCatalogEntry, getCityCoordinates } from '../src/types/location';
 import {
-  assertNoDirectLocationWrite,
-  locationColumnsFromAirport,
+  indexCountriesByCode,
+  locationColumns,
+  locationValueFromPersisted,
   persistedLocationFromAirport,
+  persistedLocationFromValue,
+  resolveMapPin,
 } from '../src/utils/locationBridge';
 import { LOCATION_CITY_INDEX, resolveLocationSnapshot } from '../src/constants/locationCities';
 import { findCountry } from '../src/constants/countries';
@@ -458,6 +461,8 @@ async function main() {
     // esto no es un detalle de implementación, es la regla.
     for (const id of ['airport:LEVC', 'airport:LEAL', 'airport:LIRF', 'airport:SEGU']) {
       const location = persistedLocationFromAirport(id);
+      assert.ok(location, id);
+      if (!location) continue;
       assert.equal(location.locationCityLat, undefined, id);
       assert.equal(location.locationCityLng, undefined, id);
       assert.equal(location.locationCityGeonameId, undefined, id);
@@ -476,46 +481,19 @@ async function main() {
     // Y que cada aeropuerto, uno a uno, produzca un país de dos letras.
     for (const entry of LOCATION_CITY_INDEX) {
       const location = persistedLocationFromAirport(entry.id);
+      assert.ok(location, entry.id);
+      if (!location) continue;
       assert.match(location.locationCountryCode, /^[A-Z]{2}$/, entry.id);
       assert.ok(location.locationCityName, `${entry.id} sin ciudad`);
     }
   });
 
-  await test('Puente — un aeropuerto desconocido lanza en vez de degradar', () => {
-    assert.throws(() => persistedLocationFromAirport('airport:NOPE'), /not in the airport catalog/);
-  });
-
-  await test('Puente — las columnas se escriben SIEMPRE las cinco', () => {
-    // Escribir el país sin limpiar las coordenadas dejaría el punto de la
-    // ciudad anterior colgando de un país nuevo: Madrid con el pin de Valencia.
-    const columns = locationColumnsFromAirport('airport:LEVC');
-    assert.deepEqual(columns, {
-      location_country_code: 'ES',
-      location_city_name: 'Valencia',
-      location_city_lat: null,
-      location_city_lng: null,
-      location_city_geoname_id: null,
-    });
-  });
-
-  await test('Puente — escribir la localización nueva a mano se para en seco', () => {
-    // Durante F2b nadie la escribe directa: se derivaría en silencio a nada,
-    // que es cómo nacieron los dos fallos de offerPatchToDb.
-    for (const key of [
-      'locationCountryCode',
-      'locationCityName',
-      'locationCityLat',
-      'locationCityLng',
-      'locationCityGeonameId',
-    ] as const) {
-      assert.throws(
-        () => assertNoDirectLocationWrite({ [key]: key.includes('Lat') || key.includes('Lng') || key.includes('Geoname') ? 1 : 'ES' } as any, 'test'),
-        new RegExp(key),
-        `${key} debería estar vetado`,
-      );
-    }
-    // Un patch sin localización pasa sin ruido.
-    assert.doesNotThrow(() => assertNoDirectLocationWrite({}, 'test'));
+  await test('Puente legado — un aeropuerto desconocido devuelve null, no lanza', () => {
+    // Fase 7 F2c: este puente sólo lo usa ya AuthContext, para metadata de
+    // cuentas creadas antes del despliegue. Devuelve null en vez de lanzar
+    // porque ahí un throw abortaría el alta entera; el RPC da entonces un
+    // mensaje claro sobre el país que falta.
+    assert.equal(persistedLocationFromAirport('airport:NOPE'), null);
   });
 
   // ── La garantía de "ningún score cambia" ────────────────────────────────
@@ -551,6 +529,98 @@ async function main() {
       });
       assert.deepEqual(conBasura, soloId, `${entry.id} con datos contradictorios`);
     }
+  });
+
+  // ── La regla del pin (F2c) ──────────────────────────────────────────────
+
+  const CATALOG: CountryCatalogEntry[] = [
+    { code: 'ES', name: 'Spain',   latitude: 40, longitude: -4 },
+    { code: 'DZ', name: 'Algeria', latitude: 28, longitude: 3 },
+  ];
+  const BY_CODE = indexCountriesByCode(CATALOG);
+
+  await test('Pin — ciudad del directorio: sus propias coordenadas', () => {
+    const pin = resolveMapPin(
+      { locationCountryCode: 'ES', locationCityLat: 36.72016, locationCityLng: -4.42034 },
+      BY_CODE,
+    );
+    assert.deepEqual(pin, { latitude: 36.72016, longitude: -4.42034, precision: 'city' });
+  });
+
+  await test('Pin — ciudad a mano o sin ciudad: centroide del país', () => {
+    // Los 11 registros migrados en F2b son exactamente este caso: tienen
+    // nombre de ciudad y NINGUNA coordenada, a propósito.
+    const aMano = resolveMapPin({ locationCountryCode: 'DZ' }, BY_CODE);
+    assert.deepEqual(aMano, { latitude: 28, longitude: 3, precision: 'country' });
+
+    // Y el caso que motivó `precision`: el centroide de Argelia cae en el
+    // Sáhara, lejísimos de donde está su aviación. El punto es correcto como
+    // encuadre y MENTIRA como dirección — por eso viaja etiquetado.
+    assert.equal(aMano?.precision, 'country');
+  });
+
+  await test('Pin — país desconocido: sin pin, en vez de un pin en (0,0)', () => {
+    assert.equal(resolveMapPin({ locationCountryCode: 'ZZ' }, BY_CODE), null);
+  });
+
+  await test('Pin — media coordenada no cuenta como ciudad', () => {
+    // El CHECK de la 057 lo impide en Postgres; aquí se comprueba que el
+    // cliente tampoco lo interpreta como un punto válido.
+    const pin = resolveMapPin({ locationCountryCode: 'ES', locationCityLat: 36.7 }, BY_CODE);
+    assert.equal(pin?.precision, 'country');
+  });
+
+  // ── Selector <-> fila ───────────────────────────────────────────────────
+
+  await test('Escritura — la ciudad del directorio guarda sus coordenadas; la de a mano, no', () => {
+    const directorio = persistedLocationFromValue({
+      country: { code: 'ES', name: 'Spain' },
+      city: { kind: 'directory', name: 'Málaga', geonameId: 2514256, latitude: 36.72, longitude: -4.42, timezone: 'Europe/Madrid' },
+    });
+    assert.deepEqual(directorio, {
+      locationCountryCode: 'ES', locationCityName: 'Málaga',
+      locationCityLat: 36.72, locationCityLng: -4.42, locationCityGeonameId: 2514256,
+    });
+
+    const aMano = persistedLocationFromValue({
+      country: { code: 'ES', name: 'Spain' },
+      city: { kind: 'manual', name: 'Mi pueblo' },
+    });
+    assert.deepEqual(aMano, { locationCountryCode: 'ES', locationCityName: 'Mi pueblo' });
+
+    const sinCiudad = persistedLocationFromValue({ country: { code: 'ES', name: 'Spain' }, city: null });
+    assert.deepEqual(sinCiudad, { locationCountryCode: 'ES' });
+  });
+
+  await test('Escritura — las cinco columnas van SIEMPRE, y las vacías a null', () => {
+    // Es la garantía contra el pin huérfano: cambiar de país tiene que
+    // limpiar las coordenadas de la ciudad anterior, no dejarlas.
+    assert.deepEqual(locationColumns({ locationCountryCode: 'FR' }), {
+      location_country_code: 'FR',
+      location_city_name: null,
+      location_city_lat: null,
+      location_city_lng: null,
+      location_city_geoname_id: null,
+    });
+  });
+
+  await test('Escritura — sin país se para en seco', () => {
+    assert.throws(() => persistedLocationFromValue({ country: null, city: null }), /requires a country/);
+  });
+
+  await test('Lectura — la fila vuelve al selector conservando de dónde vino la ciudad', () => {
+    const delDirectorio = locationValueFromPersisted(
+      { locationCountryCode: 'ES', locationCityName: 'Málaga', locationCityLat: 36.72, locationCityLng: -4.42, locationCityGeonameId: 2514256 },
+      'Spain',
+    );
+    assert.equal(delDirectorio.city?.kind, 'directory');
+
+    const aMano = locationValueFromPersisted(
+      { locationCountryCode: 'ES', locationCityName: 'Mi pueblo' },
+      'Spain',
+    );
+    assert.equal(aMano.city?.kind, 'manual');
+    assert.equal(getCityCoordinates(aMano.city), null);
   });
 
   // ── La regla arquitectónica, como test ──────────────────────────────────

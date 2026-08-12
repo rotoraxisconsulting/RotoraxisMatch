@@ -13,8 +13,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
-import { useTechnicianTypes, useAirports, AirportOption } from '../../../src/auth/useCatalogOptions';
+import { useTechnicianTypes } from '../../../src/auth/useCatalogOptions';
 import { AuthPickerField, PickerOption } from '../../../src/components/auth/AuthPickerField';
+import { CountryCityPicker } from '../../../src/components/CountryCityPicker';
+import { EMPTY_LOCATION, LocationValue } from '../../../src/types/location';
+import { persistedLocationFromValue } from '../../../src/utils/locationBridge';
 import { TechnicianTypeSelector } from '../../../src/components/TechnicianTypeSelector';
 import { Button } from '../../../src/components/Button';
 import { parseYearsExperience, validateSignupYearsExperience } from '../../../src/utils/yearsExperienceValidation';
@@ -40,7 +43,6 @@ function buildDate(y: string, m: string, d: string): string | null {
 export default function TechnicianSignupScreen() {
   const router = useRouter();
   const { options: techTypes, loading: typesLoading } = useTechnicianTypes();
-  const { airports, loading: airportsLoading } = useAirports();
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -56,21 +58,11 @@ export default function TechnicianSignupScreen() {
   // todavía no ha intervenido el componente.
   const [technicianTypes, setTechnicianTypes] = useState<string[]>([]);
   const [yearsExperience, setYearsExperience] = useState('');
-  const [locationCityId, setLocationCityId] = useState('');
+  const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION);
 
   const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const airportOptions: PickerOption[] = useMemo(
-    () =>
-      airports.map((a: AirportOption) => ({
-        value: a.id,
-        label: `${a.city}${a.iata ? ` (${a.iata})` : ` (${a.icao})`}`,
-        subtitle: a.country_name,
-      })),
-    [airports]
-  );
 
   function validate(): string | null {
     if (!firstName.trim()) return 'First name is required.';
@@ -83,7 +75,9 @@ export default function TechnicianSignupScreen() {
     if (technicianTypes.length === 0) return 'Select at least one profile type.';
     const yearsError = validateSignupYearsExperience(yearsExperience);
     if (yearsError) return yearsError;
-    if (!locationCityId) return 'Select your base airport.';
+    // Sólo el país es obligatorio. La ciudad es opcional a propósito: quien
+    // no quiera precisar dónde vive no debería quedarse sin poder registrarse.
+    if (!location.country) return 'Select your country.';
     if (!tosAccepted) return 'You must accept the Terms of Service and Privacy Policy to continue.';
     return null;
   }
@@ -101,6 +95,19 @@ export default function TechnicianSignupScreen() {
     // Non-null: validate() above rejected anything parseYearsExperience
     // cannot read, including the empty string.
     const years = parseYearsExperience(yearsExperience)!;
+
+    // Fase 7 F2c. Una sola conversión para los dos caminos de alta (RPC
+    // inmediato y metadata para después de confirmar el email), así que no
+    // pueden divergir. `persistedLocationFromValue` conserva la distinción de
+    // F2a: la ciudad del directorio lleva coordenadas, la escrita a mano no.
+    const persisted = persistedLocationFromValue(location);
+    const signupLocationMetadata = {
+      location_country_code: persisted.locationCountryCode,
+      location_city_name: persisted.locationCityName ?? null,
+      location_city_lat: persisted.locationCityLat ?? null,
+      location_city_lng: persisted.locationCityLng ?? null,
+      location_city_geoname_id: persisted.locationCityGeonameId ?? null,
+    };
 
     // Step 1: Create auth user.
     // All form fields are stored in user_metadata so AuthContext can call
@@ -126,7 +133,11 @@ export default function TechnicianSignupScreen() {
           // forwards this straight to the RPC's integer parameter when the
           // profile is created after email confirmation.
           years_experience: years,
-          location_city_id: locationCityId,
+          // Fase 7 F2c: la metadata guarda país y ciudad, no un aeropuerto.
+          // `ensureRoleProfile` sabe leer las dos formas — las cuentas
+          // pendientes de confirmar de antes del despliegue siguen teniendo
+          // la vieja.
+          ...signupLocationMetadata,
           tos_accepted_at: new Date().toISOString(),
           tos_version: CONSENT_VERSION,
         },
@@ -149,7 +160,11 @@ export default function TechnicianSignupScreen() {
         p_birth_date: birthDate,
         p_technician_type: technicianTypes[0],
         p_technician_types: technicianTypes,
-        p_location_city_id: locationCityId,
+        p_location_country_code: persisted.locationCountryCode,
+        p_location_city_name: persisted.locationCityName ?? null,
+        p_location_city_lat: persisted.locationCityLat ?? null,
+        p_location_city_lng: persisted.locationCityLng ?? null,
+        p_location_city_geoname_id: persisted.locationCityGeonameId ?? null,
         p_years_experience: years,
       });
 
@@ -358,18 +373,10 @@ export default function TechnicianSignupScreen() {
               />
             </FormField>
 
-            {/* Base airport */}
-            <AuthPickerField
-              label="Base airport / Location"
-              placeholder="Search airports..."
-              value={locationCityId}
-              onChange={setLocationCityId}
-              options={airportOptions}
-              loading={airportsLoading}
-              searchable
-              searchPlaceholder="City, airport, IATA code..."
-              modalTitle="Select base airport"
-            />
+            {/* Fase 7 F2c: país obligatorio, ciudad opcional. Sustituye al
+                selector de aeropuerto — la localización dejó de depender de
+                que existiera un aeropuerto en el catálogo. */}
+            <CountryCityPicker value={location} onChange={setLocation} />
           </View>
 
           {/* ToS + Privacy consent checkbox */}

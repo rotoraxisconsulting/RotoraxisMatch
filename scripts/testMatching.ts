@@ -2328,6 +2328,71 @@ async function main() {
     );
   });
 
+  // ── Localización por PAÍS (Fase 7 F2c) ───────────────────────────────────
+  //
+  // ⚠ ANTES DE F2c ESTE EJE NO TENÍA NI UN TEST. `makeOffer` y
+  // `makeTechnician` usan localizaciones distintas, así que los puntos de
+  // localización NUNCA se otorgaban en toda la suite. El cambio a país no
+  // movió ningún test existente, y eso no era tranquilizador: significaba que
+  // el componente podía haber estado roto —siempre 0, o siempre el máximo—
+  // sin que 157 tests dijeran nada.
+  //
+  // La lección, para quien escriba fixtures aquí: los valores por defecto de
+  // un fixture deciden qué ramas se ejercen. Si TODOS difieren en un eje, ese
+  // eje sólo prueba su rama negativa. Al añadir un caso nuevo, haz que alguno
+  // COINCIDA a propósito — es la única forma de que la rama positiva exista.
+
+  await test('Localización — mismo país suma los puntos enteros', () => {
+    const offer = makeOffer({ locationCountryCode: 'ES' });
+    const fuera = calculateOfferTechnicianMatch(offer, makeTechnician({ locationCountryCode: 'FR' }), RATING_INDEX);
+    const dentro = calculateOfferTechnicianMatch(offer, makeTechnician({ locationCountryCode: 'ES' }), RATING_INDEX);
+
+    const peso = getMatchScoreWeights(offer).location;
+    assert.equal(fuera.breakdown.location, 0);
+    assert.equal(dentro.breakdown.location, peso);
+  });
+
+  await test('Localización — la CIUDAD no puntúa: Alicante y Bilbao empatan', () => {
+    // La consecuencia asumida del criterio "sólo el país". Dos técnicos del
+    // mismo país y distinta ciudad son indistinguibles para el scorer, vengan
+    // sus ciudades del directorio o escritas a mano.
+    const offer = makeOffer({ locationCountryCode: 'ES', locationCityName: 'Madrid' });
+
+    const alicante = calculateOfferTechnicianMatch(
+      offer,
+      makeTechnician({ locationCountryCode: 'ES', locationCityName: 'Alicante', locationCityLat: 38.34, locationCityLng: -0.48 }),
+      RATING_INDEX,
+    );
+    const bilbao = calculateOfferTechnicianMatch(
+      offer,
+      makeTechnician({ locationCountryCode: 'ES', locationCityName: 'Bilbao' }),
+      RATING_INDEX,
+    );
+
+    assert.equal(alicante.breakdown.location, bilbao.breakdown.location);
+    assert.equal(alicante.total, bilbao.total);
+  });
+
+  await test('Localización — otro país saca exactamente los puntos de localización menos', () => {
+    const offer = makeOffer({ locationCountryCode: 'ES' });
+    const dentro = calculateOfferTechnicianMatch(offer, makeTechnician({ locationCountryCode: 'ES' }), RATING_INDEX);
+    const fuera = calculateOfferTechnicianMatch(offer, makeTechnician({ locationCountryCode: 'PT' }), RATING_INDEX);
+
+    // La diferencia es EXACTAMENTE el peso de localización: nada más del
+    // scorer puede haberse movido por cambiar de país.
+    assert.equal(dentro.total - fuera.total, getMatchScoreWeights(offer).location);
+  });
+
+  await test('Localización — el aeropuerto ya no influye', () => {
+    // Mismo país, aeropuertos distintos: antes de F2c esto daba 0 puntos.
+    const offer = makeOffer({ locationCountryCode: 'ES', locationCityId: 'airport:LEMD' });
+    const tech = makeTechnician({ locationCountryCode: 'ES', locationCityId: 'airport:LEVC' });
+    assert.equal(
+      calculateOfferTechnicianMatch(offer, tech, RATING_INDEX).breakdown.location,
+      getMatchScoreWeights(offer).location,
+    );
+  });
+
   await test('Huérfanas — sin tipos quitados, o sin licencias afectadas, no se pregunta nada', () => {
     // AÑADIR un tipo nunca dispara la pregunta.
     assert.deepEqual(findOrphanedLicenses(['B1.1'], ['mechanic'], ['mechanic', 'painter']), []);

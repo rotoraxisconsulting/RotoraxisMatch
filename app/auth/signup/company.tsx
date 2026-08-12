@@ -12,8 +12,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { supabase } from '../../../src/lib/supabase';
-import { useCompanyTypes, useAirports, AirportOption } from '../../../src/auth/useCatalogOptions';
+import { useCompanyTypes } from '../../../src/auth/useCatalogOptions';
 import { AuthPickerField, PickerOption } from '../../../src/components/auth/AuthPickerField';
+import { CountryCityPicker } from '../../../src/components/CountryCityPicker';
+import { EMPTY_LOCATION, LocationValue } from '../../../src/types/location';
+import { persistedLocationFromValue } from '../../../src/utils/locationBridge';
 import { Button } from '../../../src/components/Button';
 import { colors, spacing } from '../../../src/theme';
 
@@ -26,14 +29,13 @@ function isValidEmail(s: string) {
 export default function CompanySignupScreen() {
   const router = useRouter();
   const { options: companyTypes, loading: typesLoading } = useCompanyTypes();
-  const { airports, loading: airportsLoading } = useAirports();
 
   const [companyName, setCompanyName] = useState('');
   const [companyType, setCompanyType] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [locationCityId, setLocationCityId] = useState('');
+  const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION);
 
   const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,23 +46,14 @@ export default function CompanySignupScreen() {
     label: t.label,
   }));
 
-  const airportOptions: PickerOption[] = useMemo(
-    () =>
-      airports.map((a: AirportOption) => ({
-        value: a.id,
-        label: `${a.city}${a.iata ? ` (${a.iata})` : ` (${a.icao})`}`,
-        subtitle: a.country_name,
-      })),
-    [airports]
-  );
-
   function validate(): string | null {
     if (!companyName.trim()) return 'Company name is required.';
     if (!companyType) return 'Select a company type.';
     if (!isValidEmail(email)) return 'Enter a valid email address.';
     if (password.length < 8) return 'Password must be at least 8 characters.';
     if (password !== confirmPassword) return 'Passwords do not match.';
-    if (!locationCityId) return 'Select your main base airport.';
+    // Sólo el país es obligatorio; la ciudad es opcional.
+    if (!location.country) return 'Select your country.';
     if (!tosAccepted) return 'You must accept the Terms of Service and Privacy Policy to continue.';
     return null;
   }
@@ -74,6 +67,17 @@ export default function CompanySignupScreen() {
     setError(null);
     setLoading(true);
 
+    // Una sola conversión para los dos caminos de alta (RPC inmediato y
+    // metadata para después de confirmar el email), así no pueden divergir.
+    const persisted = persistedLocationFromValue(location);
+    const signupLocationMetadata = {
+      location_country_code: persisted.locationCountryCode,
+      location_city_name: persisted.locationCityName ?? null,
+      location_city_lat: persisted.locationCityLat ?? null,
+      location_city_lng: persisted.locationCityLng ?? null,
+      location_city_geoname_id: persisted.locationCityGeonameId ?? null,
+    };
+
     // Step 1: Create auth user — trigger auto-creates profiles row
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
@@ -83,7 +87,8 @@ export default function CompanySignupScreen() {
           role: 'company_user',
           company_name: companyName.trim(),
           company_type: companyType,
-          location_city_id: locationCityId,
+          // Fase 7 F2c: país y ciudad, no un aeropuerto.
+          ...signupLocationMetadata,
           tos_accepted_at: new Date().toISOString(),
           tos_version: CONSENT_VERSION,
         },
@@ -101,7 +106,11 @@ export default function CompanySignupScreen() {
       const { error: rpcError } = await supabase.rpc('signup_company', {
         p_company_name: companyName.trim(),
         p_company_type: companyType,
-        p_location_city_id: locationCityId,
+        p_location_country_code: persisted.locationCountryCode,
+        p_location_city_name: persisted.locationCityName ?? null,
+        p_location_city_lat: persisted.locationCityLat ?? null,
+        p_location_city_lng: persisted.locationCityLng ?? null,
+        p_location_city_geoname_id: persisted.locationCityGeonameId ?? null,
       });
 
       if (rpcError) {
@@ -180,18 +189,8 @@ export default function CompanySignupScreen() {
               modalTitle="Select company type"
             />
 
-            {/* Base airport */}
-            <AuthPickerField
-              label="Main base airport"
-              placeholder="Search airports..."
-              value={locationCityId}
-              onChange={setLocationCityId}
-              options={airportOptions}
-              loading={airportsLoading}
-              searchable
-              searchPlaceholder="City, airport, IATA code..."
-              modalTitle="Select main base airport"
-            />
+            {/* Fase 7 F2c: país obligatorio, ciudad opcional. */}
+            <CountryCityPicker value={location} onChange={setLocation} />
 
             {/* Email */}
             <FormField label="Contact email">

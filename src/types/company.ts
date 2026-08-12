@@ -48,8 +48,8 @@ export interface Company {
 export interface CompanyProfile extends PersistedLocation {
   id: string;
   name: string;
-  // Required: every persisted company must reference a valid location_airports entry.
-  locationCityId: string;
+  // ⚠ LEGADO (Fase 7 F2c) — ver la nota de TechnicianProfile.
+  locationCityId?: string;
   phone?: string;
   email: string;
   companyType: CompanyTypeCode;

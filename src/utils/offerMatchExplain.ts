@@ -46,7 +46,6 @@ import {
   VigenciaNotice,
   GENERAL_COMPATIBILITY_LABEL,
 } from '../types/matching';
-import { resolveLocationSnapshot } from '../constants/locationCities';
 import { TECHNICIAN_TYPES } from '../constants/technicianTypes';
 import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
@@ -747,19 +746,27 @@ export function calculateOfferTechnicianMatch(
   // "la cualificación puntúa, la experiencia informa" no cambia. Lo que sí
   // hace ahora es descalificar: ver la sección de blockers más abajo.
 
-  const technicianLocation = resolveLocationSnapshot(technician);
-  const offerLocation = resolveLocationSnapshot({
-    locationCityId: offer.locationCityId,
-    country: offer.locationCountry,
-    city: offer.locationCity,
-    baseAirport: offer.locationBaseAirport,
-  });
-
-  if (
-    (technicianLocation?.locationCityId && offerLocation?.locationCityId && technicianLocation.locationCityId === offerLocation.locationCityId) ||
-    (technicianLocation?.baseAirport && offerLocation?.baseAirport && technicianLocation.baseAirport === offerLocation.baseAirport) ||
-    (technicianLocation?.city && offerLocation?.city && technicianLocation.city.toLowerCase() === offerLocation.city.toLowerCase())
-  ) {
+  // ── Localización: SÓLO EL PAÍS (Fase 7 tanda F2c) ────────────────────
+  //
+  // Mismo país, los puntos enteros. Distinto país, cero. No hay grados.
+  //
+  // Antes se puntuaba por aeropuerto, o por código de aeropuerto, o por
+  // nombre de ciudad — tres formas de acertar sobre un catálogo de 255
+  // aeropuertos que decidía por accidente qué países existían. La ciudad ya
+  // NO puntúa: ni la elegida del directorio ni la escrita a mano. Informa y
+  // coloca el pin del mapa, nada más.
+  //
+  // Consecuencia asumida, y es la correcta si el criterio es el país: un
+  // técnico de Alicante y otro de Bilbao puntúan IGUAL para una oferta en
+  // Madrid. Puntuar la ciudad exigiría decidir cuánto vale cada kilómetro, y
+  // eso es una pregunta que este producto no responde — hay ofertas donde
+  // mudarse es normal y otras donde 40 km ya son demasiado.
+  //
+  // Comparación exacta sobre el código ISO, sin normalizar: las dos columnas
+  // son NOT NULL con FK a `location_countries`, así que ya vienen en
+  // mayúsculas y validadas por Postgres. Normalizar aquí sugeriría que puede
+  // llegar texto libre, y no puede.
+  if (technician.locationCountryCode === offer.locationCountryCode) {
     location = weights.location;
   }
 

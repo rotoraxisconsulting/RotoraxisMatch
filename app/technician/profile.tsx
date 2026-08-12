@@ -12,7 +12,9 @@ import {
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { Button } from '../../src/components/Button';
-import { CountryPickerField, CityPickerField } from '../../src/components/LocationPicker';
+import { CountryCityPicker } from '../../src/components/CountryCityPicker';
+import { EMPTY_LOCATION, LocationValue } from '../../src/types/location';
+import { locationValueFromPersisted, persistedLocationFromValue } from '../../src/utils/locationBridge';
 import { resolveLocationSnapshot } from '../../src/constants/locationCities';
 import {
   InitialAvatar,
@@ -170,6 +172,10 @@ export default function TechnicianProfileScreen() {
   const [techId, setTechId] = useState<string | null>(null);
   const [form, setForm] = useState<Technician | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  // Fase 7 F2c: la localizacion vive fuera de `form` porque `form` es el
+  // shape V1 `Technician`, que sigue hablando de aeropuertos. Cuando ese
+  // shape muera, esto se funde con el resto del formulario.
+  const [location, setLocation] = useState<LocationValue>(EMPTY_LOCATION);
   const [saving, setSaving] = useState(false);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -266,7 +272,7 @@ export default function TechnicianProfileScreen() {
         .from('technician_profiles')
         // Sin `technician_type`: los tipos salen de la tabla puente de abajo.
         .select(
-          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, availability, years_experience, verification_status, social_links',
+          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, availability, years_experience, verification_status, social_links',
         )
         .eq('user_id', profile.id)
         .maybeSingle();
@@ -404,6 +410,20 @@ export default function TechnicianProfileScreen() {
       // tipo V1 `Technician`, que exige un number y no sabe expresar "no
       // declarado"; la fuente de verdad para mostrar y guardar es yearsInput.
       setForm(supaRowToForm(techRow as SupaTechRow, licenses, aircraftTypes, techRow.years_experience ?? 0));
+      // El nombre del pais sale de la fila; el selector lo reemplazara por
+      // el del catalogo vivo en cuanto el tecnico lo abra.
+      setLocation(
+        locationValueFromPersisted(
+          {
+            locationCountryCode: (techRow as any).location_country_code,
+            locationCityName: (techRow as any).location_city_name ?? undefined,
+            locationCityLat: (techRow as any).location_city_lat ?? undefined,
+            locationCityLng: (techRow as any).location_city_lng ?? undefined,
+            locationCityGeonameId: (techRow as any).location_city_geoname_id ?? undefined,
+          },
+          (techRow as any).location_country_code ?? '',
+        ),
+      );
     } catch (err: any) {
       setProfileError(err?.message ?? 'Failed to load profile. Please try again.');
     } finally {
@@ -459,6 +479,10 @@ export default function TechnicianProfileScreen() {
   // lo hace cumplir TechnicianTypeSelector, no esto.
   function updateTechnicianTypes(next: string[]) {
     setTechnicianTypes(next);
+    setIsDirty(true);
+  }
+
+  function markDirty() {
     setIsDirty(true);
   }
 
@@ -656,8 +680,8 @@ export default function TechnicianProfileScreen() {
     });
     const socialDeclared = Object.keys(socialToSave).length > 0;
 
-    const selectedLocation = resolveLocationSnapshot(form);
-    const locationCityId = selectedLocation?.locationCityId ?? form.locationCityId;
+    const persistedLocation = persistedLocationFromValue(location);
+
 
     const nameParts = form.fullName.trim().split(/\s+/);
     const firstName = nameParts[0] ?? '';
@@ -698,7 +722,13 @@ export default function TechnicianProfileScreen() {
           last_name: lastName,
           email: form.email,
           phone: form.phone || null,
-          ...(locationCityId ? { location_city_id: locationCityId } : {}),
+          // Fase 7 F2c: las cinco columnas juntas. Cambiar de pais limpia
+          // las coordenadas de la ciudad anterior en vez de dejarlas.
+          location_country_code: persistedLocation.locationCountryCode,
+          location_city_name: persistedLocation.locationCityName ?? null,
+          location_city_lat: persistedLocation.locationCityLat ?? null,
+          location_city_lng: persistedLocation.locationCityLng ?? null,
+          location_city_geoname_id: persistedLocation.locationCityGeonameId ?? null,
           availability: {
             immediately,
             contract_types: form.availability.contractTypes,
@@ -1048,41 +1078,16 @@ export default function TechnicianProfileScreen() {
 
           <SectionTitle title="Location" />
           <TechnicianCard style={styles.sectionCard}>
-            <CountryPickerField
-              label="Country"
-              value={form.country}
-              onChange={(country) =>
-                updateFields({
-                  country,
-                  locationCityId: undefined,
-                  city: '',
-                  baseAirport: '',
-                })
-              }
-            />
-            <View style={styles.fieldGap} />
-            <CityPickerField
-              label="City"
-              country={form.country}
-              value={form.city}
-              onChange={(city, _icao, entry) =>
-                updateFields({
-                  locationCityId: entry.id,
-                  city,
-                  baseAirport: entry.iata || entry.icao,
-                })
-              }
-            />
-            <View style={styles.fieldGap} />
-            <FieldLabel>Base airport</FieldLabel>
-            <TextInput
-              style={styles.input}
-              value={form.baseAirport}
-              onChangeText={(v) => updateField('baseAirport', v.toUpperCase())}
-              placeholder="e.g. KATL"
-              placeholderTextColor={techUi.textMuted}
-              autoCapitalize="characters"
-              maxLength={4}
+            {/* Fase 7 F2c. Fuera el aeropuerto base: era un campo de texto
+                libre de 4 letras que el técnico podía teclear a mano y que no
+                se validaba contra nada. El país es lo que puntúa; la ciudad
+                sitúa el pin y sólo trae coordenadas si sale del directorio. */}
+            <CountryCityPicker
+              value={location}
+              onChange={(value) => {
+                setLocation(value);
+                markDirty();
+              }}
             />
           </TechnicianCard>
 

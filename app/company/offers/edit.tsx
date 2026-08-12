@@ -34,7 +34,9 @@ import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/
 import { OfferStatus } from '../../../src/types/enums';
 import { OfferProductType, OfferWithRequirements } from '../../../src/types/offer';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
-import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
+import { CountryCityPicker } from '../../../src/components/CountryCityPicker';
+import { LocationValue } from '../../../src/types/location';
+import { locationValueFromPersisted } from '../../../src/utils/locationBridge';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 interface FormState {
@@ -42,10 +44,8 @@ interface FormState {
   description: string;
   contractType: ContractTypeCode;
   productType: OfferProductType;
-  locationCityId: string;
-  locationCountry: string;
-  locationCity: string;
-  locationBaseAirport: string;
+  // Fase 7 F2c: un solo campo con pais + ciudad.
+  location: LocationValue;
   minYearsExperience: number;
   technicianType: TechnicianTypeCode;
   requiresCertification: boolean;
@@ -61,7 +61,8 @@ function computeErrors(form: FormState) {
       : form.title.trim().length < 3 ? 'Title must be at least 3 characters.'
       : undefined,
     description: !form.description.trim() ? 'Description is required.' : undefined,
-    location: !form.locationCityId ? 'Please select a country and city.' : undefined,
+    // Solo el pais es obligatorio; la ciudad es opcional.
+    location: !form.location.country ? 'Please select a country.' : undefined,
     // Fase 6 tanda D: exigir certificar sin decir QUÉ licencia es el estado
     // que el CHECK de la 053 rechaza. Se avisa aquí en vez de dejar que
     // Postgres devuelva un error de constraint.
@@ -92,10 +93,10 @@ export default function EditOfferScreen() {
           description: o.description,
           contractType: o.contractType,
           productType: o.productType,
-          locationCityId: o.locationCityId,
-          locationCountry: o.locationCountry,
-          locationCity: o.locationCity,
-          locationBaseAirport: o.locationBaseAirport ?? '',
+          // `locationCountry` es el NOMBRE guardado en la fila; sirve como
+          // etiqueta hasta que el usuario reabra el selector, que lo
+          // resolvera contra el catalogo vivo.
+          location: locationValueFromPersisted(o, o.locationCountry),
           minYearsExperience: o.minYearsExperience,
           technicianType: o.technicianType,
           requiresCertification: o.requiresCertification,
@@ -246,7 +247,7 @@ export default function EditOfferScreen() {
     setForm((prev) => prev ? { ...prev, [key]: value } : prev);
     if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
     if (key === 'description') setErrors((e) => ({ ...e, description: undefined }));
-    if (['locationCityId', 'locationCountry', 'locationCity'].includes(key as string)) {
+    if (key === 'location') {
       setErrors((e) => ({ ...e, location: undefined }));
     }
   }
@@ -277,7 +278,12 @@ export default function EditOfferScreen() {
         // Part-66 si ve que se apaga — la invariante lo exige aunque aquí no
         // haya ninguna FK que fuerce el orden.
         requiresCertification: form.requiresCertification,
-        locationCityId: form.locationCityId,
+        locationCountryCode: form.location.country?.code,
+        locationCountry: form.location.country?.name,
+        locationCityName: form.location.city?.name,
+        locationCityLat: form.location.city?.kind === 'directory' ? form.location.city.latitude : undefined,
+        locationCityLng: form.location.city?.kind === 'directory' ? form.location.city.longitude : undefined,
+        locationCityGeonameId: form.location.city?.kind === 'directory' ? form.location.city.geonameId : undefined,
         minYearsExperience: form.minYearsExperience,
         status,
         visible: status === 'published',
@@ -429,37 +435,10 @@ export default function EditOfferScreen() {
           </FormField>
         </FormSection>
 
-        <FormSection title="Location" subtitle="Keep the operational base clear for matching." icon={MapPin}>
-          <CountryPickerField
-            label="Country"
-            value={form.locationCountry}
-            onChange={(country) => {
-              setField('locationCityId', '');
-              setField('locationCountry', country);
-              setField('locationCity', '');
-              setField('locationBaseAirport', '');
-            }}
-          />
-          <CityPickerField
-            label="City"
-            country={form.locationCountry}
-            value={form.locationCity}
-            onChange={(city, _icao, entry) => {
-              setField('locationCityId', entry.id);
-              setField('locationCity', city);
-              setField('locationBaseAirport', entry.iata || entry.icao);
-            }}
-          />
+        {/* Fase 7 F2c: el país es lo que puntúa; la ciudad sólo sitúa. */}
+        <FormSection title="Location" subtitle="The country is what candidates are matched on. The city only helps them place the role." icon={MapPin}>
+          <CountryCityPicker value={form.location} onChange={(value) => setField('location', value)} />
           {errors.location ? <Text style={styles.fieldError}>{errors.location}</Text> : null}
-          <FormField label="Base airport">
-            <TextInput
-              style={[styles.input, styles.readonlyInput]}
-              placeholderTextColor={companyUi.textMuted}
-              value={form.locationBaseAirport}
-              editable={false}
-              maxLength={4}
-            />
-          </FormField>
         </FormSection>
 
         {/* 4) licencia y 5) aeronaves, solo si la oferta exige certificar. */}

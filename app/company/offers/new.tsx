@@ -33,7 +33,8 @@ import { isLicenseCompatibleWithProductType } from '../../../src/utils/licenseCa
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
 import { OfferProductType } from '../../../src/types/offer';
 import { OfferStatus } from '../../../src/types/enums';
-import { CountryPickerField, CityPickerField } from '../../../src/components/LocationPicker';
+import { CountryCityPicker } from '../../../src/components/CountryCityPicker';
+import { EMPTY_LOCATION, LocationValue } from '../../../src/types/location';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
 
 interface FormState {
@@ -41,10 +42,9 @@ interface FormState {
   description: string;
   contractType: ContractTypeCode;
   productType: OfferProductType;
-  locationCityId: string;
-  locationCountry: string;
-  locationCity: string;
-  locationBaseAirport: string;
+  // Fase 7 F2c: un solo campo con pais + ciudad, en vez de cuatro sueltos
+  // que habia que mantener coherentes a mano.
+  location: LocationValue;
   minYearsExperience: number;
   technicianType: TechnicianTypeCode;
   requiresCertification: boolean;
@@ -59,7 +59,8 @@ function computeErrors(form: FormState) {
       : form.title.trim().length < 3 ? 'Title must be at least 3 characters.'
       : undefined,
     description: !form.description.trim() ? 'Description is required.' : undefined,
-    location: !form.locationCityId ? 'Please select a country and city.' : undefined,
+    // Solo el pais es obligatorio; la ciudad es opcional.
+    location: !form.location.country ? 'Please select a country.' : undefined,
     // Fase 6 tanda D: exigir certificar sin decir QUÉ licencia es el estado
     // que el CHECK de la 053 rechaza. Se avisa aquí en vez de dejar que
     // Postgres devuelva un error de constraint.
@@ -82,10 +83,7 @@ export default function NewOfferScreen() {
     // Arranca en aviones porque el selector siempre está visible y el campo es
     // NOT NULL: un "sin elegir" sería un tercer estado que la base no admite.
     productType: 'Aeroplane',
-    locationCityId: '',
-    locationCountry: '',
-    locationCity: '',
-    locationBaseAirport: '',
+    location: EMPTY_LOCATION,
     minYearsExperience: 0,
     // Ambos campos son NOT NULL en la base, así que arrancan con un valor
     // real y no con un "sin elegir" que sería un tercer estado inexpresable.
@@ -164,7 +162,7 @@ export default function NewOfferScreen() {
     setForm((prev) => ({ ...prev, [key]: value }));
     if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
     if (key === 'description') setErrors((e) => ({ ...e, description: undefined }));
-    if (['locationCityId', 'locationCountry', 'locationCity'].includes(key as string)) {
+    if (key === 'location') {
       setErrors((e) => ({ ...e, location: undefined }));
     }
   }
@@ -185,7 +183,7 @@ export default function NewOfferScreen() {
         description: form.description.trim(),
         contractType: form.contractType,
         productType: form.productType,
-        locationCityId: form.locationCityId,
+        location: form.location,
         minYearsExperience: form.minYearsExperience,
         status,
         technicianType: form.technicianType,
@@ -323,38 +321,14 @@ export default function NewOfferScreen() {
           </FormField>
         </FormSection>
 
-        <FormSection title="Location" subtitle="Use the base airport when a precise operation point matters." icon={MapPin}>
-          <CountryPickerField
-            label="Country"
-            value={form.locationCountry}
-            onChange={(country) => {
-              set('locationCityId', '');
-              set('locationCountry', country);
-              set('locationCity', '');
-              set('locationBaseAirport', '');
-            }}
-          />
-          <CityPickerField
-            label="City"
-            country={form.locationCountry}
-            value={form.locationCity}
-            onChange={(city, _icao, entry) => {
-              set('locationCityId', entry.id);
-              set('locationCity', city);
-              set('locationBaseAirport', entry.iata || entry.icao);
-            }}
-          />
+        {/* Fase 7 F2c. El aeropuerto base desaparece del formulario: la
+            localización de una oferta es el país (lo único que puntúa) y,
+            opcionalmente, la ciudad. El campo de aeropuerto era de sólo
+            lectura y se rellenaba solo, así que no se pierde ninguna
+            decisión del usuario. */}
+        <FormSection title="Location" subtitle="The country is what candidates are matched on. The city only helps them place the role." icon={MapPin}>
+          <CountryCityPicker value={form.location} onChange={(value) => set('location', value)} />
           {errors.location ? <Text style={styles.fieldError}>{errors.location}</Text> : null}
-          <FormField label="Base airport">
-            <TextInput
-              style={[styles.input, styles.readonlyInput]}
-              placeholder="e.g. LEMD"
-              placeholderTextColor={companyUi.textMuted}
-              value={form.locationBaseAirport}
-              editable={false}
-              maxLength={4}
-            />
-          </FormField>
         </FormSection>
 
         {/* 4) licencia y 5) aeronaves. Solo existen si la oferta exige
