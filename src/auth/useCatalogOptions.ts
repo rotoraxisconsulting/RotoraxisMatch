@@ -11,14 +11,12 @@ export interface CompanyTypeOption {
   label: string;
 }
 
-export interface AirportOption {
-  id: string;
-  country_name: string;
-  city: string;
-  airport: string;
-  iata: string | null;
-  icao: string;
-}
+
+// Fase 7 F2d: `useAirports` y `AirportOption` retirados. Cargaban el
+// catalogo `location_airports` para los selectores de alta y perfil, que
+// F2c sustituyo por `CountryCityPicker`. Se quedaron sin un solo
+// consumidor, y mantener vivo el unico lector del catalogo habria
+// bloqueado su DROP.
 
 export function useTechnicianTypes() {
   const [options, setOptions] = useState<TechnicianTypeOption[]>([]);
@@ -57,21 +55,3 @@ export function useCompanyTypes() {
   return { options, loading };
 }
 
-export function useAirports() {
-  const [airports, setAirports] = useState<AirportOption[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    supabase
-      .from('location_airports')
-      .select('id, country_name, city, airport, iata, icao')
-      .eq('is_active', true)
-      .order('country_name')
-      .then(({ data }) => {
-        if (data) setAirports(data as AirportOption[]);
-        setLoading(false);
-      });
-  }, []);
-
-  return { airports, loading };
-}

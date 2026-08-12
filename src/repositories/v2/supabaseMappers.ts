@@ -1,5 +1,4 @@
 import { supabase } from '../../lib/supabase';
-import { resolveLocationSnapshot } from '../../constants/locationCities';
 import { persistedLocationFromRow } from '../../utils/locationBridge';
 import { CompanyMember, CompanyProfileView } from '../../types/company';
 import { Document, DocumentType } from '../../types/document';
@@ -73,12 +72,11 @@ export function mapAvailability(value: unknown): Availability {
 }
 
 export function mapCompanyRow(row: DbRow): CompanyProfileView {
-  const loc = firstJoin(row.location_airports);
-  const fallback = resolveLocationSnapshot({ locationCityId: row.location_city_id });
+  // Fase 7 F2d: sin JOIN a aeropuertos y sin `location_city_id`. La
+  // localizacion sale de las columnas de la propia fila.
   return {
     id: row.id,
     name: row.name,
-    locationCityId: row.location_city_id,
     phone: row.phone ?? undefined,
     email: row.email,
     companyType: row.company_type,
@@ -86,11 +84,15 @@ export function mapCompanyRow(row: DbRow): CompanyProfileView {
     verificationStatus: row.verification_status as VerificationStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    country: loc?.country_name ?? fallback?.country ?? '',
-    city: loc?.city ?? fallback?.city ?? '',
-    baseAirport: loc?.iata ?? loc?.icao ?? fallback?.baseAirport,
-    latitude: loc?.latitude ?? fallback?.latitude,
-    longitude: loc?.longitude ?? fallback?.longitude,
+    // `country` es el NOMBRE, resuelto por JOIN contra `location_countries`:
+    // es lo que las pantallas pintan, y el JOIN lo mantiene al dia en vez de
+    // congelarlo en la fila. `baseAirport` desaparece: el modelo nuevo no
+    // habla de aeropuertos. Las coordenadas solo existen si la ciudad vino
+    // del directorio — si no, el pin cae en el pais (ver resolveMapPin).
+    country: firstJoin(row.location_countries)?.name ?? '',
+    city: row.location_city_name ?? '',
+    latitude: row.location_city_lat ?? undefined,
+    longitude: row.location_city_lng ?? undefined,
     ...persistedLocationFromRow(row),
   };
 }
@@ -124,7 +126,6 @@ export function mapDocumentRow(row: DbRow): Document {
 }
 
 export function mapOfferRow(row: DbRow): Offer {
-  const derivedFromAirport = resolveLocationSnapshot({ locationCityId: row.location_city_id });
   return {
     id: row.id,
     companyId: row.company_id,
@@ -144,7 +145,6 @@ export function mapOfferRow(row: DbRow): Offer {
     // ese caso. Nunca es un dato que falte.
     licenseCode: (row.license_code as LicenseCode | null) ?? undefined,
     requiresAllAircraft: Boolean(row.requires_all_aircraft),
-    locationCityId: row.location_city_id,
     locationCountry: row.location_country,
     // Fase 7 F2b — `locationCity` y `locationBaseAirport` YA NO SON COLUMNAS:
     // la migración 059 retira `offers.location_city` y
@@ -154,10 +154,8 @@ export function mapOfferRow(row: DbRow): Offer {
     // La ciudad sale del modelo nuevo y sólo cae al aeropuerto si faltara;
     // así, cuando F2c deje al usuario elegir una ciudad distinta de la del
     // aeropuerto, esto ya la respeta sin tocar nada.
-    locationCity: row.location_city_name ?? derivedFromAirport?.city ?? '',
-    // El código de aeropuerto no tiene equivalente en el modelo nuevo — y no
-    // lo necesita: muere con las pantallas en F2c.
-    locationBaseAirport: derivedFromAirport?.baseAirport,
+    locationCity: row.location_city_name ?? '',
+
     ...persistedLocationFromRow(row),
     minYearsExperience: row.min_years_experience ?? 0,
     status: row.status as OfferStatus,
@@ -388,7 +386,6 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
     phone: row.phone ?? undefined,
     birthDate: row.birth_date ?? '1970-01-01',
     technicianTypes: relations?.technicianTypes ?? [],
-    locationCityId: row.location_city_id,
     ...persistedLocationFromRow(row),
     availability: mapAvailability(row.availability),
     yearsExperience: row.years_experience ?? undefined,
@@ -403,17 +400,14 @@ export function mapPrivateTechnicianRow(row: DbRow, relations?: Awaited<ReturnTy
 }
 
 export function mapPublicTechnicianRow(row: DbRow, relations?: Awaited<ReturnType<typeof loadTechnicianRelations>>[string]): SafeTechnicianPreview {
-  const location = resolveLocationSnapshot({ locationCityId: row.location_city_id });
   return {
     id: row.id,
     anonymousCode: row.anonymous_code,
     technicianTypes: relations?.technicianTypes ?? [],
-    locationCityId: row.location_city_id,
-    country: row.country ?? location?.country ?? '',
-    city: row.city ?? location?.city ?? '',
-    baseAirport: row.base_airport ?? location?.baseAirport,
-    latitude: row.latitude ?? location?.latitude,
-    longitude: row.longitude ?? location?.longitude,
+    country: row.country ?? '',
+    city: row.city ?? '',
+    latitude: row.latitude ?? undefined,
+    longitude: row.longitude ?? undefined,
     ...persistedLocationFromRow(row),
     licenses: (relations?.licenses ?? []).map((license) => license.licenseCode),
     habilitations: relations?.habilitations ?? [],

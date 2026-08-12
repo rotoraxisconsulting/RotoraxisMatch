@@ -37,10 +37,12 @@ import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan'
 // las consultas de la tabla. Volver a nombrarla aquí ya no es un despiste,
 // es una caída.
 // Fase 7 F2b: entran las cinco columnas del modelo nuevo (migración 057).
-// `location_city_id` se queda: sigue siendo NOT NULL y el scorer lo lee.
+// Fase 7 F2d: `location_city_id` SALE de los dos SELECT. Dejar de pedirlo va
+// ANTES de su DROP (expand-contract): un SELECT de una columna inexistente
+// revienta todas las consultas de la tabla.
 const PRIVATE_SELECT = `
   id, user_id, anonymous_code, first_name, last_name, email, phone, birth_date,
-  location_city_id, location_country_code, location_city_name,
+  location_country_code, location_city_name,
   location_city_lat, location_city_lng, location_city_geoname_id,
   availability, years_experience,
   verification_status, social_links, created_at, updated_at
@@ -51,8 +53,7 @@ const PRIVATE_SELECT = `
 // siguen aquí — son las derivadas del aeropuerto, y las pantallas las leen
 // hasta F2c.
 const PUBLIC_SELECT = `
-  id, anonymous_code, location_city_id, country, city,
-  base_airport, latitude, longitude,
+  id, anonymous_code, country, city, latitude, longitude,
   location_country_code, location_city_name,
   location_city_lat, location_city_lng, location_city_geoname_id,
   availability, years_experience,

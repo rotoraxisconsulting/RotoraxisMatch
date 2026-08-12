@@ -3144,3 +3144,51 @@ El buscador de aeronaves usa el catálogo de 606 endorsements EASA. Un jefe
 de taller piensa "los A320 nuestros", no "Airbus A320 family — V2500".
 Probar el formulario con jefes de mantenimiento reales antes de la siguiente
 tanda de arquitectura.
+## Fase 7 F2d — barrido pendiente tras retirar los aeropuertos
+
+Verificado por grep tras la tanda (2026-08-11). Nada de esto se borra en F2d:
+la tanda retiraba LECTORES, y borrar código muerto en la misma tanda mezcla
+dos cosas que conviene poder revertir por separado.
+
+### Sin un solo consumidor
+
+- **`src/components/LocationPicker.tsx` — el fichero ENTERO, 566 líneas.**
+  Es el selector país+ciudad por AEROPUERTO. F2c cambió las seis pantallas a
+  `CountryCityPicker` y lo dejó sin un solo import. Es además el único usuario
+  vivo de `getCitiesForCountry`.
+- **`findAirportCityById`** — sólo lo llama `resolveAirportCity`, dentro del
+  propio `locationCities.ts`.
+- De `src/constants/locationCities.ts`, sin consumidores fuera del fichero:
+  `getCitiesForCountry` (salvo el LocationPicker muerto), `airportLocationId`,
+  `findAirportCityByCode`, `findCityForCountry`, y los tipos
+  `AirportCityWithCountry`, `LocationReference`, `LocationSnapshot`,
+  `LocationCityId`.
+- **`useAirports` / `AirportOption`** (`src/auth/useCatalogOptions.ts`) — ésos
+  sí se retiraron en F2d, porque eran el último lector de la TABLA
+  `location_airports` y mantenerlos vivos habría bloqueado su DROP.
+
+### Lo que se queda vivo, y por qué
+
+De `locationCities.ts` sobrevive UNA cadena, y sólo una:
+
+    resolveLocationSnapshot -> resolveAirportCity -> findAirportCityById
+      -> LOCATION_BY_ID -> LOCATION_CITY_INDEX -> LOCATION_CITIES
+    (+ toLocationSnapshot)
+
+La alimenta `persistedLocationFromAirport` (`src/utils/locationBridge.ts`), y
+su único lector es la rama de `AuthContext.ensureRoleProfile()` que atiende a
+las cuentas registradas ANTES de F2c y pendientes de confirmar el email: su
+metadata trae un aeropuerto y ningún país. Sin esa traducción, quien confirme
+su correo se queda sin perfil y EN SILENCIO, porque `ensureRoleProfile` traga
+las excepciones.
+
+Cuándo se puede retirar todo el bloque —la cadena, `persistedLocationFromAirport`
+y la rama de AuthContext— está escrito en el JSDoc de esa función, con la
+consulta exacta que lo decide:
+
+    SELECT count(*) FROM auth.users
+    WHERE email_confirmed_at IS NULL
+      AND raw_user_meta_data ? 'location_city_id'
+      AND NOT (raw_user_meta_data ? 'location_country_code');
+
+En cuanto dé 0, se van juntos. Antes no.

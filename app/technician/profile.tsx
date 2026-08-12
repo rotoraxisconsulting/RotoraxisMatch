@@ -15,7 +15,6 @@ import { Button } from '../../src/components/Button';
 import { CountryCityPicker } from '../../src/components/CountryCityPicker';
 import { EMPTY_LOCATION, LocationValue } from '../../src/types/location';
 import { locationValueFromPersisted, persistedLocationFromValue } from '../../src/utils/locationBridge';
-import { resolveLocationSnapshot } from '../../src/constants/locationCities';
 import {
   InitialAvatar,
   TechnicianBadge,
@@ -82,7 +81,11 @@ type SupaTechRow = {
   phone: string | null;
   // Sin `technician_type`: esta pantalla ya no lo pide en su SELECT. Los
   // tipos vienen de `technician_profile_types` (Fase 6 tanda A).
-  location_city_id: string;
+  location_country_code: string;
+  location_city_name: string | null;
+  location_city_lat: number | null;
+  location_city_lng: number | null;
+  location_city_geoname_id: number | null;
   availability: {
     immediately?: boolean;
     contract_types?: string[];
@@ -113,7 +116,6 @@ function supaRowToForm(
   const contractTypes = (avail.contract_types ?? []) as AvailabilityContract[];
   const status: AvailabilityStatus = immediately ? 'open_to_offers' : 'unavailable';
 
-  const location = resolveLocationSnapshot({ locationCityId: row.location_city_id });
 
   return {
     id: row.id,
@@ -121,12 +123,14 @@ function supaRowToForm(
     fullName: `${row.first_name} ${row.last_name}`.trim(),
     email: row.email,
     phone: row.phone ?? '',
-    locationCityId: row.location_city_id,
-    country: location?.country ?? '',
-    city: location?.city ?? '',
-    baseAirport: location?.baseAirport ?? '',
-    latitude: location?.latitude,
-    longitude: location?.longitude,
+    // Fase 7 F2d: sin aeropuerto. `country` es el codigo ISO y las
+    // coordenadas solo existen si la ciudad vino del directorio.
+    country: row.location_country_code ?? '',
+    city: row.location_city_name ?? '',
+    baseAirport: '',
+    locationCountryCode: row.location_country_code ?? undefined,
+    latitude: row.location_city_lat ?? undefined,
+    longitude: row.location_city_lng ?? undefined,
     licenseCategories: licenses,
     aircraftTypes,
     specialties: [],
@@ -272,7 +276,7 @@ export default function TechnicianProfileScreen() {
         .from('technician_profiles')
         // Sin `technician_type`: los tipos salen de la tabla puente de abajo.
         .select(
-          'id, anonymous_code, first_name, last_name, email, phone, location_city_id, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, availability, years_experience, verification_status, social_links',
+          'id, anonymous_code, first_name, last_name, email, phone, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, availability, years_experience, verification_status, social_links',
         )
         .eq('user_id', profile.id)
         .maybeSingle();
@@ -412,16 +416,17 @@ export default function TechnicianProfileScreen() {
       setForm(supaRowToForm(techRow as SupaTechRow, licenses, aircraftTypes, techRow.years_experience ?? 0));
       // El nombre del pais sale de la fila; el selector lo reemplazara por
       // el del catalogo vivo en cuanto el tecnico lo abra.
+      const row = techRow as SupaTechRow;
       setLocation(
         locationValueFromPersisted(
           {
-            locationCountryCode: (techRow as any).location_country_code,
-            locationCityName: (techRow as any).location_city_name ?? undefined,
-            locationCityLat: (techRow as any).location_city_lat ?? undefined,
-            locationCityLng: (techRow as any).location_city_lng ?? undefined,
-            locationCityGeonameId: (techRow as any).location_city_geoname_id ?? undefined,
+            locationCountryCode: row.location_country_code,
+            locationCityName: row.location_city_name ?? undefined,
+            locationCityLat: row.location_city_lat ?? undefined,
+            locationCityLng: row.location_city_lng ?? undefined,
+            locationCityGeonameId: row.location_city_geoname_id ?? undefined,
           },
-          (techRow as any).location_country_code ?? '',
+          row.location_country_code ?? '',
         ),
       );
     } catch (err: any) {

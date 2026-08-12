@@ -65,7 +65,11 @@ type TechRow = {
   anonymous_code: string | null;
   technician_type: string | null;
   verification_status: VerificationStatus | null;
-  location_airports: { country_name: string | null; city: string | null } | { country_name: string | null; city: string | null }[] | null;
+  // Fase 7 F2d: sin embed de `location_airports`. La localización sale de las
+  // columnas de la propia fila, que la 057 rellenó para los 11 registros.
+  location_country_code: string | null;
+  location_city_name: string | null;
+  location_countries: { name: string | null } | { name: string | null }[] | null;
 };
 
 const MS_PER_DAY = 86_400_000;
@@ -120,7 +124,7 @@ export const deletedAccountRepository = {
 
     const { data: techData, error: techError } = await supabase
       .from('technician_profiles')
-      .select('id, user_id, anonymous_code, technician_type, verification_status, location_airports ( country_name, city )')
+      .select('id, user_id, anonymous_code, technician_type, verification_status, location_country_code, location_city_name, location_countries ( name )')
       .in('user_id', profiles.map((p) => p.id));
     throwIfError(techError);
 
@@ -135,11 +139,6 @@ export const deletedAccountRepository = {
 
     return profiles.map((profile) => {
       const tech = techByUserId.get(profile.id);
-      // PostgREST devuelve el embed como objeto o como array según cardinalidad.
-      const loc = Array.isArray(tech?.location_airports)
-        ? tech?.location_airports[0]
-        : tech?.location_airports;
-
       return {
         userId: profile.id,
         role: profile.role,
@@ -149,8 +148,13 @@ export const deletedAccountRepository = {
         technicianId: tech?.id ?? null,
         anonymousCode: tech?.anonymous_code ?? null,
         technicianType: tech?.technician_type ?? null,
-        country: loc?.country_name ?? null,
-        city: loc?.city ?? null,
+        // El NOMBRE, por JOIN contra el catálogo: el panel lo pinta tal cual.
+        // Resolverlo aquí y no guardarlo en la fila lo mantiene al día — la
+        // migración 056 renombró 32 países.
+        country: (Array.isArray(tech?.location_countries)
+          ? tech?.location_countries[0]?.name
+          : tech?.location_countries?.name) ?? null,
+        city: tech?.location_city_name ?? null,
         verificationStatusAtDeletion: tech?.verification_status ?? null,
         applicationsSent: tech ? applications[tech.id] ?? 0 : 0,
         directOffersReceived: tech ? directOffers[tech.id] ?? 0 : 0,

@@ -110,9 +110,11 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
         supabase
           .from('companies')
           .select(`
-            id, name, location_city_id, phone, email, company_type, website,
+            id, name, phone, email, company_type, website,
+            location_country_code, location_city_name,
+            location_city_lat, location_city_lng, location_city_geoname_id,
             verification_status, created_at, updated_at,
-            location_airports ( country_name, city, iata, icao, latitude, longitude )
+            location_countries ( name )
           `)
           .order('created_at', { ascending: false }),
         supabase
@@ -162,25 +164,30 @@ export function useAdminDashboard(): UseAdminDashboardReturn {
 
     // Map Supabase companies rows → CompanyProfileView (camelCase + resolved location)
     const companyProfilesResult: CompanyProfileView[] = (companiesRes.data ?? []).map((row) => {
-      // PostgREST returns the joined table as an object or array depending on cardinality
-      const loc = Array.isArray(row.location_airports)
-        ? row.location_airports[0]
-        : row.location_airports;
+      // Fase 7 F2d: sin JOIN a aeropuertos. La localizacion sale de las
+      // columnas de la propia fila.
       return {
         id: row.id,
         name: row.name,
-        locationCityId: row.location_city_id,
         phone: row.phone ?? undefined,
         email: row.email,
         companyType: row.company_type,
         verificationStatus: row.verification_status,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
-        country: loc?.country_name ?? '',
-        city: loc?.city ?? '',
-        baseAirport: loc?.iata ?? loc?.icao ?? undefined,
-        latitude: loc?.latitude ?? undefined,
-        longitude: loc?.longitude ?? undefined,
+        // El NOMBRE, por JOIN: es lo que el panel pinta. PostgREST devuelve el
+        // embed como objeto o como array según cardinalidad, de ahí el
+        // desdoble — el mismo que ya hacía con `location_airports`.
+        country: ((): string => {
+          const joined = row.location_countries as { name?: string } | { name?: string }[] | null;
+          const entry = Array.isArray(joined) ? joined[0] : joined;
+          return entry?.name ?? '';
+        })(),
+        city: row.location_city_name ?? '',
+        locationCountryCode: row.location_country_code,
+        locationCityName: row.location_city_name ?? undefined,
+        latitude: row.location_city_lat ?? undefined,
+        longitude: row.location_city_lng ?? undefined,
       } as CompanyProfileView;
     });
 

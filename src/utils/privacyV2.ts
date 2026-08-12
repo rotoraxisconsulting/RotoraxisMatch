@@ -28,7 +28,6 @@ import {
 import { SafeTechnicianPreview, UnlockedTechnicianView } from '../types/privacy';
 import { Document } from '../types/document';
 import { LicenseCode } from '../types/catalog';
-import { resolveLocationSnapshot } from '../constants/locationCities';
 
 // ---------------------------------------------------------------------------
 // Age
@@ -94,18 +93,17 @@ export function canRevealIdentity(params: AcceptanceCheckParams): boolean {
  * Excludes: firstName, lastName, email, phone, birthDate, socialLinks, documents, matchingScore.
  */
 export function getSafeTechnicianPreview(technician: TechnicianWithRelations): SafeTechnicianPreview {
-  const location = resolveLocationSnapshot(technician);
-
   return {
     id: technician.id,
     anonymousCode: technician.anonymousCode,
     technicianTypes: technician.technicianTypes,
-    locationCityId: location?.locationCityId ?? technician.locationCityId,
-    country: location?.country ?? '',
-    city: location?.city ?? '',
-    baseAirport: location?.baseAirport,
-    latitude: location?.latitude,
-    longitude: location?.longitude,
+    // Fase 7 F2d: sin aeropuerto. `country` es el codigo ISO y las
+    // coordenadas solo existen si la ciudad vino del directorio; si no, el
+    // pin cae en el pais (resolveMapPin).
+    country: technician.locationCountryCode,
+    city: technician.locationCityName ?? '',
+    latitude: technician.locationCityLat,
+    longitude: technician.locationCityLng,
     // Fase 7 F2b: el modelo nuevo se COPIA del perfil, no se recalcula. El
     // perfil ya lo trae de Postgres (mapPrivateTechnicianRow), y volver a
     // derivarlo del aeropuerto aquí sería una segunda fuente que podría

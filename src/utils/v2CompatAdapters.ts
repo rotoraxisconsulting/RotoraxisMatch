@@ -24,7 +24,6 @@ import { TechnicianDocument, Document } from '../types/document';
 import { SafeTechnicianPreview, UnlockedTechnicianView } from '../types/privacy';
 import { OfferRequest } from '../types/offerRequest';
 import { MatchRequest, MatchRequestStatus } from '../types/matchRequest';
-import { resolveLocationSnapshot } from '../constants/locationCities';
 import { AircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { TechnicianHabilitation } from '../types/technician';
 import { AircraftTypeRatingCatalog } from '../types/catalog';
@@ -153,14 +152,11 @@ function compatLocation(reference: {
   locationCityLat?: number;
   locationCityLng?: number;
 }) {
-  const resolved = resolveLocationSnapshot(reference);
-
+  // Fase 7 F2d: sin catalogo de aeropuertos. Todo sale del modelo nuevo.
   return {
-    locationCityId: resolved?.locationCityId ?? reference.locationCityId,
-    country: resolved?.country ?? reference.country ?? '',
-    // La ciudad del modelo nuevo manda; el aeropuerto sólo cubre filas viejas.
-    city: reference.locationCityName ?? resolved?.city ?? reference.city ?? '',
-    baseAirport: resolved?.baseAirport ?? reference.baseAirport ?? '',
+    country: reference.country ?? '',
+    city: reference.locationCityName ?? reference.city ?? '',
+    baseAirport: '',
     latitude: reference.locationCityLat,
     longitude: reference.locationCityLng,
   };
@@ -183,7 +179,6 @@ export function v2SafePreviewToSafeView(preview: SafeTechnicianPreview, ratingIn
   return {
     id: preview.id,
     anonymousCode: preview.anonymousCode,
-    locationCityId: location.locationCityId,
     country: location.country,
     city: location.city,
     baseAirport: location.baseAirport,
@@ -234,7 +229,6 @@ export function v2TechnicianToV1(tech: TechnicianWithRelations, ratingIndex: Air
     fullName: `${tech.firstName} ${tech.lastName}`,
     email: tech.email,
     phone: tech.phone ?? '',
-    locationCityId: location.locationCityId,
     country: location.country,
     city: location.city,
     baseAirport: location.baseAirport,
@@ -264,7 +258,6 @@ export function v2CompanyToV1(c: CompanyProfile | CompanyProfileView): Company {
   return {
     id: c.id,
     companyName: c.name,
-    locationCityId: location.locationCityId,
     country: location.country,
     city: location.city,
     // Ya no es el '' hardcodeado que inventario la auditoria de campos

@@ -37,11 +37,11 @@ export const companyRepositoryV2 = {
     const { data, error } = await supabase
       .from('companies')
       .select(`
-        id, name, location_city_id, phone, email, company_type, website,
+        id, name, phone, email, company_type, website,
         location_country_code, location_city_name,
         location_city_lat, location_city_lng, location_city_geoname_id,
         verification_status, created_at, updated_at,
-        location_airports ( country_name, city, iata, icao, latitude, longitude )
+        location_countries ( name )
       `)
       .order('created_at', { ascending: false });
     throwIfError(error);
@@ -52,11 +52,11 @@ export const companyRepositoryV2 = {
     const { data, error } = await supabase
       .from('companies')
       .select(`
-        id, name, location_city_id, phone, email, company_type, website,
+        id, name, phone, email, company_type, website,
         location_country_code, location_city_name,
         location_city_lat, location_city_lng, location_city_geoname_id,
         verification_status, created_at, updated_at,
-        location_airports ( country_name, city, iata, icao, latitude, longitude )
+        location_countries ( name )
       `)
       .eq('id', id)
       .maybeSingle();
@@ -183,11 +183,11 @@ export const companyRepositoryV2 = {
       .update(companyPatchToDb(patch))
       .eq('id', id)
       .select(`
-        id, name, location_city_id, phone, email, company_type, website,
+        id, name, phone, email, company_type, website,
         location_country_code, location_city_name,
         location_city_lat, location_city_lng, location_city_geoname_id,
         verification_status, created_at, updated_at,
-        location_airports ( country_name, city, iata, icao, latitude, longitude )
+        location_countries ( name )
       `)
       .maybeSingle();
     throwIfError(error);

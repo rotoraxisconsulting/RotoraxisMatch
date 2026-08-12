@@ -37,7 +37,7 @@ import {
 // verificado). En cuanto hubiera una oferta, el scorer estaría puntuando su
 // licencia como si no existiera.
 const OFFER_COLUMNS =
-  'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, license_code, requires_all_aircraft, location_city_id, location_country, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, min_years_experience, status, visible, expires_at, created_at, updated_at';
+  'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, license_code, requires_all_aircraft, location_country, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, min_years_experience, status, visible, expires_at, created_at, updated_at';
 
 /**
  * La localización de una oferta, tal y como la produce el selector.
