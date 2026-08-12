@@ -35,6 +35,7 @@ import { useCompanySession } from '../../../src/state/SessionContext';
 import { canSendChatMessages } from '../../../src/utils/companyPermissionsV2';
 import { ChatRoom, ChatMessage } from '../../../src/types/chat';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -60,6 +61,7 @@ export default function CompanyChatDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [locked, setLocked] = useState(false);
   const [technicianDeleted, setTechnicianDeleted] = useState(false);
+  const [profileUnlocked, setProfileUnlocked] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -102,6 +104,7 @@ export default function CompanyChatDetailScreen() {
     // profiles, migration 024) — message history stays visible, but
     // there's no one left to send a new message to.
     setTechnicianDeleted(!techView);
+    setProfileUnlocked(Boolean(techView && isUnlocked(techView)));
     const techDisplay = techView && isUnlocked(techView)
       ? `${techView.firstName} ${techView.lastName}`
       : techView
@@ -205,7 +208,12 @@ export default function CompanyChatDetailScreen() {
               <Text style={styles.contextName} numberOfLines={1}>{headerTitle}</Text>
               <Text style={styles.contextSub} numberOfLines={1}>{subTitle || 'Accepted contact'}</Text>
             </View>
-            <CompanyBadge label={technicianDeleted ? 'Deleted' : 'Active'} tone={technicianDeleted ? 'muted' : 'success'} small />
+            <View style={styles.contextActions}>
+              <CompanyBadge label={technicianDeleted ? 'Deleted' : 'Active'} tone={technicianDeleted ? 'muted' : 'success'} small />
+              {profileUnlocked ? (
+                <ViewTechnicianProfileButton technicianId={room.technicianId} />
+              ) : null}
+            </View>
           </CompanyCard>
 
           <CompanyCard style={styles.privacyBanner}>
@@ -311,6 +319,11 @@ const styles = StyleSheet.create({
   contextText: {
     flex: 1,
     minWidth: 0,
+  },
+  contextActions: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+    flexShrink: 0,
   },
   contextName: {
     fontSize: 15,

@@ -2611,6 +2611,15 @@ Anotado como mejora futura: botón "duplicar oferta".
   en el listado, no oculto
 - HABILITATION_TIER_FRACTIONS (1 / 0,57 / 0) y los caps: sin tocar
 
+> **Cambio de criterio, 2026-08-12.** El tipo sigue sin aportar puntos. Si el
+> tipo único de la oferta no aparece entre los tipos del técnico, se aplica
+> `PROFILE_TYPE_MISMATCH_CAP` (19) como penalización fuerte pero blanda: no se
+> añade ningún blocker, la oferta continúa siendo seleccionable y se muestra
+> el porcentaje bajo con una explicación. Motiva el cambio el caso real de un
+> perfil `mechanic` que alcanzaba un 60% en una oferta `sheet_metal_worker`
+> únicamente por señales genéricas. Un perfil con varios tipos evita el techo
+> cuando cualquiera de ellos coincide.
+
 ### UI
 - Crear oferta: los cambios repintan sobre la marcha, sin avisos
 - Editar oferta: avisa antes de limpiar requisitos al cambiar 2 o 3

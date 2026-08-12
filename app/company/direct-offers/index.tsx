@@ -28,6 +28,7 @@ import { activityRepository } from '../../../src/repositories/v2/activityReposit
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { supabase } from '../../../src/lib/supabase';
 import type { OfferRequestStatus } from '../../../src/types/enums';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 type StatusFilter = 'all' | 'pending' | 'accepted' | 'rejected';
 
@@ -333,15 +334,24 @@ function DirectOfferCard({
           </View>
         ) : null}
 
-        {onOpenChat ? (
-          <TouchableOpacity
-            style={styles.chatButton}
-            onPress={(e) => { e.stopPropagation?.(); onOpenChat(); }}
-            activeOpacity={0.75}
-          >
-            <MessageCircle color={companyUi.surface} size={15} strokeWidth={2.2} />
-            <Text style={styles.chatButtonText}>Open chat</Text>
-          </TouchableOpacity>
+        {row.identityRevealed || onOpenChat ? (
+          <View style={styles.cardActions}>
+            {row.identityRevealed ? (
+              <ViewTechnicianProfileButton technicianId={row.technicianId} style={styles.cardAction} />
+            ) : null}
+            {onOpenChat ? (
+              <TouchableOpacity
+                style={[styles.chatButton, styles.cardAction]}
+                onPress={(e) => { e.stopPropagation?.(); onOpenChat(); }}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Open chat"
+              >
+                <MessageCircle color={companyUi.surface} size={15} strokeWidth={2.2} />
+                <Text style={styles.chatButtonText}>Open chat</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
         ) : null}
       </CompanyCard>
     </TouchableOpacity>
@@ -460,13 +470,22 @@ const styles = StyleSheet.create({
     color: companyUi.green,
   },
   chatButton: {
-    minHeight: 40,
+    minHeight: 44,
     borderRadius: 13,
     backgroundColor: companyUi.accent,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  cardAction: {
+    flex: 1,
+    minWidth: 132,
   },
   chatButtonText: {
     fontSize: 13,

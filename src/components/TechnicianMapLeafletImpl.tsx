@@ -36,6 +36,7 @@ export interface TechnicianMapProps {
   offerMatchesByTechnician?: Record<string, MapOfferMatchOption[]>;
   loadingOfferMatches?: boolean;
   onSendOffer?: (technicianId: string, offerId: string) => Promise<void>;
+  onViewProfile?: (technicianId: string) => void;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ function statusChipStyle(color: string): React.CSSProperties {
 
 const popupActionButtonStyle: React.CSSProperties = {
   width: '100%',
-  minHeight: 38,
+  minHeight: 44,
   marginTop: 10,
   border: 0,
   borderRadius: 11,
@@ -129,6 +130,13 @@ const popupActionButtonStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
   cursor: 'pointer',
+};
+
+const popupProfileButtonStyle: React.CSSProperties = {
+  ...popupActionButtonStyle,
+  border: `1px solid #0369A1`,
+  backgroundColor: colors.white,
+  color: '#0369A1',
 };
 
 const popupOfferListStyle: React.CSSProperties = {
@@ -348,6 +356,7 @@ export default function TechnicianMapLeafletImpl({
   offerMatchesByTechnician = {},
   loadingOfferMatches = false,
   onSendOffer,
+  onViewProfile,
 }: TechnicianMapProps) {
   useLeafletCss();
   const { ratings } = useAircraftTypeRatingsCatalog();
@@ -474,7 +483,7 @@ export default function TechnicianMapLeafletImpl({
             <Popup maxWidth={260} minWidth={220}>
               <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', padding: '2px 0' }}>
                 <div style={{ fontWeight: 700, fontSize: 15, color: colors.text, marginBottom: 3 }}>
-                  {t.anonymousCode}
+                  {t.fullName ?? t.anonymousCode}
                 </div>
                 <div style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>
                   {t.city}, {t.country}
@@ -516,6 +525,15 @@ export default function TechnicianMapLeafletImpl({
                   ) : null;
                 })()}
 
+                {t.fullName && onViewProfile ? (
+                  <button
+                    type="button"
+                    style={popupProfileButtonStyle}
+                    onClick={() => onViewProfile(t.id)}
+                  >
+                    View profile
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   style={popupActionButtonStyle}

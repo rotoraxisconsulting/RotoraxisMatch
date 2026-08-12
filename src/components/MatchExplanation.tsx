@@ -101,6 +101,8 @@ export function MatchExplanation({
         <Text style={styles.cappedNote}>
           {score.blockers.length > 0
             ? 'Score capped: this profile does not meet a hard requirement of the offer (see above).'
+            : score.profileTypeMismatch
+              ? 'Score capped: the offer is looking for a different profile type (see below).'
             : score.missingRequirements.length > 0
               ? 'Score capped: this offer states a requirement this profile does not meet (see below).'
               : 'Score capped: this offer requires certified work and the profile does not hold the licence for it.'}

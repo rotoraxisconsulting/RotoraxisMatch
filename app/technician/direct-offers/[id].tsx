@@ -300,6 +300,7 @@ export default function DirectOfferDetailScreen() {
                 score={score.total}
                 quality={getMatchDisplayLabel(visibleOffer, score)}
                 context="match with your profile"
+                notEligible={score.blockers.length > 0}
               />
             )}
             <Text style={styles.offerTitle}>{visibleOffer.title}</Text>

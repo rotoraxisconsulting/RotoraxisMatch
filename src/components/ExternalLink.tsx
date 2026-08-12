@@ -1,5 +1,13 @@
 import React from 'react';
-import { Linking, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import {
+  Linking,
+  StyleProp,
+  StyleSheet,
+  Text,
+  TextStyle,
+  TouchableOpacity,
+  ViewStyle,
+} from 'react-native';
 import { isValidUrl, normalizeUrl } from '../utils/urlValidation';
 
 /**
@@ -16,24 +24,39 @@ export function ExternalLink({
   url,
   color,
   style,
+  displayText,
+  containerStyle,
 }: {
   url: string;
   color: string;
-  style?: object;
+  style?: StyleProp<TextStyle>;
+  displayText?: string;
+  containerStyle?: StyleProp<ViewStyle>;
 }) {
   const safe = isValidUrl(url);
   const href = normalizeUrl(url);
   // El esquema es ruido para el usuario; el valor que se abre es el completo.
   const display = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  const visibleText = displayText ?? display;
 
   if (!safe) {
-    return <Text style={[styles.plain, { color }, style]}>{display}</Text>;
+    return (
+      <Text style={[styles.plain, { color }, style]} numberOfLines={1} ellipsizeMode="tail">
+        {visibleText}
+      </Text>
+    );
   }
 
   return (
-    <TouchableOpacity onPress={() => Linking.openURL(href)} activeOpacity={0.7}>
-      <Text style={[styles.link, { color }, style]} numberOfLines={1}>
-        {display}
+    <TouchableOpacity
+      accessibilityRole="link"
+      accessibilityLabel={`Open external link: ${display}`}
+      activeOpacity={0.7}
+      onPress={() => Linking.openURL(href)}
+      style={[styles.pressable, containerStyle]}
+    >
+      <Text style={[styles.link, { color }, style]} numberOfLines={1} ellipsizeMode="tail">
+        {visibleText}
       </Text>
     </TouchableOpacity>
   );
@@ -41,8 +64,13 @@ export function ExternalLink({
 
 const styles = StyleSheet.create({
   plain: {
+    flexShrink: 1,
     fontSize: 13,
     lineHeight: 18,
+  },
+  pressable: {
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   link: {
     fontSize: 13,

@@ -59,6 +59,7 @@ import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
 import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   license: 'License',
@@ -324,7 +325,12 @@ export default function ApplicationDetailScreen() {
             </View>
           </View>
           {score && offer ? (
-            <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match for this offer" />
+            <InlineScore
+              score={score.total}
+              quality={getMatchDisplayLabel(offer, score)}
+              context="match for this offer"
+              notEligible={score.blockers.length > 0}
+            />
           ) : null}
           {app.coverNote ? (
             <View style={styles.coverNote}>
@@ -397,6 +403,10 @@ export default function ApplicationDetailScreen() {
               <CompanyBadge label={`${techView.city}, ${techView.country}`} tone="muted" small />
               <CompanyBadge label={techView.verificationStatus} tone={techView.verificationStatus === 'verified' ? 'success' : 'warning'} small />
             </View>
+
+            {unlocked ? (
+              <ViewTechnicianProfileButton technicianId={techView.id} fullWidth />
+            ) : null}
 
             {techView.licenses.length > 0 ? (
               <View style={styles.chipBlock}>

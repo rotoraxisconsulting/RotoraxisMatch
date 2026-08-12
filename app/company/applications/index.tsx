@@ -39,6 +39,7 @@ import { TechnicianWithRelations } from '../../../src/types/technician';
 import { SafeTechnicianPreview } from '../../../src/types/privacy';
 import { MatchScore } from '../../../src/types/matching';
 import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 type StatusFilter = 'all' | 'pending' | 'accepted' | 'rejected';
 
@@ -291,6 +292,9 @@ export default function ApplicationsListScreen() {
                     </View>
                   )}
                 </View>
+                {app.status === 'accepted' && !isDeletedTechnician ? (
+                  <ViewTechnicianProfileButton technicianId={app.technicianId} fullWidth />
+                ) : null}
               </CompanyCard>
             </TouchableOpacity>
           );

@@ -307,7 +307,12 @@ export default function OfferDetailScreen() {
             </View>
           )}
           {score && (
-            <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match with your profile" />
+            <InlineScore
+              score={score.total}
+              quality={getMatchDisplayLabel(offer, score)}
+              context="match with your profile"
+              notEligible={score.blockers.length > 0}
+            />
           )}
           <View style={styles.badgeRow}>
             <TechnicianBadge label={getOfferProductTypeLabel(offer.productType)} tone="info" />

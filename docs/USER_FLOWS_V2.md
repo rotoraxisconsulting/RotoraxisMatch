@@ -91,7 +91,15 @@ No self-service company invitations, invite links, invite tokens, or email invit
 
 > Closed, expired, and draft offers never appear in Browse Offers. Offer visibility controls discovery only — existing applications and accepted relationships are not affected when an offer closes.
 
-### 5b. My Applications (history)
+### 5b. Offer Map (location discovery)
+1. Technician opens `/technician/map` from the dashboard or from Browse Offers.
+2. The map uses the same `getOfferMatchesForTechnician(technicianId)` source as the list, so only `published` + `visible` offers appear and every score remains offer-specific.
+3. A directory city uses its exact stored coordinates. A manual or missing city falls back to the country centroid and uses a dashed marker to communicate that the location is approximate.
+4. Offers sharing the same coordinates are grouped under one marker instead of covering one another.
+5. Filters cover contract type, aircraft product, match band and eligibility. Selecting a marker shows company, offer, location, match and current application status.
+6. "View offer" opens the existing `/technician/offers/[id]` detail, where the technician can review requirements and apply.
+
+### 5c. My Applications (history)
 1. Technician navigates to "My Applications".
 2. Screen loads **all** offer applications for this technician via `getForTechnician()` — independent of offer status.
 3. Each entry shows: offer title, company name, application status, offer status (if not published), applied date.
@@ -150,6 +158,15 @@ No self-service company invitations, invite links, invite tokens, or email invit
 5. Technician receives in-app notification.
 6. Company can now see full technician identity and admin-verified documents (status = `verified`).
 7. Chat opens for both parties.
+
+### Unlocked technician profile (company)
+
+1. After either acceptance path, the company can open the canonical technician profile at `/company/technician/[id]`.
+2. The route is reachable from unlocked search/map results, accepted application and direct-offer records, offer candidate cards, and company chats.
+3. The screen re-checks the company privacy view on every load. A direct URL never exposes a profile without an accepted relationship.
+4. It shows full identity, contact details, professional qualifications, availability, aircraft experience, and admin-verified documents.
+5. It does not show a global match score. Match remains specific to an offer + technician pair.
+6. There is no separate unlocked-technicians directory; `Search Technicians` remains the company discovery screen.
 
 ---
 

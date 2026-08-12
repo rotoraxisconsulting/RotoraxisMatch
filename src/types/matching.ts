@@ -38,9 +38,8 @@ export interface MatchScore {
   technicianId: string; // the technician this score belongs to
   // 0–100 — ordering only, never the sole explanation. May be lower than
   // breakdown's own sum: an incomplete required aircraft set, a zero
-  // habilitation score on a qualification-requiring offer, or a hard blocker
-  // caps this value (see offerMatchExplain.ts INCOMPLETE_AIRCRAFT_SET_CAP /
-  // ZERO_QUALIFICATION_CAP / BLOCKER_CAP).
+  // habilitation score on a qualification-requiring offer, a profile-type
+  // mismatch, or a hard blocker caps this value (see offerMatchExplain.ts).
   // breakdown itself is never capped — compare sum(breakdown) to total to
   // detect whether (and how much) a cap applied.
   total: number;
@@ -70,6 +69,11 @@ export interface MatchScore {
   // tiene. Antes se llamaba mandatoryMissing, cuando la primera fuente era
   // una etiqueta por fila.
   missingRequirements: string[];
+  // A strong but non-excluding ranking signal. `true` means the offer's
+  // requested profile type is absent from the technician's declared types.
+  // It applies PROFILE_TYPE_MISMATCH_CAP, remains selectable, and must never
+  // be presented as "Not eligible".
+  profileTypeMismatch: boolean;
   // Hard disqualifiers — English, human-readable, one entry per broken rule.
   //
   // blockers ≠ missingRequirements, and the distinction is deliberate:
@@ -80,10 +84,9 @@ export interface MatchScore {
   //     to call. It caps the score (INCOMPLETE_AIRCRAFT_SET_CAP) and is
   //     surfaced,
   //     never hidden.
-  //   - blockers means "this pair should not exist": the offer is not for
-  //     this technician at all (wrong technician type, less declared
-  //     experience than the offer's stated minimum). No amount of profile
-  //     quality makes it eligible, so it is capped far lower
+  //   - blockers means "this pair does not meet a hard requirement" (for
+  //     example, less declared experience than the offer's stated minimum).
+  //     No amount of profile quality makes it eligible, so it is capped lower
   //     (BLOCKER_CAP) and the UI must not present it as a bare percentage.
   //
   // Empty array = nothing disqualifies the pair. It is never used to remove

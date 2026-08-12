@@ -59,6 +59,7 @@ import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../../src/co
 import { technicianTypeLabel, technicianTypeLabels } from '../../../src/constants/technicianTypes';
 import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 type Tone = 'success' | 'warning' | 'error' | 'muted' | 'navy' | 'info' | 'cyan';
 
@@ -661,6 +662,10 @@ export default function OfferDetailScreen() {
 
               <CapReasonPanel score={score} />
               <VigenciaNotices score={score} />
+
+              {relation?.status === 'accepted' ? (
+                <ViewTechnicianProfileButton technicianId={technician.id} fullWidth />
+              ) : null}
 
               {application ? (
                 <TouchableOpacity

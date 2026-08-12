@@ -13,17 +13,29 @@ interface InlineScoreProps {
   score: number;
   quality: string;
   context: string;
+  // Hard blockers describe eligibility, not score quality. In that state the
+  // UI must lead with an explicit label instead of inviting the user to
+  // interpret a deliberately capped percentage.
+  notEligible?: boolean;
 }
 
-export function InlineScore({ score, quality, context }: InlineScoreProps) {
-  const color = scoreColor(score);
+export function InlineScore({ score, quality, context, notEligible = false }: InlineScoreProps) {
+  const color = notEligible ? colors.error : scoreColor(score);
   return (
     <View style={[styles.wrap, { borderLeftColor: color }]}>
       <View style={styles.row}>
-        <Text style={[styles.number, { color }]}>{score}%</Text>
-        <Text style={[styles.quality, { color }]}>{quality}</Text>
+        {notEligible ? (
+          <Text style={[styles.number, { color }]}>Not eligible</Text>
+        ) : (
+          <>
+            <Text style={[styles.number, { color }]}>{score}%</Text>
+            <Text style={[styles.quality, { color }]}>{quality}</Text>
+          </>
+        )}
       </View>
-      <Text style={styles.context}>{context}</Text>
+      <Text style={styles.context}>
+        {notEligible ? 'Does not meet a hard requirement of the offer' : context}
+      </Text>
     </View>
   );
 }

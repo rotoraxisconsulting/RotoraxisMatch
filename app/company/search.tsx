@@ -60,6 +60,8 @@ import { OfferRelationKind } from '../../src/utils/offerRelationStateMachine';
 type OfferRelationSummary = { kind: OfferRelationKind; status: OfferRequest['status'] };
 import { AircraftTypeRatingCatalog } from '../../src/types/catalog';
 import { notify, confirmAction } from '../../src/utils/platformAlert';
+import { ViewTechnicianProfileButton } from '../../src/components/company/ViewTechnicianProfileButton';
+import { spacing } from '../../src/theme';
 
 type PreviewMap = Record<string, SafeTechnicianPreview>;
 type ScoreMap = Record<string, MatchScore>;
@@ -624,30 +626,35 @@ function TechnicianResultCard({
             <Text style={styles.matchHint}>Select an offer to calculate match.</Text>
           )}
         </View>
-        {canSend ? (
-          <TouchableOpacity
-            style={styles.requestButton}
-            onPress={onSendOffer}
-            activeOpacity={0.75}
-          >
-            {sendingThis ? (
-              <ActivityIndicator size="small" color={companyUi.surface} />
-            ) : (
-              <>
-                <Send color={companyUi.surface} size={15} strokeWidth={2} />
-                <Text style={styles.requestButtonText}>Send offer</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        ) : existingRelation ? (
-          <View style={styles.requestStatic}>
-            <Text style={styles.requestStaticText}>{relationBadgeLabel(existingRelation)}</Text>
-          </View>
-        ) : canSendRole ? (
-          <View style={[styles.requestStatic, styles.requestStaticDimmed]}>
-            <Text style={styles.requestStaticText}>Select an offer first</Text>
-          </View>
-        ) : null}
+        <View style={styles.resultActions}>
+          {technician.fullName ? (
+            <ViewTechnicianProfileButton technicianId={technician.id} />
+          ) : null}
+          {canSend ? (
+            <TouchableOpacity
+              style={styles.requestButton}
+              onPress={onSendOffer}
+              activeOpacity={0.75}
+            >
+              {sendingThis ? (
+                <ActivityIndicator size="small" color={companyUi.surface} />
+              ) : (
+                <>
+                  <Send color={companyUi.surface} size={15} strokeWidth={2} />
+                  <Text style={styles.requestButtonText}>Send offer</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          ) : existingRelation ? (
+            <View style={styles.requestStatic}>
+              <Text style={styles.requestStaticText}>{relationBadgeLabel(existingRelation)}</Text>
+            </View>
+          ) : canSendRole ? (
+            <View style={[styles.requestStatic, styles.requestStaticDimmed]}>
+              <Text style={styles.requestStaticText}>Select an offer first</Text>
+            </View>
+          ) : null}
+        </View>
       </View>
     </CompanyCard>
   );
@@ -851,12 +858,16 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: companyUi.borderSoft,
     paddingTop: 13,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    alignItems: 'stretch',
     gap: 12,
   },
   matchArea: { flex: 1, minWidth: 0 },
+  resultActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: spacing.sm,
+  },
   matchHint: {
     fontSize: 12,
     lineHeight: 17,

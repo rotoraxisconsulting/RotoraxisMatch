@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
+import { MapPinned } from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { MatchBadge } from '../../../src/components/MatchBadge';
@@ -203,6 +204,18 @@ export default function BrowseOffersScreen() {
           title="Browse Offers"
           subtitle={`${filtered.length} offer${filtered.length !== 1 ? 's' : ''} ranked by match`}
           onBack={() => router.back()}
+          right={(
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Open offer map"
+              activeOpacity={0.75}
+              onPress={() => router.push('/technician/map' as any)}
+              style={styles.mapButton}
+            >
+              <MapPinned color={techUi.accent} size={17} strokeWidth={2.2} />
+              <Text style={styles.mapButtonText}>Map</Text>
+            </TouchableOpacity>
+          )}
         />
 
         <TextInput
@@ -338,6 +351,19 @@ const styles = StyleSheet.create({
     color: techUi.text,
     marginBottom: spacing.sm,
   },
+  mapButton: {
+    minHeight: 48,
+    paddingHorizontal: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: techUi.accent,
+    backgroundColor: techUi.accentSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  mapButtonText: { fontSize: 12, fontWeight: '800', color: techUi.accent },
   filterRow: { marginBottom: spacing.md, flexGrow: 0 },
   filterContent: { gap: spacing.xs, paddingRight: spacing.lg },
   cardTouchable: { marginBottom: spacing.md },

@@ -116,6 +116,7 @@ export default function MapScreen() {
         offerMatchesByTechnician={offerMatchesByTechnician}
         loadingOfferMatches={loadingOfferMatches}
         onSendOffer={handleSendOfferFromMap}
+        onViewProfile={(technicianId) => router.push(`/company/technician/${technicianId}` as any)}
       />
     </SafeAreaView>
   );

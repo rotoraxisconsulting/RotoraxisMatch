@@ -41,6 +41,7 @@ export interface TechnicianMapProps {
   offerMatchesByTechnician?: Record<string, MapOfferMatchOption[]>;
   loadingOfferMatches?: boolean;
   onSendOffer?: (technicianId: string, offerId: string) => Promise<void>;
+  onViewProfile?: (technicianId: string) => void;
 }
 
 // ─── Leaflet HTML ────────────────────────────────────────────────────────────
@@ -126,14 +127,17 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       }).join('');
       var tr = m.typeRatings || [];
       var typeRatings = tr.slice(0,4).map(escHtml).join(' &bull; ') + (tr.length>4 ? ' +' + (tr.length-4) : '');
-      var sendButton = '<button type="button" data-tech-id="'+escAttr(m.id)+'" onclick="post(\\'map-select-technician:\\' + this.getAttribute(\\'data-tech-id\\'))" style="width:100%;min-height:38px;margin-top:10px;border:0;border-radius:11px;background:#0A1628;color:#FFFFFF;font-size:12px;font-weight:700;">Send direct offer</button>';
+      var sendButton = '<button type="button" data-tech-id="'+escAttr(m.id)+'" onclick="post(\\'map-select-technician:\\' + this.getAttribute(\\'data-tech-id\\'))" style="width:100%;min-height:44px;margin-top:10px;border:0;border-radius:11px;background:#0A1628;color:#FFFFFF;font-size:12px;font-weight:700;">Send direct offer</button>';
+      var profileButton = m.profileUnlocked
+        ? '<button type="button" data-tech-id="'+escAttr(m.id)+'" onclick="post(\\'map-view-profile:\\' + this.getAttribute(\\'data-tech-id\\'))" style="width:100%;min-height:44px;margin-top:8px;border:1px solid #0369A1;border-radius:11px;background:#FFFFFF;color:#0369A1;font-size:12px;font-weight:700;">View profile</button>'
+        : '';
       return '<div>' +
-        '<div style="font-weight:700;font-size:15px;color:#1A2332;margin-bottom:2px;">'+escHtml(m.anonymousCode)+'</div>' +
+        '<div style="font-weight:700;font-size:15px;color:#1A2332;margin-bottom:2px;">'+escHtml(m.displayName || m.anonymousCode)+'</div>' +
         '<div style="font-size:12px;color:#475569;margin-bottom:8px;">'+escHtml(m.city)+', '+escHtml(m.country)+(m.baseAirport?' &bull; '+escHtml(m.baseAirport):'')+' &bull; '+escHtml(String(m.yearsExperience))+' yrs exp</div>' +
         '<div style="margin-bottom:8px;">'+chip(availLabel(m.availability),ac)+chip(m.verificationStatus,vc)+'</div>' +
         (licenses ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Licenses</div><div style="margin-bottom:8px;">'+licenses+'</div>' : '') +
         (typeRatings ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Type ratings</div><div style="font-size:12px;color:#475569;margin-bottom:6px;">'+typeRatings+'</div>' : '') +
-        sendButton +
+        profileButton + sendButton +
       '</div>';
     }
 
@@ -562,6 +566,7 @@ export function TechnicianMap({
   offerMatchesByTechnician = {},
   loadingOfferMatches = false,
   onSendOffer,
+  onViewProfile,
 }: TechnicianMapProps) {
   const webViewRef = useRef<WebView>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -585,6 +590,8 @@ export function TechnicianMap({
         .map((t) => ({
           id: t.id,
           anonymousCode: t.anonymousCode,
+          displayName: t.fullName,
+          profileUnlocked: Boolean(t.fullName),
           latitude: Number(t.latitude),
           longitude: Number(t.longitude),
           baseAirport: t.baseAirport,
@@ -692,6 +699,10 @@ export function TechnicianMap({
             setLastMessage(msg);
             if (typeof msg === 'string' && msg.startsWith('map-select-technician:')) {
               setSelectedOfferTechId(msg.replace('map-select-technician:', ''));
+              return;
+            }
+            if (typeof msg === 'string' && msg.startsWith('map-view-profile:')) {
+              onViewProfile?.(msg.replace('map-view-profile:', ''));
               return;
             }
             // Leaflet: consider map ready once initMap completes

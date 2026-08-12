@@ -245,8 +245,13 @@ export default function DirectOffersListScreen() {
                     {location ? <TechnicianBadge label={location} tone="muted" small /> : null}
                     {contractType ? <TechnicianBadge label={contractType} tone="muted" small /> : null}
                     {score ? (
-                      <Text style={[styles.matchText, { color: scoreColor(score.total) }]}>
-                        {score.total}% match
+                      <Text
+                        style={[
+                          styles.matchText,
+                          { color: score.blockers.length > 0 ? colors.error : scoreColor(score.total) },
+                        ]}
+                      >
+                        {score.blockers.length > 0 ? 'Not eligible' : `${score.total}% match`}
                       </Text>
                     ) : null}
                   </View>

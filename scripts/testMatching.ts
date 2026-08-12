@@ -674,18 +674,30 @@ async function main() {
     // fixture gained the field; every expectation below is unchanged.
     // Fase 6 tanda E: `isBroadOnlyMatch` (BROAD_ONLY_CAP, 79) se retiró por
     // INALCANZABLE — el máximo de su rama era 68, así que su Math.min nunca
-    // recortó nada. La escalera baja de cuatro peldaños a tres.
-    const none = { hasIncompleteAircraftSet: false, isZeroQualification: false, hasBlocker: false };
+    // recortó nada. En aquel momento la escalera bajó a tres peldaños; el
+    // techo blando por tipo de perfil la amplía ahora con una señal distinta.
+    const none = {
+      hasIncompleteAircraftSet: false,
+      isZeroQualification: false,
+      hasProfileTypeMismatch: false,
+      hasBlocker: false,
+    };
     assert.equal(applyScoreCeilings(100, none), 100, 'no ceiling applies to a confirmed exact match');
     assert.equal(applyScoreCeilings(100, { ...none, hasIncompleteAircraftSet: true }), 59);
     assert.equal(applyScoreCeilings(100, { ...none, isZeroQualification: true }), 39);
+    assert.equal(applyScoreCeilings(100, { ...none, hasProfileTypeMismatch: true }), 19);
     assert.equal(applyScoreCeilings(100, { ...none, hasBlocker: true }), 19);
     // Overlaps — the stricter one wins regardless of declaration order.
     assert.equal(applyScoreCeilings(100, { ...none, hasIncompleteAircraftSet: true, isZeroQualification: true }), 39);
     assert.equal(
-      applyScoreCeilings(100, { hasIncompleteAircraftSet: true, isZeroQualification: true, hasBlocker: true }),
+      applyScoreCeilings(100, {
+        hasIncompleteAircraftSet: true,
+        isZeroQualification: true,
+        hasProfileTypeMismatch: true,
+        hasBlocker: true,
+      }),
       19,
-      'the blocker cap is the tightest rung — it wins over both qualification ceilings',
+      'the two lowest caps win over both qualification ceilings',
     );
     // A ceiling never RAISES a score that was already below it.
     assert.equal(applyScoreCeilings(20, { ...none, hasIncompleteAircraftSet: true, isZeroQualification: true }), 20);
@@ -1687,43 +1699,78 @@ async function main() {
     assert.equal(sinDeclarar.label, 'Excellent match');
   });
 
-  // ── Blockers — hard disqualifiers (BLOCKER_CAP = 19) ─────────────────
-  // Distinct from missingRequirements: that one says the qualification evidence
-  // is weak, these say the pair should not exist at all. Both rules live in
-  // the pure function, never in a matchingV2.ts wrapper — see Case 8.
+  // ── Profile-type soft cap + hard blockers ────────────────────────────
+  // A type mismatch is deliberately not a blocker: it ranks very low while
+  // remaining selectable. Declared experience below the minimum remains a
+  // real blocker. Both rules live in the pure scorer in both directions.
 
   const EXACT_A320 = {
     licenses: [makeLicense('B1.1')],
     habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
   };
 
-  // Fase 6 tanda E: los tres tests que había aquí fijaban el tipo de perfil
-  // como blocker (Case 1: no bloquea si casa; Case 2: bloquea y capa a 19;
-  // Case 3: siempre match o blocker). El tipo ya no puntúa ni filtra, así que
-  // los sustituye el test de abajo, que fija lo contrario.
-  await test('El tipo de perfil NO puntúa ni bloquea: dos técnicos idénticos salvo el tipo sacan lo mismo', () => {
-    // Criterio de verificación de la tanda. Si el tipo tuviera peso, aunque
-    // fuera poco, estos dos números diferirían.
+  await test('Tipo de perfil — si coincide, se confirma sin sumar puntos ni bloquear', () => {
     const offer = makeOffer({
-      contractType: 'permanent',
-      technicianType: 'avionic',
+      technicianType: 'mechanic',
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
-    const base = { verificationStatus: 'verified' as const, ...EXACT_A320 };
-    const delTipo = makeTechnician({ ...base, technicianTypes: ['avionic'] });
-    const deOtroTipo = makeTechnician({ ...base, technicianTypes: ['painter'] });
+    const technician = makeTechnician({ technicianTypes: ['mechanic'], ...EXACT_A320 });
+    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
 
-    const a = calculateOfferTechnicianMatch(offer, delTipo, RATING_INDEX);
-    const b = calculateOfferTechnicianMatch(offer, deOtroTipo, RATING_INDEX);
-
-    assert.equal(a.total, b.total, 'el tipo no puede mover el total');
-    assert.deepEqual(a.breakdown, b.breakdown, 'ni el desglose');
-    assert.deepEqual(a.blockers, [], 'el tipo ya no descalifica');
-    assert.deepEqual(b.blockers, [], 'ni siquiera cuando no coincide');
+    assert.deepEqual(result.blockers, [], 'un tipo coincidente nunca bloquea');
     assert.ok(
-      !a.matches.some((m) => m.startsWith('Technician type:')),
-      'y tampoco deja línea de match: no es una cualificación confirmada',
+      result.matches.includes('Technician type: Mechanic'),
+      'el tipo confirmado se explica con la etiqueta del catálogo',
     );
+  });
+
+  await test('Tipo de perfil — Mechanic frente a Sheet Metal Worker sigue siendo elegible pero nunca supera 19%', () => {
+    const offer = makeOffer({
+      technicianType: 'sheet_metal_worker',
+      requiresCertification: false,
+      licenseCode: undefined,
+      requiredHabilitations: [],
+      locationCountryCode: 'US',
+    });
+    const mechanic = makeTechnician({
+      technicianTypes: ['mechanic'],
+      verificationStatus: 'verified',
+      locationCountryCode: 'ES',
+      availability: { immediately: true, contractTypes: ['permanent'] },
+    });
+
+    const result = calculateOfferTechnicianMatch(offer, mechanic, RATING_INDEX);
+
+    assert.equal(result.breakdown.verified, 30);
+    assert.equal(result.breakdown.contractFit, 30);
+    assert.equal(result.breakdown.location, 0);
+    assert.equal(
+      Object.values(result.breakdown).reduce((sum, value) => sum + value, 0),
+      60,
+      'reproduce exactamente el 60% de la captura: verificado + contrato',
+    );
+    assert.deepEqual(result.blockers, [], 'un tipo distinto no impide seleccionar ni solicitar la oferta');
+    assert.equal(result.profileTypeMismatch, true, 'el desajuste conserva una señal estructurada propia');
+    assert.ok(
+      result.clarifications.some((text) => text.includes('Sheet Metal Worker') && text.includes('Mechanic')),
+      `la explicación debe nombrar ambos tipos, recibido: ${result.clarifications.join(' | ')}`,
+    );
+    assert.equal(result.total, 19, 'el techo blando debe impedir un match plausible para otro oficio');
+    assert.equal(result.label, 'Weak match');
+  });
+
+  await test('Tipo de perfil — todo par tiene coincidencia o explicación de desajuste, nunca silencio', () => {
+    const technician = makeTechnician({ technicianTypes: ['mechanic'] });
+    const met = calculateOfferTechnicianMatch(makeOffer({ technicianType: 'mechanic' }), technician, RATING_INDEX);
+    const unmet = calculateOfferTechnicianMatch(makeOffer({ technicianType: 'avionic' }), technician, RATING_INDEX);
+
+    assert.deepEqual(met.blockers, []);
+    assert.equal(met.profileTypeMismatch, false);
+    assert.ok(met.matches.some((match) => match.startsWith('Technician type:')));
+    assert.deepEqual(unmet.blockers, [], 'Mechanic frente a Avionics sigue siendo seleccionable');
+    assert.equal(unmet.profileTypeMismatch, true);
+    assert.ok(unmet.clarifications.some((text) => text.startsWith('Profile type differs')));
+    assert.ok(!unmet.matches.some((match) => match.startsWith('Technician type:')));
   });
 
   // ── Fase 6 tanda E: el interruptor elige la FUENTE DE EVIDENCIA ───────
@@ -2003,16 +2050,27 @@ async function main() {
 
   // ── Fase 6 tanda A: varios tipos por técnico ──────────────────────────
   //
-  // El test de la tanda A que había aquí fijaba que un perfil con dos tipos no
-  // quedaba bloqueado por ninguna de las dos ofertas, y que uno ajeno sí
-  // bloqueaba. La primera mitad la absorbe la tanda E de la forma más fuerte
-  // posible — el tipo ya no bloquea NUNCA, tenga los que tenga — y la segunda
-  // se deroga. Lo que la tanda A resolvió de verdad (un técnico con licencia
-  // de mecánico aparece en ofertas de mecánico aunque se registrara como
-  // aviónico) lo garantiza ahora el hecho de que el tipo no participe.
-  //
-  // Lo que SÍ sigue vivo del tipo —mostrar y buscar— se prueba en el filtro
-  // por intersección de technicianRepositoryV2, no aquí.
+  await test('Tipos múltiples — basta con que uno de los tipos del técnico coincida con la oferta', () => {
+    const technician = makeTechnician({ technicianTypes: ['avionic', 'mechanic'], ...EXACT_A320 });
+
+    for (const technicianType of ['avionic', 'mechanic'] as const) {
+      const result = calculateOfferTechnicianMatch(
+        makeOffer({ technicianType, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }),
+        technician,
+        RATING_INDEX,
+      );
+      assert.deepEqual(result.blockers, [], `el perfil incluye ${technicianType} y debe ser elegible`);
+    }
+
+    const unrelated = calculateOfferTechnicianMatch(
+      makeOffer({ technicianType: 'painter', requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }),
+      technician,
+      RATING_INDEX,
+    );
+    assert.deepEqual(unrelated.blockers, [], 'un tipo ajeno sigue siendo seleccionable');
+    assert.equal(unrelated.profileTypeMismatch, true, 'tener varios tipos no equivale a encajar con cualquier oferta');
+    assert.ok(unrelated.total <= 19, `el desajuste debe quedar en la banda baja, recibido: ${unrelated.total}`);
+  });
 
   await test('Tipos múltiples — el score de un perfil de UN SOLO tipo no cambia respecto a hoy', () => {
     // El criterio de verificación de la tanda, escrito como test: añadir un

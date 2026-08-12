@@ -33,6 +33,7 @@ import { activityRepository } from '../../../src/repositories/v2/activityReposit
 import { isUnlocked } from '../../../src/types/privacy';
 import { useCompanySession } from '../../../src/state/SessionContext';
 import { ChatRoom, ChatMessage } from '../../../src/types/chat';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 type RoomEntry = {
   room: ChatRoom;
@@ -40,6 +41,7 @@ type RoomEntry = {
   offerTitle: string | null;
   lastMessage: ChatMessage | null;
   isUnread: boolean;
+  canViewProfile: boolean;
 };
 
 function formatTime(iso: string): string {
@@ -122,6 +124,7 @@ export default function CompanyChatsScreen() {
         offerTitle: offer?.title ?? null,
         lastMessage,
         isUnread: unreadRoomIds.has(room.id),
+        canViewProfile: Boolean(techView && isUnlocked(techView)),
       };
     }));
 
@@ -182,7 +185,7 @@ export default function CompanyChatsScreen() {
           />
         ) : null}
 
-        {entries.map(({ room, techDisplay, offerTitle, lastMessage, isUnread }) => (
+        {entries.map(({ room, techDisplay, offerTitle, lastMessage, isUnread, canViewProfile }) => (
           <TouchableOpacity
             key={room.id}
             style={styles.cardTouchable}
@@ -212,6 +215,9 @@ export default function CompanyChatsScreen() {
                 </View>
                 <View style={styles.cardRight}>
                   <CompanyBadge label="Open" tone="cyan" small />
+                  {canViewProfile ? (
+                    <ViewTechnicianProfileButton technicianId={room.technicianId} />
+                  ) : null}
                   <Text style={styles.chevron}>{'>'}</Text>
                 </View>
               </View>

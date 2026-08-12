@@ -13,7 +13,7 @@
 // technician who holds exactly what an offer requires must score clearly
 // above one who does not, regardless of how good the rest of their profile
 // looks — a missing required qualification is a legal blocker, not a minor
-// preference gap. Three mechanisms enforce this, applied after the raw
+// preference gap. Four mechanisms enforce this, applied after the raw
 // breakdown is summed:
 //   - an offer that requires ALL its listed aircraft (requiresAllAircraft)
 //     with any of them unmet at T1 caps the total at
@@ -23,11 +23,12 @@
 //     score is zero caps the total further, at ZERO_QUALIFICATION_CAP
 //     (stays "Weak" — verified/availability/location alone can
 //     never manufacture a "Partial" result out of zero real qualification).
-//   - a hard disqualifier (MatchScore.blockers — wrong technician type, or
-//     fewer declared years than the offer's minimum) caps it lowest of all,
-//     at BLOCKER_CAP. Unlike the two above this is not a statement about
-//     weak qualification evidence but about the pair itself: the offer was
-//     never for this technician. See the ceiling ladder below.
+//   - a different declared profile type is a strong but SOFT mismatch: it
+//     caps the score at PROFILE_TYPE_MISMATCH_CAP while keeping the offer
+//     selectable and the percentage visible;
+//   - a hard disqualifier (currently fewer declared years than the offer's
+//     minimum) caps it at BLOCKER_CAP and is surfaced separately from soft
+//     mismatches. See the ceiling ladder below.
 //
 // ratingIndex: the caller loads the aircraft_type_ratings catalog (via
 // catalogRepository/useAircraftTypeRatingsCatalog) and builds the index with
@@ -189,17 +190,14 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 //                     or broad) and the technician's habilitation score
 //                     came out to zero — stricter than the two above,
 //                     applies even for a preferred-only mismatch.
-//   BLOCKER_CAP     — a hard disqualifier applies (MatchScore.blockers):
-//                     the wrong technician type, or fewer declared years
-//                     than the offer's stated minimum. The tightest rung by
-//                     construction, and a different KIND of statement from
-//                     the three above: those all say "the qualification
-//                     evidence is weak", this one says "this pair should
-//                     not exist". Sits below ZERO_QUALIFICATION_CAP so a
-//                     blocked pair can never outrank a merely unqualified
-//                     one, and low enough that a blocked pair sinks to the
-//                     bottom of any total-descending sort on its own — no
-//                     special-casing in the ordering code (matchingV2.ts).
+//   PROFILE_TYPE_MISMATCH_CAP — the offer asks for a different trade than
+//                     every type declared by the technician. This is a strong
+//                     ranking penalty, NOT an eligibility blocker: the offer
+//                     stays selectable and displays its low percentage.
+//   BLOCKER_CAP     — a hard disqualifier applies (MatchScore.blockers), such
+//                     as fewer declared years than the offer's stated
+//                     minimum. A blocker is a different KIND of statement:
+//                     this pair does not meet an explicit hard requirement.
 // Fase 6 tanda E: AQUÍ VIVÍA `BROAD_ONLY_CAP = 79`, y se retira porque era
 // INALCANZABLE — no por un cambio de criterio. El máximo bruto de la rama que
 // lo alimentaba es 15 (verified) + round(45 × 0,29) = 13 + 20 (license) + 15
@@ -214,6 +212,7 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 // hace falta un techo para esa rama; hoy no lo hay porque no puede pasar de 68.
 const INCOMPLETE_AIRCRAFT_SET_CAP = 59;
 const ZERO_QUALIFICATION_CAP = 39;
+const PROFILE_TYPE_MISMATCH_CAP = 19;
 const BLOCKER_CAP = 19;
 
 // Single place the whole ceiling ladder is combined — see the comment
@@ -224,17 +223,23 @@ const BLOCKER_CAP = 19;
 // combination in practice (see scripts/testMatching.ts).
 export function applyScoreCeilings(
   total: number,
-  flags: { hasIncompleteAircraftSet: boolean; isZeroQualification: boolean; hasBlocker: boolean },
+  flags: {
+    hasIncompleteAircraftSet: boolean;
+    isZeroQualification: boolean;
+    hasProfileTypeMismatch: boolean;
+    hasBlocker: boolean;
+  },
 ): number {
   let capped = total;
   if (flags.hasIncompleteAircraftSet) capped = Math.min(capped, INCOMPLETE_AIRCRAFT_SET_CAP);
   if (flags.isZeroQualification) capped = Math.min(capped, ZERO_QUALIFICATION_CAP);
+  if (flags.hasProfileTypeMismatch) capped = Math.min(capped, PROFILE_TYPE_MISMATCH_CAP);
   if (flags.hasBlocker) capped = Math.min(capped, BLOCKER_CAP);
   return capped;
 }
 
-// Blocker text is read by a human (recruiter or technician), so it always
-// names the type the way the rest of the product does — "Avionics
+// Profile-type explanations are read by a human (recruiter or technician),
+// so they always name the type the way the rest of the product does — "Avionics
 // Technician", never the raw `avionic` code. Falls back to the code only if
 // a profile somehow carries a type absent from the catalog, which is a data
 // problem to surface, never a reason to render nothing. `isActive` is
@@ -586,6 +591,7 @@ export function calculateOfferTechnicianMatch(
   const vigenciaNotices: VigenciaNotice[] = [];
   const missingRequirements: string[] = [];
   const blockers: string[] = [];
+  let profileTypeMismatch = false;
   let level: MatchLevel = 'not_met';
 
   if (technician.verificationStatus === 'verified') {
@@ -770,36 +776,31 @@ export function calculateOfferTechnicianMatch(
     location = weights.location;
   }
 
-  // ── Hard blockers ────────────────────────────────────────────────────
-  // Not a weak-evidence signal like missingRequirements — these say the offer
-  // was never for this technician. They live HERE, in the pure function,
-  // rather than in either matchingV2.ts wrapper on purpose: the wrappers
-  // cover one direction each (company→technicians, technician→offers) and
-  // a dozen screens call this function directly, so a rule implemented in a
-  // wrapper would silently apply to some of the product and not the rest.
-  // Neither rule touches breakdown — a blocker caps the total (BLOCKER_CAP,
-  // see applyScoreCeilings), it never awards or subtracts component points.
+  // ── Profile type: strong SOFT mismatch ────────────────────────────────
+  // A matching type awards no points. A different type applies a low ceiling
+  // so generic signals such as verification, contract fit and country cannot
+  // manufacture a plausible-looking match for another trade. It deliberately
+  // does NOT add a blocker: cross-trade offers remain selectable and the UI
+  // keeps showing the resulting percentage.
+  //
+  // A technician can declare several types (Fase 6 tanda A), so this is a
+  // membership check: matching ANY declared type is sufficient. The offer
+  // always declares exactly one type (`offers.technician_type` is NOT NULL).
+  if (technician.technicianTypes.includes(offer.technicianType)) {
+    matches.push(`Technician type: ${technicianTypeLabel(offer.technicianType)}`);
+  } else {
+    const profileIs = technician.technicianTypes.map(technicianTypeLabel).join(', ');
+    profileTypeMismatch = true;
+    clarifications.push(
+      `Profile type differs — the offer is for ${technicianTypeLabel(offer.technicianType)}; this profile declares ${profileIs || 'no type'}.`,
+    );
+  }
 
-  // ── El tipo de perfil YA NO PUNTÚA NI FILTRA (Fase 6 tanda E) ────────
-  //
-  // Aquí vivía un blocker: el tipo de la oferta contra los del técnico. Se
-  // retira ENTERO — ni suma, ni resta, ni descalifica, y tampoco deja línea
-  // de match.
-  //
-  // El motivo es el de toda la fase: la licencia y la experiencia ya dicen
-  // todo lo que importa sobre si alguien sirve para el puesto. Si además el
-  // tipo puntúa o bloquea, hay dos cosas midiendo lo mismo — y la peor de las
-  // dos, porque es la etiqueta que el técnico eligió al registrarse, no lo que
-  // ha demostrado. Ese era exactamente el portero que la tanda A destituyó del
-  // perfil y la C del lado de la oferta.
-  //
-  // Sigue sirviendo para MOSTRAR (las pantallas lo pintan) y para BUSCAR (el
-  // filtro por intersección de technicianRepositoryV2), que es donde una
-  // etiqueta declarada sí vale: para que una empresa encuentre candidatos,
-  // no para juzgarlos.
-  //
-  // Y no se le deja "aunque sea un poco" de peso a propósito: un peso pequeño
-  // no evita el doble conteo, sólo lo hace más difícil de detectar.
+  // ── Hard blockers ────────────────────────────────────────────────────
+  // These live HERE, in the pure function, rather than in either
+  // matchingV2.ts wrapper: both matching directions and all direct screen
+  // callers must produce the same result. A blocker caps the total; it never
+  // awards or subtracts component points.
 
   // Minimum declared experience. `yearsExperience` absent (undefined/NULL)
   // is NOT a blocker — deliberate product rule, the same one the server-side
@@ -824,6 +825,7 @@ export function calculateOfferTechnicianMatch(
   const total = applyScoreCeilings(rawTotal, {
     hasIncompleteAircraftSet: missingRequirements.length > 0,
     isZeroQualification: hasQualificationRequirements && habilitation === 0,
+    hasProfileTypeMismatch: profileTypeMismatch,
     hasBlocker: blockers.length > 0,
   });
 
@@ -838,6 +840,7 @@ export function calculateOfferTechnicianMatch(
     clarifications,
     vigenciaNotices,
     missingRequirements,
+    profileTypeMismatch,
     blockers,
   };
 }

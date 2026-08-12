@@ -57,6 +57,7 @@ import { Document } from '../../../src/types/document';
 import { ChatRoom } from '../../../src/types/chat';
 import { technicianTypeLabels } from '../../../src/constants/technicianTypes';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
+import { ViewTechnicianProfileButton } from '../../../src/components/company/ViewTechnicianProfileButton';
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   license:  'License',
@@ -301,7 +302,12 @@ export default function DirectOfferDetailScreen() {
           </View>
           {score && offer ? (
             <>
-              <InlineScore score={score.total} quality={getMatchDisplayLabel(offer, score)} context="match for this offer" />
+              <InlineScore
+                score={score.total}
+                quality={getMatchDisplayLabel(offer, score)}
+                context="match for this offer"
+                notEligible={score.blockers.length > 0}
+              />
               <MatchExplanation score={score} displayLabel={getMatchDisplayLabel(offer, score)} />
             </>
           ) : null}
@@ -390,6 +396,10 @@ export default function DirectOfferDetailScreen() {
                 small
               />
             </View>
+
+            {unlocked ? (
+              <ViewTechnicianProfileButton technicianId={techView.id} fullWidth />
+            ) : null}
           </CompanyCard>
         ) : null}
 

@@ -23,6 +23,7 @@ import {
   Files,
   IdCard,
   Inbox,
+  MapPinned,
   MessageCircle,
   Radio,
   Settings,
@@ -47,6 +48,7 @@ type DashboardIconKind =
   | 'verified'
   | 'availability'
   | 'browseOffers'
+  | 'offerMap'
   | 'directOffers'
   | 'chats'
   | 'connections'
@@ -421,6 +423,15 @@ function ActionPanel({
             rail
           />
           <ActionCard
+            title="Offer Map"
+            subtitle="Explore published roles by location"
+            accent={ui.green}
+            softAccent={ui.greenSoft}
+            icon="offerMap"
+            onPress={() => router.push('/technician/map' as any)}
+            rail
+          />
+          <ActionCard
             title="Direct Offers"
             subtitle={pendingDirectOffers > 0 ? `${pendingDirectOffers} pending` : 'Sent directly to you'}
             accent={pendingDirectOffers > 0 ? ui.amber : ui.blue}
@@ -478,6 +489,14 @@ function ActionPanel({
           </View>
 
           <View style={styles.secondaryActions}>
+            <ActionCard
+              title="Offer Map"
+              subtitle="Explore published roles by location"
+              accent={ui.green}
+              softAccent={ui.greenSoft}
+              icon="offerMap"
+              onPress={() => router.push('/technician/map' as any)}
+            />
             <ActionCard
               title="My Applications"
               subtitle={pendingApplications > 0 ? `${pendingApplications} pending` : 'Application history'}
@@ -697,6 +716,7 @@ const DASHBOARD_ICONS: Record<DashboardIconKind, React.ComponentType<LucideProps
   verified: BadgeCheck,
   availability: Radio,
   browseOffers: BriefcaseBusiness,
+  offerMap: MapPinned,
   directOffers: Inbox,
   chats: MessageCircle,
   connections: Users,
