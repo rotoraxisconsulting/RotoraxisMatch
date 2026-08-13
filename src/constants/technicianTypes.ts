@@ -39,25 +39,32 @@ export function technicianTypeLabels(codes: readonly string[], fallback = '—')
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// ⚠ TODO LO QUE VIENE DEBAJO ESTÁ SIN CONSUMIDORES desde la Fase 6 tanda C
-// (2026-08-10). Pendiente del BARRIDO DE EXPORTS MUERTOS, junto a
-// `resolveFamilyKeyLabels` y `resolveAircraftCategoryForFamilyKeys`.
+// ⚠ AQUÍ HABÍA UN AVISO DE "TODO LO QUE VIENE DEBAJO ESTÁ SIN CONSUMIDORES"
+// (Fase 6 tanda C, 2026-08-10). Ya no vale para todo: la cadena se ha
+// partido en dos mitades con distinto destino (2026-08-13).
 //
-// La pregunta que respondían — "¿esta oferta tiene eje Part-66?" — la
-// contesta ahora `offers.requires_certification`, un booleano que la empresa
-// marca explícitamente. Deducirla del TIPO de perfil era el problema de
-// fondo de toda la Fase 6: hacía imposible publicar "ayudante para el A320,
-// sin licencia" y convertía la etiqueta del puesto en portero.
+// VIVA otra vez: `isLicensedTechnicianType`, y con ella
+// `TechnicianTypeCatalog.requiresLicense` y la columna
+// `technician_types.requires_license`. El formulario de oferta la usa para
+// decidir si la pregunta "¿hace falta licencia?" existe siquiera cuando el
+// puesto es de chapa, pintura o composite, y `licensesSelectableForOfferType`
+// (src/constants/licenses.ts) la usa para el mismo corte sobre la lista de
+// licencias. Es exactamente el consumidor que le faltaba, así que sale de la
+// lista de LIMPIEZA de docs/MISSION_PART66.md.
 //
-// Arrastran a `TechnicianTypeCatalog.requiresLicense` (types/catalog.ts),
-// cuyo único lector es `isLicensedTechnicianType`, y con él a la columna
-// `technician_types.requires_license` de Postgres, que existe y se queda sin
-// lectores. Los CUATRO son una sola cadena y se van juntos o no se va
-// ninguno. Lista canónica: docs/MISSION_PART66.md, sección "LIMPIEZA".
+// SIGUE SIN CONSUMIDORES: `offerTargetsLicensedProfiles`, la de abajo del
+// todo. La pregunta que respondía — "¿esta oferta tiene eje Part-66?" — la
+// contesta `offers.requires_certification`, un booleano que la empresa marca
+// explícitamente. Deducirla del TIPO de perfil era el problema de fondo de
+// toda la Fase 6: hacía imposible publicar "ayudante para el A320, sin
+// licencia". Sigue pendiente del BARRIDO DE EXPORTS MUERTOS, ahora ella sola
+// — retirarla ya NO arrastra a `requiresLicense` ni a su columna.
 //
-// No se borran en la tanda C a propósito: retirar exports es un barrido
-// propio, con su propia verificación por dirección entrante, no una nota al
-// pie de una tanda que ya toca doce ficheros.
+// Ojo a la diferencia entre las dos, que es justo lo que las separa:
+// `isLicensedTechnicianType` responde "¿este OFICIO tiene licencias?", que es
+// propiedad del oficio y siempre fue cierta; `offerTargetsLicensedProfiles`
+// respondía "¿esta OFERTA exige licencia?", que es decisión de la empresa y
+// nunca debió deducirse del oficio.
 // ══════════════════════════════════════════════════════════════════════
 
 // ── Licensed vs non-licensed profiles ───────────────────────────────────

@@ -43,7 +43,12 @@ import {
 import { canHold, getCompatiblePropulsion } from '../src/utils/habilitationScope';
 import { HabilitationScope } from '../src/types/habilitationScope';
 import { isLicensedTechnicianType, offerTargetsLicensedProfiles } from '../src/constants/technicianTypes';
-import { findOrphanedLicenses } from '../src/constants/licenses';
+import {
+  LICENSE_CODES,
+  licensesSelectableForOfferType,
+  typesAfterLicenseChange,
+  typesImpliedByLicenses,
+} from '../src/constants/licenses';
 import { getMatchDisplayLabel } from '../src/utils/offerMatchExplain';
 import { GENERAL_COMPATIBILITY_LABEL } from '../src/types/matching';
 import { Technician } from '../src/types';
@@ -2336,51 +2341,115 @@ async function main() {
     assert.equal(parseYearsExperience('  5  '), 5, 'surrounding whitespace is tolerated');
   });
 
-  // ── Fase 6 tanda A: licencias huérfanas al quitar un tipo ─────────────
-  await test('Huérfanas — quitar "mechanic" conservando "avionic": B1.3 entra, B2 no', () => {
-    // El ejemplo exacto de la decisión del 2026-08-10.
+  // ── La licencia decide el oficio (2026-08-13) ─────────────────────────
+  //
+  // AQUÍ VIVÍAN LOS CINCO TESTS DE `findOrphanedLicenses`, que comprobaban a
+  // qué licencias dejaba huérfanas quitar un tipo de perfil. Se van con la
+  // función: ya no puede darse el caso que la motivaba. Un tipo implicado por
+  // una licencia declarada no se puede desmarcar, así que ninguna licencia
+  // puede quedar sin su tipo, y quitar la licencia se lleva el tipo sin
+  // preguntar nada.
+  //
+  // Lo que aquellos tests protegían —que la `C` no tiene rama y que A1–A4,
+  // B3 y L sí— lo protegen ahora los dos primeros de aquí abajo, sobre la
+  // función que heredó el mapa.
+
+  await test('Implicados — B1.x/A/B3/L implican mecánico y B2/B2L aviónico', () => {
+    assert.deepEqual(typesImpliedByLicenses(['B1.1']), ['mechanic']);
+    assert.deepEqual(typesImpliedByLicenses(['B2']), ['avionic']);
+    assert.deepEqual(typesImpliedByLicenses(['B2L']), ['avionic']);
+    // A1–A4 van con su B1 correspondiente, B3 es mecánico de pistón, y L
+    // (light aircraft) es trabajo de célula y motor.
+    for (const code of ['A1', 'A2', 'A3', 'A4', 'B1.2', 'B1.3', 'B1.4', 'B3', 'L']) {
+      assert.deepEqual(typesImpliedByLicenses([code]), ['mechanic'], `${code} es rama mecánica`);
+    }
+    // Las dos ramas a la vez son un estado perfectamente válido.
+    assert.deepEqual(typesImpliedByLicenses(['B1.1', 'B2']), ['mechanic', 'avionic']);
+  });
+
+  await test('Implicados — la C NO implica oficio, y sin licencias no se implica nada', () => {
+    // C es supervisión de mantenimiento base: la sostienen tanto perfiles B1
+    // como B2, así que de ella no se puede deducir el oficio. Si alguien se
+    // la asigna a una rama "para completar el mapa", este test se cae — que
+    // es el punto.
+    assert.deepEqual(typesImpliedByLicenses(['C']), []);
+    assert.deepEqual(typesImpliedByLicenses([]), []);
+    // Y no estorba a las que sí implican.
+    assert.deepEqual(typesImpliedByLicenses(['C', 'B2']), ['avionic']);
+  });
+
+  await test('Implicados — el orden no depende del orden de las licencias recibidas', () => {
+    // El resultado se compara y se guarda: dos llamadas con las mismas
+    // licencias en distinto orden tienen que coincidir exactamente.
+    assert.deepEqual(typesImpliedByLicenses(['B2', 'B1.1']), typesImpliedByLicenses(['B1.1', 'B2']));
+  });
+
+  await test('Casilla implicada — añadir una licencia marca su tipo, y no toca los demás', () => {
+    // Un pintor que declara una B1.1 pasa a ser pintor Y mecánico: el tipo
+    // manual no se pierde, y el implicado se marca solo.
+    assert.deepEqual(typesAfterLicenseChange(['painter'], [], ['B1.1']), ['painter', 'mechanic']);
+    // Volver a marcar algo ya implicado no duplica nada.
+    assert.deepEqual(typesAfterLicenseChange(['mechanic'], ['B1.1'], ['B1.1', 'B1.2']), ['mechanic']);
+  });
+
+  await test('Casilla implicada — quitar la ÚLTIMA licencia de una rama desmarca su tipo, y sólo el suyo', () => {
+    // B1.1 + B2 -> se quita la B2: 'avionic' se va, 'mechanic' se queda
+    // (sigue implicado por la B1.1) y el tipo manual no se toca. Los
+    // implicados salen detrás de los manuales porque se reponen al final; el
+    // orden no lo lee nadie (el selector pinta por catálogo y
+    // replaceProfileTypes compara por pertenencia), pero se fija aquí para
+    // que un cambio de orden sea una decisión y no un efecto colateral.
     assert.deepEqual(
-      findOrphanedLicenses(['B1.3', 'B2'], ['mechanic', 'avionic'], ['avionic']),
-      ['B1.3'],
+      typesAfterLicenseChange(['mechanic', 'avionic', 'painter'], ['B1.1', 'B2'], ['B1.1']),
+      ['painter', 'mechanic'],
+    );
+    // Pero mientras quede otra licencia de la MISMA rama, el tipo no se cae.
+    assert.deepEqual(
+      typesAfterLicenseChange(['mechanic'], ['B1.1', 'B1.2'], ['B1.2']),
+      ['mechanic'],
     );
   });
 
-  await test('Huérfanas — C no tiene rama y NUNCA queda huérfana, con ninguna combinación de tipos', () => {
-    // C es supervisión de mantenimiento base: la sostienen tanto perfiles B1
-    // como B2. Asignarle una rama la declararía huérfana al quitar esa rama
-    // cuando la otra sigue sosteniéndola. Si alguien se la asigna "para
-    // completar el mapa", este test se cae — que es el punto.
-    const combinaciones: [string[], string[]][] = [
-      [['mechanic', 'avionic'], ['painter']],
-      [['mechanic'], ['avionic']],
-      [['avionic'], ['mechanic']],
-      [['mechanic', 'avionic'], ['mechanic']],
-      [['mechanic', 'avionic'], ['avionic']],
-    ];
-    for (const [previos, siguientes] of combinaciones) {
-      assert.deepEqual(
-        findOrphanedLicenses(['C'], previos, siguientes),
-        [],
-        `C no puede quedar huérfana pasando de ${previos} a ${siguientes}`,
-      );
+  await test('Casilla implicada — quitar la última licencia a secas puede dejar la lista vacía, y eso lo corta el mínimo de uno', () => {
+    // Estado de FORMULARIO válido y momentáneo: quien impide guardarlo es la
+    // pantalla y replaceProfileTypes, no esta función.
+    assert.deepEqual(typesAfterLicenseChange(['mechanic'], ['B1.1'], []), []);
+    // Con un tipo manual detrás no llega a darse.
+    assert.deepEqual(typesAfterLicenseChange(['mechanic', 'composite'], ['B1.1'], []), ['composite']);
+  });
+
+  await test('Casilla implicada — la C no marca ni desmarca nada', () => {
+    assert.deepEqual(typesAfterLicenseChange(['painter'], [], ['C']), ['painter']);
+    assert.deepEqual(typesAfterLicenseChange(['mechanic'], ['B1.1', 'C'], ['B1.1']), ['mechanic']);
+  });
+
+  await test('Oferta — las licencias seleccionables son las de la rama del oficio MÁS la C', () => {
+    // La C entra aquí y NO en el mapa de implicados, a propósito: no dice
+    // oficio, pero un puesto de mantenimiento base lo puede ocupar tanto un
+    // B1 como un B2, así que ofrecerla nunca contradice al tipo declarado.
+    assert.deepEqual(licensesSelectableForOfferType('avionic'), ['B2', 'B2L', 'C']);
+    assert.deepEqual(licensesSelectableForOfferType('mechanic'), [
+      'A1', 'A2', 'A3', 'A4', 'B1.1', 'B1.2', 'B1.3', 'B1.4', 'B3', 'L', 'C',
+    ]);
+    // El caso vivo que motivó la tanda: una oferta de aviónico pedía B1.2.
+    assert.ok(!licensesSelectableForOfferType('avionic').includes('B1.2'));
+    assert.ok(!licensesSelectableForOfferType('mechanic').includes('B2'));
+  });
+
+  await test('Oferta — los oficios sin licencia no pueden pedir ninguna', () => {
+    for (const code of ['sheet_metal_worker', 'painter', 'composite']) {
+      assert.deepEqual(licensesSelectableForOfferType(code), [], `${code} no tiene eje Part-66`);
     }
   });
 
-  await test('Huérfanas — A1–A4, B3 y L son rama mecánica y sí entran', () => {
-    // A1–A4 van con su B1 correspondiente, B3 es mecánico de pistón, y L
-    // (light aircraft) es trabajo de célula y motor. Corrección del
-    // 2026-08-10 sobre un primer reparto que los dejaba sin rama.
-    assert.deepEqual(
-      findOrphanedLicenses(['A1', 'A2', 'A3', 'A4', 'B3', 'L'], ['mechanic'], ['painter']),
-      ['A1', 'A2', 'A3', 'A4', 'B3', 'L'],
-    );
-  });
-
-  await test('Huérfanas — quitar el último tipo licenciado arrastra todo menos C', () => {
-    assert.deepEqual(
-      findOrphanedLicenses(['B1.1', 'B2', 'C', 'L'], ['mechanic', 'avionic'], ['painter']),
-      ['B1.1', 'B2', 'L'],
-    );
+  await test('Oferta — un tipo licenciado SIN rama declarada no restringe, en vez de quedarse sin ninguna', () => {
+    // `pilot` está en el catálogo como licenciado pero no tiene rama en
+    // LICENSES_BY_TECHNICIAN_TYPE (está inactivo en los selectores). Devolver
+    // [] dejaría un puesto licenciado sin ninguna licencia que pedir; la
+    // dirección segura es no restringir, la misma que toma
+    // isLicensedTechnicianType con un código desconocido.
+    assert.deepEqual(licensesSelectableForOfferType('pilot'), LICENSE_CODES);
+    assert.deepEqual(licensesSelectableForOfferType('not_in_the_catalog'), LICENSE_CODES);
   });
 
   // ── Localización por PAÍS (Fase 7 F2c) ───────────────────────────────────
@@ -2443,15 +2512,6 @@ async function main() {
   // TechnicianWithRelations al quedarse sin lectores, así que el compilador
   // impide ahora lo que ese test comprobaba en ejecución — una garantía más
   // fuerte, no una menos.
-
-  await test('Huérfanas — sin tipos quitados, o sin licencias afectadas, no se pregunta nada', () => {
-    // AÑADIR un tipo nunca dispara la pregunta.
-    assert.deepEqual(findOrphanedLicenses(['B1.1'], ['mechanic'], ['mechanic', 'painter']), []);
-    // Quitar un tipo que no reclama ninguna licencia tampoco.
-    assert.deepEqual(findOrphanedLicenses(['B1.1'], ['mechanic', 'painter'], ['mechanic']), []);
-    // Ni quitar un tipo cuando el técnico no tiene esas licencias.
-    assert.deepEqual(findOrphanedLicenses(['B2'], ['mechanic', 'avionic'], ['avionic']), []);
-  });
 
 }
 

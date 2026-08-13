@@ -2,6 +2,8 @@ import { supabase } from '../../lib/supabase';
 import { Offer, OfferProductType, OfferRequiredHabilitation, OfferWithRequirements } from '../../types/offer';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../types/catalog';
 import { OfferStatus } from '../../types/enums';
+import { licensesSelectableForOfferType } from '../../constants/licenses';
+import { isLicensedTechnicianType, technicianTypeLabel } from '../../constants/technicianTypes';
 import { LocationValue, PersistedLocation } from '../../types/location';
 import { locationColumns, persistedLocationFromValue } from '../../utils/locationBridge';
 import {
@@ -156,6 +158,53 @@ export function isOfferOpenForTechnicians(offer: Pick<Offer, 'status' | 'visible
 // vale, y eso lo decide el scorer (offerMatchExplain), no una prohibición de
 // escritura.
 
+/**
+ * El OFICIO declarado por la oferta y la LICENCIA que pide tienen que decir
+ * lo mismo (2026-08-13). Dos contradicciones, las dos rechazadas:
+ *
+ *   1. Una licencia que no es de la rama del oficio — un puesto de aviónico
+ *      pidiendo B1.2. La rama es definición Part-66, no criterio nuestro:
+ *      ver LICENSES_BY_TECHNICIAN_TYPE. (La `C` es de las dos ramas y por eso
+ *      `licensesSelectableForOfferType` la admite en ambas.)
+ *   2. Exigir certificar en un oficio que no tiene licencias — chapa, pintura
+ *      o composite. No es que la respuesta sea "no": es que la pregunta no
+ *      existe para ellos, así que un `true` ahí no significa nada.
+ *
+ * Va en el repositorio y no sólo en el formulario por el mismo motivo que la
+ * regla del interruptor de la tanda C: esconder una sección corta EL camino
+ * que un usuario recorre a clics, y no hace nada contra un estado de
+ * formulario desfasado, una pantalla que cambie el tipo después de la
+ * licencia, o cualquier llamante futuro. Hoy, además, la base no puede
+ * ayudar: `chk_offers_license_matches_certification` (migración 053) ata la
+ * licencia al interruptor, pero NINGÚN CHECK ata licencia y tipo. Si esta
+ * regla se asienta, ese CHECK es el sitio natural para ella — pendiente de
+ * decidir, sin migración por ahora.
+ *
+ * Lanza en vez de corregir en silencio: escribir algo distinto de lo que la
+ * empresa pidió y responder "guardado" es la clase de éxito falso que este
+ * fichero evita en todas partes.
+ */
+function assertLicenseMatchesTechnicianType(
+  technicianType: TechnicianTypeCode,
+  requiresCertification: boolean,
+  licenseCode: LicenseCode | undefined,
+): void {
+  if (!isLicensedTechnicianType(technicianType)) {
+    if (requiresCertification || licenseCode) {
+      throw new Error(
+        `A ${technicianTypeLabel(technicianType).toLowerCase()} role holds no EASA licence, so this offer cannot require certified work. Switch off the licence requirement, or change the profile type.`,
+      );
+    }
+    return;
+  }
+
+  if (licenseCode && !licensesSelectableForOfferType(technicianType).includes(licenseCode)) {
+    throw new Error(
+      `${licenseCode} is not a licence of ${technicianTypeLabel(technicianType).toLowerCase()} work, so this offer cannot require it. Pick a licence of that trade, or change the profile type.`,
+    );
+  }
+}
+
 export const offerRepository = {
   async getAll(): Promise<Offer[]> {
     const { data, error } = await supabase
@@ -239,6 +288,19 @@ export const offerRepository = {
     const existing = await this.getById(id);
     if (!existing) return null;
 
+    // Sobre el estado RESULTANTE, no sobre el patch: un patch que sólo trae el
+    // tipo de perfil puede contradecir la licencia que ya está en la fila, y
+    // sería justo la contradicción que esto existe para impedir. El valor
+    // efectivo de la licencia se calcula igual que lo escribe offerPatchToDb
+    // — apagar el interruptor la pone a NULL sin mirar el patch, y un
+    // `licenseCode` ausente deja la de la fila.
+    const nextRequiresCertification = patch.requiresCertification ?? existing.requiresCertification;
+    assertLicenseMatchesTechnicianType(
+      patch.technicianType ?? existing.technicianType,
+      nextRequiresCertification,
+      nextRequiresCertification === false ? undefined : (patch.licenseCode ?? existing.licenseCode),
+    );
+
     // Cambiar el producto de la oferta con requisitos exactos dentro es
     // IMPOSIBLE en Postgres: `orh_matches_offer` (migración 047) ata cada fila
     // de offer_required_habilitations al par (offer_id, product_type) de su
@@ -301,6 +363,7 @@ export const offerRepository = {
     requiredHabilitations?: { aircraftTypeRatingId: string; notes?: string }[];
   }): Promise<OfferWithRequirements> {
     const status = data.status ?? 'draft';
+    assertLicenseMatchesTechnicianType(data.technicianType, data.requiresCertification, data.licenseCode);
     const location = offerLocationFromValue(data.location);
     const { data: inserted, error } = await supabase
       .from('offers')

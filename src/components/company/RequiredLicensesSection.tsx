@@ -2,9 +2,9 @@ import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { spacing } from '../../theme';
 import { CompanyCard, CompanyChip, companyUi } from './CompanyUI';
-import { LicenseCode } from '../../types/catalog';
+import { LicenseCode, TechnicianTypeCode } from '../../types/catalog';
 import { OfferProductType } from '../../types/offer';
-import { LICENSE_CATEGORIES } from '../../constants/licenses';
+import { LICENSE_CATEGORIES, licensesSelectableForOfferType } from '../../constants/licenses';
 import { isLicenseCompatibleWithProductType } from '../../utils/licenseCategoryProductType';
 
 interface Props {
@@ -16,6 +16,10 @@ interface Props {
   // Migración 047 — la licencia se acota por el producto declarado por la
   // oferta. Una oferta de helicópteros no puede pedir B1.1.
   productType: OfferProductType;
+  // 2026-08-13 — y además por el OFICIO declarado por la oferta: un puesto de
+  // aviónico no puede pedir una B1.2. Los dos filtros son independientes y se
+  // aplican los dos: el producto acota la célula, el oficio acota la rama.
+  technicianType: TechnicianTypeCode;
 }
 
 // Fase 6 tanda D — de "Required licenses" (un conjunto) a "Licence" (una).
@@ -29,11 +33,13 @@ interface Props {
 // había requisitos exactos ("el exacto ANULA al amplio"), así que competía por
 // atención sin puntuar. Ahora la licencia no es una vía alternativa: es el eje
 // con el que se cruza cada aeronave, y se usa SIEMPRE.
-export function RequiredLicensesSection({ licenseCode, onChangeLicense, productType }: Props) {
-  const categories = useMemo(
-    () => LICENSE_CATEGORIES.filter((l) => isLicenseCompatibleWithProductType(l.code as LicenseCode, productType)),
-    [productType],
-  );
+export function RequiredLicensesSection({ licenseCode, onChangeLicense, productType, technicianType }: Props) {
+  const categories = useMemo(() => {
+    const selectable = new Set(licensesSelectableForOfferType(technicianType));
+    return LICENSE_CATEGORIES.filter(
+      (l) => selectable.has(l.code as LicenseCode) && isLicenseCompatibleWithProductType(l.code as LicenseCode, productType),
+    );
+  }, [productType, technicianType]);
 
   return (
     <CompanyCard style={styles.card}>

@@ -24,18 +24,17 @@ export interface TechnicianTypeCatalog {
   code: TechnicianTypeCode;
   label: string;
   /**
-   * ⚠ SIN CONSUMIDORES desde la Fase 6 tanda C (2026-08-10). Su único lector
-   * era `isLicensedTechnicianType`, que también quedó huérfano: ahora es la
-   * OFERTA la que declara si hace falta certificar
-   * (`offers.requires_certification`), en vez de deducirse del tipo de perfil.
-   * Pendiente del barrido de exports muertos; se retira con esos dos o con
-   * ninguno.
+   * ¿Este oficio tiene licencias Part-66? Propiedad del OFICIO, no de una
+   * oferta concreta: un mecánico puede no tener licencia y seguir siendo
+   * mecánico, pero un pintor no tiene ninguna que tener.
    *
-   * Ojo al barrerlo: `technician_types.requires_license` SÍ existe en
-   * Postgres (verificado en vivo), así que retirar el campo de este tipo
-   * deja la columna en la base sin ningún lector — decidir si también se
-   * dropea es parte del mismo barrido, no algo que ocurra solo. Las dos
-   * están en la lista canónica: docs/MISSION_PART66.md, sección "LIMPIEZA".
+   * Estuvo marcado SIN CONSUMIDORES entre la Fase 6 tanda C (2026-08-10) y el
+   * 2026-08-13, cuando su lector `isLicensedTechnicianType` volvió a tenerlos:
+   * el formulario de oferta decide con él si la pregunta "¿hace falta
+   * licencia?" existe, y `licensesSelectableForOfferType` acota con él la
+   * lista de licencias que un puesto puede pedir. Sale, por tanto, de la
+   * lista de LIMPIEZA de docs/MISSION_PART66.md, y con él la columna
+   * `technician_types.requires_license`, que vuelve a tener lectores.
    */
   requiresLicense: boolean;
   isActive: boolean;

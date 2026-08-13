@@ -26,9 +26,10 @@ import { TypeRatingRequirementsEditor, ExactHabilitationRow } from '../../../src
 import { RequiredLicensesSection } from '../../../src/components/company/RequiredLicensesSection';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
 import { useCompanySession } from '../../../src/state/SessionContext';
-import { TECHNICIAN_TYPES } from '../../../src/constants/technicianTypes';
+import { TECHNICIAN_TYPES, isLicensedTechnicianType } from '../../../src/constants/technicianTypes';
 import { CONTRACT_TYPES } from '../../../src/constants/contractTypes';
 import { OFFER_PRODUCT_TYPES } from '../../../src/constants/offerProductTypes';
+import { licensesSelectableForOfferType } from '../../../src/constants/licenses';
 import { isLicenseCompatibleWithProductType } from '../../../src/utils/licenseCategoryProductType';
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from '../../../src/types/catalog';
 import { OfferProductType } from '../../../src/types/offer';
@@ -106,6 +107,15 @@ export default function NewOfferScreen() {
   // misma regla al escribir — esconder una sección no es una garantía.
   const requiresCertification = form.requiresCertification;
 
+  // 2026-08-13: chapa, pintura y composite no tienen licencias Part-66 que
+  // pedir, así que para ellos la PREGUNTA no existe — ni el interruptor ni
+  // los chips se pintan. No es lo mismo que responder "no": es que no hay
+  // nada que responder. El estado se mantiene coherente con lo que se ve
+  // (`requiresCertification: false`, `licenseCode: undefined`) desde
+  // `onSelectTechnicianType`, para que no quede escondido un `true` que la
+  // pantalla ya no enseña.
+  const licensedType = isLicensedTechnicianType(form.technicianType);
+
   // Creando una oferta, apagar la certificación repinta SOBRE LA MARCHA y sin
   // aviso, igual que el cambio de producto: nada de lo que se descarta está
   // guardado todavía. En la pantalla de edición sí se avisa.
@@ -118,6 +128,46 @@ export default function NewOfferScreen() {
       // mas. Las aeronaves se quedan: "ayudante para el A320" sigue siendo
       // una oferta para el A320. Encenderla no devuelve la licencia.
       ...(next ? {} : { licenseCode: undefined }),
+    }));
+  }
+
+  // Cambiar el TIPO de perfil arrastra la licencia, por el mismo motivo que
+  // el producto: una B1.2 en un puesto de aviónico es una contradicción, no
+  // una preferencia. Creando se repinta sobre la marcha, sin aviso; en la
+  // pantalla de edición se avisa.
+  //
+  // Cada rama reutiliza la consecuencia que la pantalla ya tiene definida
+  // para esa transición, en vez de inventar una tercera:
+  //   - a un oficio SIN licencia -> lo mismo que apagar el interruptor (Fase
+  //     6 tanda E): se va la licencia y LAS AERONAVES SE QUEDAN. "Ayudante
+  //     para el A320" es justo el caso que abrió aquella tanda, y cambiar de
+  //     mecánico a pintor es ese mismo movimiento con otra etiqueta.
+  //   - a otro oficio licenciado cuya rama no admite la licencia actual -> lo
+  //     mismo que cambiar de licencia: se va con las aeronaves, que estaban
+  //     puestas para cruzarse con ella. Conservarlas sólo aplazaría el
+  //     borrado al toque siguiente, cuando la empresa eligiera la nueva.
+  function onSelectTechnicianType(next: TechnicianTypeCode) {
+    if (next === form.technicianType) return;
+
+    if (!isLicensedTechnicianType(next)) {
+      setForm((prev) => ({
+        ...prev,
+        technicianType: next,
+        requiresCertification: false,
+        licenseCode: undefined,
+      }));
+      return;
+    }
+
+    const keepsLicense = form.licenseCode
+      ? licensesSelectableForOfferType(next).includes(form.licenseCode)
+      : true;
+    setForm((prev) => ({
+      ...prev,
+      technicianType: next,
+      ...(keepsLicense
+        ? {}
+        : { licenseCode: undefined, requiredHabilitations: [], requiresAllAircraft: false }),
     }));
   }
 
@@ -229,22 +279,27 @@ export default function NewOfferScreen() {
               key={t.code}
               label={t.label}
               selected={form.technicianType === t.code}
-              onPress={() => set('technicianType', t.code as TechnicianTypeCode)}
+              onPress={() => onSelectTechnicianType(t.code as TechnicianTypeCode)}
             />
           ))}
         </ChoiceSection>
 
-        <ChoiceSection
-          title="Does this job need certified work?"
-          helper={
-            requiresCertification
-              ? 'Yes — the technician must hold a valid EASA licence to sign off the work. You can require a licence and type ratings below.'
-              : 'No — you are hiring for hands-on work, not for signing it off. No licence or type rating can be required.'
-          }
-        >
-          <CompanyChip label="Yes, licence required" selected={requiresCertification} onPress={() => onToggleCertification(true)} />
-          <CompanyChip label="No licence needed" selected={!requiresCertification} onPress={() => onToggleCertification(false)} />
-        </ChoiceSection>
+        {/* La pregunta sólo existe para los oficios que tienen licencia. Para
+            chapa, pintura y composite no hay eje Part-66 que abrir, así que
+            no se pregunta ni se pinta nada de lo que cuelga de ella. */}
+        {licensedType && (
+          <ChoiceSection
+            title="Does this job need certified work?"
+            helper={
+              requiresCertification
+                ? 'Yes — the technician must hold a valid EASA licence to sign off the work. You can require a licence and type ratings below.'
+                : 'No — you are hiring for hands-on work, not for signing it off. No licence or type rating can be required.'
+            }
+          >
+            <CompanyChip label="Yes, licence required" selected={requiresCertification} onPress={() => onToggleCertification(true)} />
+            <CompanyChip label="No licence needed" selected={!requiresCertification} onPress={() => onToggleCertification(false)} />
+          </ChoiceSection>
+        )}
 
         <FormSection
           title="Airplanes or helicopters?"
@@ -334,11 +389,12 @@ export default function NewOfferScreen() {
         {/* 4) licencia y 5) aeronaves. Solo existen si la oferta exige
             certificar: sin licencia de por medio no hay nada que pedir en
             este eje. */}
-        {requiresCertification && (
+        {licensedType && requiresCertification && (
           <RequiredLicensesSection
             licenseCode={form.licenseCode}
             onChangeLicense={onSelectLicense}
             productType={form.productType}
+            technicianType={form.technicianType}
           />
         )}
 

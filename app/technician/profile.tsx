@@ -31,11 +31,9 @@ import { Technician, AvailabilityStatus } from '../../src/types';
 import { SocialLinks } from '../../src/types/technician';
 import { isValidUrl, normalizeUrl } from '../../src/utils/urlValidation';
 import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
-import { LICENSE_CATEGORIES, findOrphanedLicenses } from '../../src/constants/licenses';
-import { technicianTypeLabel } from '../../src/constants/technicianTypes';
+import { LICENSE_CATEGORIES, typesAfterLicenseChange, typesImpliedByLicenses } from '../../src/constants/licenses';
 import { TechnicianTypeSelector } from '../../src/components/TechnicianTypeSelector';
 import { useTechnicianTypes } from '../../src/auth/useCatalogOptions';
-import { confirmAction } from '../../src/utils/platformAlert';
 import { AircraftRatingIndex, buildAircraftRatingIndex, getAircraftTypeRatingLabel } from '../../src/constants/aircraftTypeRatings';
 import { HabilitationsEditor, HabilitationRow as HabRow } from '../../src/components/technician/HabilitationsEditor';
 import { AircraftExperienceEditor, AircraftExperienceRow } from '../../src/components/technician/AircraftExperienceEditor';
@@ -210,17 +208,20 @@ export default function TechnicianProfileScreen() {
   // activaba al cambiar los anios).
   const [yearsInput, setYearsInput] = useState('');
   // Fase 6 tanda A: varios tipos de perfil, EDITABLES aqui (antes se fijaban
-  // en el alta y no habia forma de cambiarlos). Ya NO deciden nada mas: el
-  // eje Part-66 se muestra siempre y la tabla de completitud la elige lo que
-  // el tecnico declara, no su etiqueta. Fuera de `form` porque el tipo V1
-  // `Technician` no tiene este campo.
+  // en el alta y no habia forma de cambiarlos). Fuera de `form` porque el
+  // tipo V1 `Technician` no tiene este campo.
+  //
+  // 2026-08-13: los tipos IMPLICADOS por una licencia declarada ya no se
+  // eligen — se marcan solos y se bloquean (ver `impliedTypes` y
+  // toggleLicense). Los que no tienen licencia (chapa, pintura, composite)
+  // siguen siendo enteramente libres, y un tecnico puede tener a la vez
+  // implicados y manuales.
   //
   // `typesLoaded` distingue "aun no ha llegado" de "llego vacio". Sin esa
   // distincion, guardar antes de que responda la consulta mandaria [] a
   // replaceProfileTypes y borraria los tipos del tecnico.
   const [technicianTypes, setTechnicianTypes] = useState<string[]>([]);
   const [typesLoaded, setTypesLoaded] = useState(false);
-  const [savedTechnicianTypes, setSavedTechnicianTypes] = useState<string[]>([]);
   // Enlaces sociales, EN CRUDO tal y como los teclea el tecnico (sin
   // normalizar): normalizar en cada pulsacion pelearia con el cursor. La
   // normalizacion pasa una sola vez, al guardar.
@@ -312,15 +313,6 @@ export default function TechnicianProfileScreen() {
           .order('created_at'),
       ]);
 
-      // Un fallo aqui NO se traga: sin tipos cargados, guardar mandaria [] a
-      // replaceProfileTypes (que lo rechaza) o, peor, el selector enseñaria
-      // el perfil como si no tuviera ninguno. Mejor caer al banner de error.
-      if (typeResult.error) throw typeResult.error;
-      const loadedTypes = ((typeResult.data ?? []) as { type_code: string }[]).map((r) => r.type_code);
-      setTechnicianTypes(loadedTypes);
-      setSavedTechnicianTypes(loadedTypes);
-      setTypesLoaded(true);
-
       const licRows = (licResult.data ?? []) as { license_code: string; issued_at: string | null; expires_at: string | null }[];
       const licenses = licRows.map((r) => r.license_code);
       const licenseDetailsMap: Record<string, LicenseDetail> = {};
@@ -328,6 +320,28 @@ export default function TechnicianProfileScreen() {
         licenseDetailsMap[r.license_code] = { issuedAt: r.issued_at ?? undefined, expiresAt: r.expires_at ?? undefined };
       });
       setLicenseDetails(licenseDetailsMap);
+
+      // Un fallo aqui NO se traga: sin tipos cargados, guardar mandaria [] a
+      // replaceProfileTypes (que lo rechaza) o, peor, el selector enseñaria
+      // el perfil como si no tuviera ninguno. Mejor caer al banner de error.
+      if (typeResult.error) throw typeResult.error;
+      const loadedTypes = ((typeResult.data ?? []) as { type_code: string }[]).map((r) => r.type_code);
+      // Los implicados se AÑADEN a lo que diga la fila, y por eso se cargan
+      // las licencias primero. Una fila anterior a la invariante (2026-08-13)
+      // puede tener una B1.1 y sólo la casilla de aviónico; enseñarla tal cual
+      // dejaria el chip de mecanico desmarcado y desbloqueado, contradiciendo
+      // en pantalla la regla que el guardado impone — y ese guardado seria
+      // ademas rechazado sin que el tecnico hubiera tocado nada.
+      //
+      // Se usa el setter PLANO a proposito, nunca updateTechnicianTypes(): la
+      // reparacion entra en el estado INICIAL, no como una edicion del
+      // tecnico. Con `setIsDirty(true)` de por medio, abrir el perfil y
+      // salir sin tocar nada sacaria el aviso de "Unsaved changes" y
+      // encenderia el boton de guardar por una fila que el tecnico no ha
+      // editado. Asi, la reparacion viaja con el proximo guardado real y por
+      // si sola no escribe nada.
+      setTechnicianTypes([...new Set([...loadedTypes, ...typesImpliedByLicenses(licenses)])]);
+      setTypesLoaded(true);
 
       const habRows = (habResult.data ?? []) as {
         id: string;
@@ -457,9 +471,12 @@ export default function TechnicianProfileScreen() {
   // desbloquear el formulario, que es un rodeo absurdo y ademas falsea sus
   // tipos.
   //
-  // `isLicensedTechnicianType` se quedo SIN NINGUN CONSUMIDOR en la Tanda C,
-  // cuando el lado de la oferta paso a declarar `requiresCertification`. No
-  // se borra todavia: anotada para el barrido de exports muertos.
+  // `isLicensedTechnicianType` estuvo SIN CONSUMIDORES desde la Tanda C, y
+  // volvio a tenerlos el 2026-08-13: el formulario de oferta decide con ella
+  // si la pregunta "¿hace falta licencia?" existe. Sale del barrido de
+  // exports muertos. Lo que NO cambia es esta pantalla: aqui el eje Part-66
+  // se sigue mostrando siempre, porque estar licenciado es propiedad de la
+  // persona y no de la etiqueta que eligio al registrarse.
 
   function updateField<K extends keyof Technician>(key: K, value: Technician[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -481,7 +498,8 @@ export default function TechnicianProfileScreen() {
   }
 
   // Unico punto de edicion de technicianTypes desde la UI. El minimo de uno
-  // lo hace cumplir TechnicianTypeSelector, no esto.
+  // lo hace cumplir TechnicianTypeSelector, y el bloqueo de los implicados
+  // tambien (con `lockedCodes`), no esto.
   function updateTechnicianTypes(next: string[]) {
     setTechnicianTypes(next);
     setIsDirty(true);
@@ -504,11 +522,21 @@ export default function TechnicianProfileScreen() {
     setIsDirty(true);
   }
 
+  // La licencia DECIDE el oficio, y esta es la unica direccion (2026-08-13):
+  // anadir una licencia marca su tipo implicado, y quitar la ultima que
+  // implicaba un tipo lo desmarca. El tecnico sigue pudiendo declarar
+  // CUALQUIER licencia — la lista de chips de arriba no se filtra por nada.
+  //
+  // La reasignacion vive en `typesAfterLicenseChange`, pura y con tests: los
+  // tipos manuales sobreviven, y ninguna licencia deja colgado el tipo de
+  // otra.
   function toggleLicense(code: string) {
     if (!form) return;
     const held = form.licenseCategories.includes(code);
     const next = held ? form.licenseCategories.filter((c) => c !== code) : [...form.licenseCategories, code];
     updateField('licenseCategories', next);
+    setTechnicianTypes((prev) => typesAfterLicenseChange(prev, form.licenseCategories, next));
+
     setLicenseDetails((prev) => {
       if (held) {
         const { [code]: _removed, ...rest } = prev;
@@ -634,46 +662,13 @@ export default function TechnicianProfileScreen() {
       return;
     }
 
-    // ── Licencias huerfanas al quitar un tipo (Fase 6 tanda A) ──────────
-    //
-    // Se PREGUNTA, no se decide. Un tecnico PUEDE tener licencias sin el tipo
-    // correspondiente marcado: es un estado valido, no una inconsistencia —
-    // el score no depende del tipo, asi que no rompe ni falsea nada. Por eso
-    // "No, keep them" no es la opcion de escape, es una respuesta legitima.
-    //
-    // Solo entran las que quedarian HUERFANAS: una licencia que sigue siendo
-    // de un tipo conservado no se pregunta (quita "mechanic" pero sigue
-    // siendo "avionic" -> B1.3 entra, B2 no). Ver findOrphanedLicenses, y
-    // sobre todo el aviso de LICENSES_BY_TECHNICIAN_TYPE: ese mapa es
-    // heuristica para preguntar mejor, jamas una invariante.
-    let licensesToSave = form.licenseCategories;
-    let habsToSave = habilitations;
-    let dropOrphanedHabs = false;
-
-    const orphaned = findOrphanedLicenses(form.licenseCategories, savedTechnicianTypes, technicianTypes);
-    if (orphaned.length > 0) {
-      const removedTypes = savedTechnicianTypes.filter((t) => !technicianTypes.includes(t));
-      const confirmed = await confirmAction({
-        title: `Remove ${orphaned.join(', ')} as well?`,
-        message:
-          `You are removing ${removedTypes.map(technicianTypeLabel).join(', ')} from your profile. ` +
-          `${orphaned.join(', ')} ${orphaned.length > 1 ? 'are licences' : 'is a licence'} of that work, ` +
-          'along with any type ratings declared under it.\n\n' +
-          'Keeping them is perfectly valid — your profile type does not decide which licences you hold, ' +
-          'and companies match you on your licences, not on your type.',
-        confirmLabel: 'Remove them',
-        cancelLabel: 'Keep them',
-        destructive: true,
-      });
-      if (confirmed) {
-        licensesToSave = form.licenseCategories.filter((c) => !orphaned.includes(c as any));
-        habsToSave = habilitations.filter((h) => !orphaned.includes(h.licenseCode as any));
-        // Las habilitaciones hay que reescribirlas aunque el tecnico no haya
-        // tocado esa seccion: sin esto, replaceHabilitations no correria y la
-        // FK compuesta bloquearia el borrado de la licencia.
-        dropOrphanedHabs = habsToSave.length !== habilitations.length;
-      }
-    }
+    // 2026-08-13: AQUI VIVIA EL DIALOGO DE LICENCIAS HUERFANAS, que al quitar
+    // un tipo ofrecia retirar las licencias de ese oficio. Desaparece entero,
+    // con `findOrphanedLicenses`: ya no puede darse el caso que lo motivaba.
+    // Un tipo implicado por una licencia declarada no se puede quitar (el
+    // chip esta bloqueado), asi que ninguna licencia puede quedar huerfana —
+    // y al reves, quitar la licencia se lleva su tipo sin preguntar nada,
+    // porque no hay nada que decidir.
 
     // Se persiste la forma normalizada y SIN claves vacias; las claves que no
     // tienen campo en esta pantalla se devuelven intactas. Objeto vacio -> NULL,
@@ -704,7 +699,7 @@ export default function TechnicianProfileScreen() {
     // instead would destroy real technician data just to force the license
     // removal through.
     const derivedAircraftTypes = [...new Set(
-      habsToSave
+      habilitations
         .map((h) => ratingsById.get(h.aircraftTypeRatingId)?.aircraftFamily)
         .filter((v): v is string => Boolean(v)),
     )];
@@ -752,8 +747,14 @@ export default function TechnicianProfileScreen() {
       // 1) Tipos de perfil. Diferencial y con los añadidos antes que los
       // borrados, para que un fallo a mitad nunca deje al tecnico sin
       // ninguno — ver technicianRepositoryV2.replaceProfileTypes.
-      await technicianRepositoryV2.replaceProfileTypes(techId, technicianTypes);
-      setSavedTechnicianTypes(technicianTypes);
+      //
+      // Las licencias van como SEGUNDO argumento y son las que el tecnico
+      // tiene seleccionadas AHORA, no las que hay en la base: este paso corre
+      // ANTES de escribirlas (2 y 5), asi que si el guardado las reduce, los
+      // tipos implicados son los de las que van a QUEDAR. Pasar las de la
+      // base rechazaria el guardado por un tipo que esta misma accion esta
+      // quitando.
+      await technicianRepositoryV2.replaceProfileTypes(techId, technicianTypes, form.licenseCategories);
 
       // 2) Upsert held licenses in place FIRST — never delete+reinsert (see
       // technicianRepositoryV2.upsertLicenses). Ensures any brand-new
@@ -761,7 +762,7 @@ export default function TechnicianProfileScreen() {
       // reference it.
       await technicianRepositoryV2.upsertLicenses(
         techId,
-        licensesToSave.map((code) => ({
+        form.licenseCategories.map((code) => ({
           code,
           issuedAt: licenseDetails[code]?.issuedAt,
           expiresAt: licenseDetails[code]?.expiresAt,
@@ -772,15 +773,10 @@ export default function TechnicianProfileScreen() {
       // explicit licenseCode, never a "default" license applied to every
       // aircraft. Legacy rows (aircraft_type_rating_id IS NULL) are left
       // untouched. The full local set is sent, unfiltered (see above).
-      //
-      // `dropOrphanedHabs` fuerza la reescritura aunque el tecnico no haya
-      // tocado esta seccion: acaba de aceptar retirar licencias, y sus
-      // habilitaciones tienen que caer con ellas o la FK compuesta bloqueara
-      // el borrado de la licencia en el paso 4.
-      if (habDirty || dropOrphanedHabs) {
+      if (habDirty) {
         await technicianRepositoryV2.replaceHabilitations(
           techId,
-          habsToSave.map((h) => ({
+          habilitations.map((h) => ({
             licenseCode: h.licenseCode,
             aircraftTypeRatingId: h.aircraftTypeRatingId,
             experienceYears: h.experienceYears,
@@ -790,7 +786,6 @@ export default function TechnicianProfileScreen() {
           })),
         );
         setHabDirty(false);
-        setHabilitations(habsToSave);
       }
 
       // 4) Experiencia sin licencia (Fase 6 tanda B). INDEPENDIENTE del
@@ -813,15 +808,21 @@ export default function TechnicianProfileScreen() {
       // 5) Only now remove deselected licenses — AFTER habilitations are
       // saved, so the dependency check reflects the technician's actual
       // final state rather than a stale pre-save snapshot.
-      const { blocked } = await technicianRepositoryV2.removeUnreferencedLicenses(techId, licensesToSave);
+      const { blocked } = await technicianRepositoryV2.removeUnreferencedLicenses(techId, form.licenseCategories);
 
       setForm((prev) => (prev ? {
         ...prev,
-        licenseCategories: licensesToSave,
         aircraftTypes: derivedAircraftTypes,
       } : prev));
       setIsDirty(false);
 
+      // Una licencia que no se pudo retirar sigue en la base, y con ella su
+      // tipo implicado, que este guardado SI ha quitado de
+      // technician_profile_types. La recarga de abajo devuelve la licencia a
+      // la pantalla y vuelve a marcar el tipo (ver loadProfile), asi que el
+      // proximo guardado lo repone: el desajuste dura lo que tarde el tecnico
+      // en atender el aviso, y la direccion del error es la buena — sobra un
+      // tipo en pantalla, nunca falta una licencia.
       if (blocked.length > 0) {
         setLicenseRemovalWarning(
           `Saved — but could not remove ${blocked.join(', ')}: the technician still has habilitations declared under ${
@@ -909,6 +910,12 @@ export default function TechnicianProfileScreen() {
   // ── Main form ─────────────────────────────────────────────────────────────
 
   const status = form.availability.status ?? 'open_to_offers';
+  // Los tipos que las licencias declaradas IMPLICAN: van marcados y el
+  // selector no deja desmarcarlos. Se derivan en cada render de
+  // `form.licenseCategories` en vez de guardarse en su propio estado, para
+  // que no exista ningun instante en el que el bloqueo y las licencias digan
+  // cosas distintas.
+  const impliedTypes = typesImpliedByLicenses(form.licenseCategories);
 
   return (
     <TechnicianScreen>
@@ -1061,7 +1068,7 @@ export default function TechnicianProfileScreen() {
 
           <SectionTitle
             title="Profile types"
-            subtitle="What you work on. Pick as many as apply — you can change this any time."
+            subtitle="What you work on. Pick as many as apply — the ones your licences prove are ticked for you."
           />
           <TechnicianCard style={styles.sectionCard}>
             <TechnicianTypeSelector
@@ -1069,6 +1076,7 @@ export default function TechnicianProfileScreen() {
               selected={technicianTypes}
               onChange={updateTechnicianTypes}
               loading={techTypesLoading}
+              lockedCodes={impliedTypes}
               palette={{
                 text: techUi.text,
                 muted: techUi.textMuted,
@@ -1133,7 +1141,10 @@ export default function TechnicianProfileScreen() {
               licencia es propiedad de la persona, no de la etiqueta que
               eligio al registrarse, y esconder la seccion dejaba sin sitio a
               un pintor con una B1.1 real. */}
-          <SectionTitle title="Licenses" subtitle="Select all licence categories you hold. Leave empty if you hold none." />
+          <SectionTitle
+            title="Licenses"
+            subtitle="Select all licence categories you hold. Leave empty if you hold none. Each one ticks the profile type it certifies — mechanical or avionics — and unticks it again if you remove it."
+          />
           <TechnicianCard style={styles.sectionCard}>
             <View style={styles.chipRow}>
               {LICENSE_CATEGORIES.map((lic) => (

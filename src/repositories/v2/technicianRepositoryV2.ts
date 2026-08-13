@@ -8,6 +8,8 @@ import {
 } from '../../types/technician';
 import { SafeTechnicianPreview, TechnicianView, isUnlocked } from '../../types/privacy';
 import { LicenseCode } from '../../types/catalog';
+import { typesImpliedByLicenses } from '../../constants/licenses';
+import { technicianTypeLabel } from '../../constants/technicianTypes';
 import { AircraftRatingIndex, buildAircraftRatingIndex, habilitationCoversFamilyKey } from '../../constants/aircraftTypeRatings';
 import { catalogRepository } from './catalogRepository';
 import {
@@ -347,11 +349,35 @@ export const technicianRepositoryV2 = {
    *
    * `codes` vacío se rechaza aquí y no en la pantalla: el mínimo de uno es
    * regla del modelo, y la pantalla no puede ser el único sitio donde vive.
+   *
+   * Por lo mismo, `licenseCodes` (2026-08-13): una licencia declarada IMPLICA
+   * su oficio, así que un conjunto de tipos al que le falte alguno implicado
+   * se RECHAZA, igual que el conjunto vacío — no se completa en silencio.
+   * Completarlo escribiría algo distinto de lo que el llamante pidió y le
+   * diría "guardado", que es la clase de éxito falso que este repositorio
+   * evita en todas partes; y el único llamante ya marca esos tipos solo, así
+   * que llegar aquí sin ellos es un fallo de programación, no un descuido del
+   * técnico. La pantalla nunca debería ver este error.
+   *
+   * ⚠ `licenseCodes` son las licencias que van a QUEDAR después del guardado
+   * en curso, no las que hay en la base: este método corre ANTES de que se
+   * escriban las licencias (ver app/technician/profile.tsx), así que un
+   * guardado que las reduce tiene que calcular los implicados sobre las
+   * nuevas o se rechazaría a sí mismo.
    */
-  async replaceProfileTypes(technicianId: string, codes: string[]): Promise<void> {
+  async replaceProfileTypes(technicianId: string, codes: string[], licenseCodes: readonly string[]): Promise<void> {
     const next = [...new Set(codes)].filter(Boolean);
     if (next.length === 0) {
       throw new Error('Select at least one technician type.');
+    }
+
+    const missing = typesImpliedByLicenses(licenseCodes).filter((t) => !next.includes(t));
+    if (missing.length > 0) {
+      throw new Error(
+        `These profile types come from licences you hold and cannot be removed: ${missing
+          .map(technicianTypeLabel)
+          .join(', ')}. Remove the licence first if the type should come off.`,
+      );
     }
 
     const { data: existingRows, error: selectError } = await supabase
