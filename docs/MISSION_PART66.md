@@ -3590,6 +3590,68 @@ lo son, y por eso están fijados literales). Todo lo demás se escribe contra
 `getMatchScoreWeights(offer)` o como relación entre dos resultados, nunca contra
 una constante copiada a mano.
 
+### El default de `makeOffer()`, y por qué ahora se defiende solo
+
+El default nunca fue una fila imposible —`requiresCertification: true` +
+`licenseCode: 'B1.1'` es de las dos que la 053 admite, y es además el que menos
+mueve la suite: cambiarlo a la rama sin requisitos habría reescalado a 75 todos
+los tests que no hablan de certificación—. La trampa estaba en que **la
+legalidad de esa fila la forman DOS campos y un override puede mover sólo uno**:
+`requiresCertification: false` a secas es la mitad fácil de escribir, y deja la
+licencia por defecto puesta. El scorer no se queja porque elige rama por si HAY
+licencia (`offerAsksForQualification`), así que la oferta acaba en
+`NO_CERTIFICATION_WEIGHTS` —escala 100— mientras el nombre del test dice "no
+exige certificar". Pasó una vez: el test de copy medía 30/100 y su comentario
+afirmaba que estaba en la rama sin requisitos; con la fila legal son 60/75.
+
+`makeOffer()` lleva ahora la invariante del CHECK dentro y **lanza** si el
+override deja la fila descuadrada. No adivina la mitad que falta a propósito:
+quien quiera la rama sin requisitos la declara entera. Mismo criterio que el
+resto de la fase — un fixture no debe poder fijar por su cuenta la propiedad que
+el test dice estar comprobando.
+
+### El cuarto test vaciado: la regresión del "55/100" — REESCRITO, ya no es deuda
+
+Quedaba uno más, y era el peor de todos porque su regla es de las que sostienen
+el producto: **verificado + contrato + ubicación no pueden fabricar un Partial
+cuando no hay ninguna cualificación** — el caso que abrió la Fase 8. El test
+(`Fase 2 — regression: zero qualification never manufactures a Partial score`)
+asertaba `total <= 39` sobre un fixture cuyo máximo alcanzable es **35**
+(`verified 15 + contractFit 15 + location 5`): `ZERO_QUALIFICATION_CAP` nunca
+llegaba a morder y la aserción no podía fallar. El "previously 55/100" del
+nombre era el fósil de cuando esos pesos sumaban 55 y sí discriminaba.
+
+Reescrito con dos aserciones y ni un número copiado salvo el tope:
+
+1. **Contra el techo alcanzable, no contra el 39**: el techo sale de
+   `getMatchScoreWeights(offer)` (`verified + contractFit + location`) y se
+   asserta `total === min(techo, ZERO_QUALIFICATION_CAP)`. Hoy manda el techo
+   (35) y el tope no muerde — eso pasa de ser una casualidad tapada a un hecho
+   escrito. El día que un reajuste devuelva ese techo por encima de 39, quien
+   manda pasa a ser el tope y la misma línea empieza a medirlo.
+2. **La comparación, que no depende de ningún peso**: el mismo par con el
+   perfil ENTERO a favor puntúa por debajo del mismo par con la cualificación
+   que la oferta pide. Sobrevive a cualquier reajuste.
+
+El fixture además pone la ubicación a favor (por defecto no coincide): sin eso
+el par no llega a su techo y la aserción vuelve a sobrarle holgura — que es
+exactamente cómo se vació la primera vez.
+
+**Comprobación por mutación** (tres corridas, producción restaurada después y
+verificada idéntica a HEAD con `git status`):
+
+| mutación temporal en `offerMatchExplain.ts` | el test | por qué |
+|---|---|---|
+| pesos no-cualificación a 25/25/10 (techo 60 > 39) | **PASA** | el tope absorbe la subida: `total` 39 = `min(60, 39)`. Un tope correcto no puede fallar aquí — lo que cambia es que a partir de ese techo **la aserción pasa a medir el tope** |
+| lo mismo **+ tope neutralizado** (39 → 100) | **FALLA**: `60 !== 39` | la prueba de que muerde: con el techo por encima, el test detecta un tope roto |
+| pesos originales + tope neutralizado | **PASA** | con techo 35 el tope es irrelevante, y por eso la versión vieja nunca pudo fallar. Ahora eso lo dice la aserción en vez de esconderlo |
+
+La subida de pesos a secas **no** basta como falsación —un tope que funciona la
+absorbe—; la que prueba que el test tiene dientes es la segunda fila. De paso, la
+primera mutación tumbó los dos tests de la escalera (`100/100/100/75` y las
+cuatro tablas de pesos), que es justo lo que deben hacer cuando alguien toca los
+pesos.
+
 ### Verificación
 
 Escalera después del cambio: **100 / 100 / 100 / 75** — una sola bajada, y en el
@@ -3604,4 +3666,4 @@ trampa del tope por ambos lados; y las cuatro tablas de pesos (65 / 65 / 65 / 0,
 y sumas 100 / 100 / 100 / 75).
 
 `tsc --noEmit` **0 errores** · `test:matching` **172/172** (168 previos + 6
-nuevos − 2 borrados; el reescrito no cambia el recuento).
+nuevos − 2 borrados; los dos reescritos no cambian el recuento).

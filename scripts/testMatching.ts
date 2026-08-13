@@ -76,7 +76,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 // ── Offer/technician fixture builders ─────────────────────────────────────
 
 function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithRequirements {
-  return {
+  const offer: OfferWithRequirements = {
     id: 'offer-test',
     companyId: 'company-test',
     title: 'Test offer',
@@ -104,14 +104,37 @@ function makeOffer(overrides: Partial<OfferWithRequirements> = {}): OfferWithReq
     visible: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    // Fase 6 tanda D: UNA licencia por oferta y la exigencia declarada por
-    // la oferta. 'B1.1' + false reproducen el caso normal de los tests
-    // previos (una licencia, basta con una aeronave).
+    // Fase 6 tanda D: UNA licencia por oferta, y `requiresAllAircraft: false`
+    // = basta con una de las aeronaves listadas. La licencia va emparejada
+    // con `requiresCertification: true` de arriba: son las DOS MITADES DE UNA
+    // MISMA FILA, y la 053 sólo admite (true + licencia) o (false + sin
+    // licencia). Ver la guarda de abajo.
     licenseCode: 'B1.1',
     requiresAllAircraft: false,
     requiredHabilitations: [],
     ...overrides,
   };
+
+  // Fase 9: la fila que sale de aquí tiene que ser una fila que Postgres
+  // aceptaría. `chk_offers_license_matches_certification` (migración 053) ata
+  // los dos campos en las DOS direcciones, y un override que mueva sólo uno
+  // —`requiresCertification: false` a secas es el caso fácil de escribir—
+  // fabrica una oferta que no puede existir. El scorer la puntúa igual, sin
+  // quejarse: elige rama por si hay licencia, así que el test acaba midiendo
+  // la rama certificada mientras su nombre dice lo contrario. Eso ya pasó.
+  //
+  // La guarda no adivina la mitad que falta a propósito: quien quiera la rama
+  // sin requisitos la pide entera (`requiresCertification: false` Y
+  // `licenseCode: undefined`), que es justo lo que el test tiene que declarar.
+  if (offer.requiresCertification !== (offer.licenseCode !== undefined)) {
+    throw new Error(
+      `makeOffer: fila imposible — requiresCertification=${offer.requiresCertification} con licenseCode=${String(offer.licenseCode)}. ` +
+        'La 053 sólo admite (requiresCertification: true + licenseCode) o (requiresCertification: false + licenseCode: undefined). ' +
+        'Declara las dos mitades en el override.',
+    );
+  }
+
+  return offer;
 }
 
 // Fase 6 tanda D: una fila de requisito es UNA AERONAVE, y este helper sólo
@@ -486,21 +509,72 @@ async function main() {
     assert.equal(result.breakdown.habilitation, 0);
   });
 
-  await test('Fase 2 — regression: zero qualification never manufactures a Partial score (previously 55/100, now capped Weak)', () => {
+  // Fase 9: el tope de cero cualificación vive en `offerMatchExplain.ts` y no
+  // se exporta. 39 es su valor, y es la ÚNICA constante copiada a mano del
+  // test de abajo — está ahí precisamente para poder comprobar CUÁL DE LAS DOS
+  // cosas limita el resultado.
+  const ZERO_QUALIFICATION_CAP = 39;
+
+  await test('Fase 2 — regression: verificado + contrato + ubicación NUNCA fabrican un Partial sin cualificación', () => {
+    // La versión anterior de este test asertaba `total <= 39` sobre un fixture
+    // cuyo máximo alcanzable era 35: estaba en verde por aritmética, no porque
+    // el tope funcionara. El "previously 55/100" de su nombre era el fósil —
+    // cuando esos pesos sumaban 55 la aserción sí discriminaba, y al bajar a 35
+    // se quedó muda sin que nadie se enterara.
     const offer = makeOffer({
       contractType: 'permanent',
       minYearsExperience: 1,
       requiredHabilitations: [makeHabReq('fx-a320-cfm56')],
     });
-    const technician = makeTechnician({
-      verificationStatus: 'verified',
-      availability: { immediately: true, contractTypes: ['permanent'] },
-      licenses: [],
-      habilitations: [],
+
+    // EL PERFIL ENTERO A FAVOR, incluida la ubicación —que por defecto no
+    // coincide—. Sin eso el par no llega a su techo y la aserción vuelve a
+    // sobrarle holgura. Los años no se declaran: la oferta pide un mínimo, y
+    // que un dato ausente no bloquee lo fija su propio test.
+    const perfilAFavor = {
+      verificationStatus: 'verified' as const,
+      availability: { immediately: true, contractTypes: ['permanent' as const] },
+      locationCountryCode: offer.locationCountryCode,
+    };
+    const sinCualificacion = makeTechnician({ ...perfilAFavor, licenses: [], habilitations: [] });
+    // El MISMO par salvo por lo único que este test discute.
+    const conCualificacion = makeTechnician({
+      ...perfilAFavor,
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
     });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.ok(result.total <= 39, `expected a capped Weak score, got ${result.total}`);
-    assert.equal(result.label, 'Weak match');
+
+    const sin = calculateOfferTechnicianMatch(offer, sinCualificacion, RATING_INDEX);
+    const con = calculateOfferTechnicianMatch(offer, conCualificacion, RATING_INDEX);
+
+    // Contra el TECHO ALCANZABLE, no contra el 39. Los tres componentes que no
+    // son cualificación salen de la tabla de pesos de ESTA oferta, así que un
+    // reajuste los mueve aquí también. El `min` es lo que hace hablar al test:
+    // hoy manda el techo (35) y el tope no llega a morder — eso es un HECHO
+    // sobre los pesos actuales, no una casualidad tapada; el día que el techo
+    // vuelva a superar 39, quien manda pasa a ser el tope y esta misma línea
+    // empieza a medirlo.
+    const pesos = getMatchScoreWeights(offer);
+    const techoSinCualificacion = pesos.verified + pesos.contractFit + pesos.location;
+    assert.equal(
+      sin.total,
+      Math.min(techoSinCualificacion, ZERO_QUALIFICATION_CAP),
+      `sin cualificación el par no puede pasar del menor entre su techo (${techoSinCualificacion}) y el tope (${ZERO_QUALIFICATION_CAP})`,
+    );
+
+    // Y la afirmación del nombre, que es de banda y no de número: por bien que
+    // esté el perfil, sin cualificación no se entra en Partial.
+    assert.notEqual(sin.label, 'Partial match');
+    assert.notEqual(sin.label, 'Strong match');
+    assert.notEqual(sin.label, 'Excellent match');
+
+    // La que de verdad muerde y no depende de ningún peso: tener lo que la
+    // oferta pide vale MÁS que tener el resto del perfil impecable. Es la regla
+    // que abrió la Fase 8, y sobrevive a cualquier reajuste.
+    assert.ok(
+      sin.total < con.total,
+      `el perfil entero a favor sin cualificación (${sin.total}) debe quedar por debajo del mismo par cualificado (${con.total})`,
+    );
   });
 
   await test('Fase 2 — regression: an offer with no qualification requirement never reaches Excellent from profile alone', () => {
@@ -2404,18 +2478,26 @@ async function main() {
     // "painter" salía en esta rama por ser un oficio sin licencia; ahora sale
     // porque la oferta declara que no hace falta certificar — que es lo que la
     // fase entera persigue.
+    // Fase 9: `licenseCode: undefined` va declarado aquí, no heredado. Sin él
+    // la oferta salía con la licencia por defecto puesta y `requiresCertification`
+    // en false — una fila que la 053 prohíbe, y que el scorer mandaba a
+    // NO_CERTIFICATION_WEIGHTS (escala 100) porque elige rama por si HAY
+    // licencia. El test decía "no exige certificar" y medía la rama de las que
+    // sí piden algo.
+    const offer = makeOffer({ technicianType: 'painter', requiresCertification: false, licenseCode: undefined });
     const score = calculateOfferTechnicianMatch(
-      makeOffer({ technicianType: 'painter', requiresCertification: false }),
+      offer,
       makeTechnician({ technicianTypes: ['painter'], verificationStatus: 'verified' }),
       RATING_INDEX,
     );
     assert.equal(
-      getMatchDisplayLabel({ requiresCertification: false }, score),
+      getMatchDisplayLabel(offer, score),
       GENERAL_COMPATIBILITY_LABEL,
       'nothing about the technician\'s qualification was confirmed, because there was nothing to confirm',
     );
-    // The scoring itself is untouched — it already lands in the
-    // no-requirements branch on its own, which is why this is copy only.
+    // The scoring itself is untouched — la oferta cae en NO_REQUIREMENTS_WEIGHTS
+    // (verificado 30 / contrato 30 / ubicación 15, sin bloque de cualificación),
+    // que es lo que hace de esto un cambio de copy y nada más.
     assert.equal(score.breakdown.habilitation, 0);
     assert.equal(score.breakdown.license, 0);
     assert.ok(score.total <= 75, `the no-requirements ceiling still applies, got ${score.total}`);
