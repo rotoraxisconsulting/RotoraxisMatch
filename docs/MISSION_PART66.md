@@ -3373,3 +3373,166 @@ sin aeronaves → `NO_REQUIREMENTS_WEIGHTS`, techo 75) con los datos corregidos:
   puntos de separación lo está. No se toca el país de la oferta ni el del
   técnico para cuadrar un número redondo: sería falsear el fixture hasta que dé
   la respuesta esperada, que es justo lo contrario de una comprobación.
+
+---
+
+## Fase 9 — La escalera de exigencia es monótona (13/08/2026)
+
+### El hallazgo
+
+Mismo técnico (B1.1 + A320, verificado, mismo país, contrato compatible) contra
+cuatro versiones del mismo puesto de mecánico, de más exigente a menos, medidas
+con el scorer anterior a esta fase:
+
+| la oferta exige | score | |
+|---|---:|---|
+| B1.1 + A320 | 100 | |
+| sólo B1.1 | **68** | ← cumple el 100% de lo que la oferta pide |
+| A320, sin licencia | 100 | |
+| nada | **75** | ← no cumple nada porque no hay nada que cumplir |
+
+**Cumplir todo lo que una oferta pide puntuaba por debajo de una oferta que no
+pide nada.** Y no es un número enterrado en un log: los dos escalones salen
+seguidos en la lista de ofertas del técnico, cada uno con su porcentaje al lado.
+
+### La causa
+
+Cuando la oferta pide licencia pero no nombra aeronave, la evaluación caía en
+`QUALIFICATION_WEIGHTS` y la fila de habilitación se resolvía por el tier ancho
+(`BROAD_TIER_FRACTIONS.legacy_category_only`, 0,29 → 13 de 45). **Se descontaban
+32 puntos por una aeronave que la oferta nunca pidió.**
+
+Es el caso espejo exacto de la Fase 6 tanda E, que sí se hizo: allí, cuando la
+oferta no exigía licencia, los 20 puntos de licencia fueron ÍNTEGROS a
+habilitación. Faltaba lo simétrico.
+
+### La decisión — cuarta tabla de pesos
+
+```ts
+LICENSE_ONLY_WEIGHTS = { verified: 15, habilitation: 0, license: 65, contractFit: 15, location: 5 }
+```
+
+`getMatchScoreWeights` la devuelve cuando `requiresCertification`, hay
+`licenseCode` y `requiredHabilitations` está vacío.
+
+**Los 45 de habilitación van ENTEROS a licencia, no repartidos**, por el mismo
+motivo escrito en la tanda E: repartirlos reforzaría las señales débiles
+—verificado, ubicación—, que no son cualificación, y dejaría que un perfil
+genérico compensara justo lo que la oferta exige. Si la oferta sólo nombra una
+licencia, la licencia es toda la cualificación que pide y se lleva el bloque de
+65 completo: el mismo 65 de las otras dos ramas.
+
+Con esto el principio se dice en una línea, y así queda escrito en la cabecera
+de los pesos en `offerMatchExplain.ts`:
+
+> **El bloque de cualificación vale siempre 65, repartido entre los ejes que la
+> oferta nombre. Cuando no nombra ninguno, no hay bloque y la escala baja a 75.**
+
+| la oferta nombra… | tabla | 65 repartidos así | techo |
+|---|---|---|---:|
+| licencia + aeronave | `QUALIFICATION_WEIGHTS` | 45 habilitación + 20 licencia | 100 |
+| sólo aeronave | `NO_CERTIFICATION_WEIGHTS` | 65 habilitación | 100 |
+| sólo licencia | `LICENSE_ONLY_WEIGHTS` | 65 licencia | 100 |
+| nada | `NO_REQUIREMENTS_WEIGHTS` | no hay bloque | **75** |
+
+Ese 75 es **el único descenso legítimo de la escalera**, y lo es porque allí no
+hay nada que confirmar: sin requisitos, ninguna señal dice que este técnico
+encaje en ESTA oferta, así que la calidad del perfil por sí sola nunca debe
+alcanzar "Excellent" (≥80).
+
+### La trampa, y es lo único que podía romperse
+
+```ts
+isZeroQualification: hasQualificationRequirements && habilitation === 0
+```
+
+Con `weights.habilitation` en 0, esa condición se cumple **SIEMPRE** en la rama
+nueva: el tope de 39 caería sobre todo el mundo, candidato perfecto incluido —
+100 → 39, peor que el 68 que la fase venía a arreglar. El tope tiene que
+preguntar por el eje que la oferta realmente pide:
+
+```ts
+const zeroOnRequestedAxis =
+  offer.requiredHabilitations.length > 0 ? habilitation === 0 : license === 0;
+```
+
+**La regla que el tope existe para defender no se toca**: en una oferta que sí
+nombra aeronave, tener la licencia sin el rating sigue topado en
+`ZERO_QUALIFICATION_CAP` (39). Tiene test propio, junto al de la trampa.
+
+Caso degenerado, anotado para que nadie lo descubra en producción: si existiera
+una oferta con `requiresCertification = false`, `licenseCode` no nulo y ninguna
+aeronave, el peso de licencia sería 0 y el tope caería siempre. **No existe** —
+`chk_offers_license_matches_certification` (migración 053) fuerza la licencia a
+NULL cuando el interruptor está apagado. Es la razón por la que este CHECK vale
+lo que cuesta.
+
+### Lo que NO cambia
+
+- Las otras tres ramas de pesos, punto por punto.
+- Toda la escalera de topes (`applyScoreCeilings` y sus cuatro constantes).
+- La Fase 8 entera.
+- La fracción 0,29 (`BROAD_TIER_FRACTIONS.legacy_category_only`) sigue en el
+  código. Hoy multiplica a cero, porque el peso que la acompaña es 0 — se
+  conserva porque describe una evidencia real ("tiene la categoría, nada
+  confirma la aeronave") y volvería a aplicar si alguna rama futura puntúa la
+  aeronave ahí.
+- `level` sigue valiendo `'legacy'` en esta rama. Ninguna UI lo lee (sólo el
+  scorer lo escribe y los tests lo asertan), así que renombrarlo sería ruido.
+
+### Verificación
+
+Escalera después del cambio: **100 / 100 / 100 / 75** — una sola bajada, y en el
+último escalón. Fijada como propiedad, no sólo como cuatro números: el test
+comprueba además que bajar la exigencia nunca sube el porcentaje.
+
+Seis tests nuevos (`scripts/testMatching.ts`, sección "Fase 9"): la escalera
+completa; el candidato perfecto en oferta de sólo licencia = 100 sin recorte; el
+mismo en otro país = 95, con la diferencia igual al peso de localización; quien
+NO tiene la licencia pedida sigue en 35 con su `missingRequirements` intacto; la
+trampa del tope por ambos lados; y las cuatro tablas de pesos (65 / 65 / 65 / 0,
+y sumas 100 / 100 / 100 / 75).
+
+`tsc --noEmit` 0 errores · `test:matching` 174 pasan, **2 fallan** — ver abajo.
+
+### Los dos tests que la decisión invalida (PENDIENTE DE DECISIÓN)
+
+Ninguno se ha tocado. Los dos viven en la rama de sólo-licencia y **afirman el
+comportamiento que esta fase declara incorrecto**:
+
+1. `Fase 5 — a license-only requirement scores at the category fraction, with
+   its own clarification` — espera `habilitation === 13` y `license === 20`.
+   Ahora son 0 y 65. Es literalmente el reparto que la fase cambia.
+2. `Fase 5.3 — a perfect broad-only match is capped below Excellent
+   (BROAD_ONLY_CAP), and says why` — espera `total <= 79`. Ahora da 95 (100
+   menos localización, porque los fixtures están en países distintos). Su
+   sujeto, `BROAD_ONLY_CAP`, **ya no existe**: se retiró en la Fase 6 tanda E
+   por inalcanzable. Lo que el test seguía comprobando desde entonces era el
+   techo de 68 que producía el reparto viejo.
+
+### Duda abierta que NO se ha tocado — T2 llega a 81 y cruza "Excellent"
+
+Un técnico con licencia y un rating de la MISMA FAMILIA con otro motor (T2,
+`related_family`, 0,57) puntúa 15 + 26 + 20 + 15 + 5 = **81**, sobre el umbral de
+"Excellent" (≥80). Lo que dicen los comentarios del código, literalmente:
+
+- **`BROAD_ONLY_CAP` (79) ya no existe.** Se retiró en la Fase 6 tanda E, y el
+  comentario que documenta la retirada es explícito en que fue **por
+  inalcanzable, no por cambio de criterio**: el máximo de su rama era 68.
+- **Ese tope nunca gobernó T2.** Se aplicaba a la rama ancha de categoría
+  (`evaluateLicenseCategoryMatch`), no a `evaluateHabilitationRequirement`. El
+  mismo comentario corrige la atribución: la frase "sabes de la aeronave pero no
+  lo has demostrado con papel" describe a T2, pero el tope no era suyo.
+- **Ningún comentario dice que T2 no deba leerse como "Excellent".** El único
+  criterio escrito sobre T2 es que "nunca sea silenciosamente igual a un match
+  exacto": puntúa menos y siempre emite su aclaración "Same family, different
+  engine". Las dos cosas se cumplen.
+- **Ningún test fija el 81.** El único test de T2 comprueba `> 0 && < 45` sobre
+  la habilitación, sin banda.
+
+Es decir: los 81 no son ni un descuido ni una decisión registrada — son un
+resultado que nadie ha decidido. La retirada del tope dejó anotado "si algún día
+sube `legacy_category_only`, revisa si hace falta un techo para esa rama"; esta
+fase hace efectivamente eso (por peso, no por fracción) y responde "no hace
+falta techo, porque cumplir lo que la oferta pide vale 100". Para T2 la pregunta
+sigue abierta y la decide el usuario.
