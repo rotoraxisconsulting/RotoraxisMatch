@@ -31,6 +31,9 @@ import {
   persistedLocationFromValue,
   resolveMapPin,
 } from '../src/utils/locationBridge';
+import { groupTechnicianMapMarkers } from '../src/utils/technicianMapMarkers';
+import { buildOfferMapMarkerUpdateScript } from '../src/utils/offerMapWebViewBridge';
+import { matchesTechnicianSearchIdentity } from '../src/utils/technicianSearchFilterMatch';
 import { LOCATION_CITY_INDEX, resolveLocationSnapshot } from '../src/constants/locationCities';
 import { findCountry } from '../src/constants/countries';
 
@@ -568,6 +571,276 @@ async function main() {
     // cliente tampoco lo interpreta como un punto válido.
     const pin = resolveMapPin({ locationCountryCode: 'ES', locationCityLat: 36.7 }, BY_CODE);
     assert.equal(pin?.precision, 'country');
+  });
+
+  await test('Búsqueda — varios oficios se combinan con OR', () => {
+    const technician = {
+      technicianTypes: ['mechanic', 'avionic'],
+      locationCountryCode: 'ES',
+      locationCityGeonameId: 3117735,
+      country: 'Spain',
+      city: 'Madrid',
+    };
+
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      technicianTypes: ['sheet_metal_worker', 'avionic'],
+    }), true);
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      technicianTypes: ['sheet_metal_worker', 'painter'],
+    }), false);
+  });
+
+  await test('Búsqueda — país ISO y ciudad del directorio usan identificadores estables', () => {
+    const technician = {
+      technicianTypes: ['sheet_metal_worker'],
+      locationCountryCode: 'ES',
+      locationCityGeonameId: 3117735,
+      country: 'Spain',
+      city: 'Madrid',
+    };
+
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      countryCode: 'ES',
+      cityGeonameId: 3117735,
+    }), true);
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      countryCode: 'AR',
+      cityGeonameId: 3117735,
+    }), false);
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      countryCode: 'ES',
+      cityGeonameId: 3435910,
+    }), false);
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      countryCode: 'ES',
+      city: 'Madrid',
+    }), true);
+    assert.equal(matchesTechnicianSearchIdentity(technician, {
+      countryCode: 'ES',
+      city: 'Barcelona',
+    }), false);
+  });
+
+  await test('Mapa de técnicos — tres centroides de España forman un grupo de tres', () => {
+    const groups = groupTechnicianMapMarkers([
+      { id: 'tech-1', latitude: 40, longitude: -4, locationPrecision: 'country' as const },
+      { id: 'tech-2', latitude: 40, longitude: -4, locationPrecision: 'country' as const },
+      { id: 'tech-3', latitude: 40.000003, longitude: -4.000003, locationPrecision: 'country' as const },
+    ]);
+
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].technicians.length, 3);
+    assert.equal(groups[0].locationPrecision, 'country');
+    assert.deepEqual(groups[0].technicians.map((technician) => technician.id), [
+      'tech-1',
+      'tech-2',
+      'tech-3',
+    ]);
+  });
+
+  await test('Mapa de técnicos — dos técnicos de la misma ciudad comparten grupo', () => {
+    const groups = groupTechnicianMapMarkers([
+      { id: 'valencia-1', latitude: 39.4699, longitude: -0.3763, locationPrecision: 'city' as const },
+      { id: 'valencia-2', latitude: 39.4699, longitude: -0.3763, locationPrecision: 'city' as const },
+      { id: 'madrid', latitude: 40.4168, longitude: -3.7038, locationPrecision: 'city' as const },
+    ]);
+
+    assert.equal(groups.length, 2);
+    assert.equal(groups[0].technicians.length, 2);
+    assert.equal(groups[0].locationPrecision, 'city');
+    assert.equal(groups[1].technicians[0].id, 'madrid');
+  });
+
+  await test('Mapa de técnicos — un punto ciudad/país mixto no se solapa ni finge precisión', () => {
+    const groups = groupTechnicianMapMarkers([
+      { id: 'city', latitude: 40, longitude: -4, locationPrecision: 'city' as const },
+      { id: 'country', latitude: 40, longitude: -4, locationPrecision: 'country' as const },
+      { id: 'invalid', latitude: Number.NaN, longitude: -4, locationPrecision: 'country' as const },
+    ]);
+
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].technicians.length, 2);
+    assert.equal(groups[0].locationPrecision, 'mixed');
+  });
+
+  await test('Mapa de técnicos nativo — el JavaScript real del WebView sigue siendo válido', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/components/TechnicianMap.native.tsx'),
+      'utf8',
+    );
+    const template = source.match(/const LEAFLET_HTML = `([\s\S]*?)`;\r?\n/);
+    assert.ok(template, 'No encuentro LEAFLET_HTML');
+
+    // Evalúa primero el template literal, porque los escapes que ve WKWebView
+    // no son los mismos que se ven en el fuente TypeScript.
+    const html = new Function(`return \`${template[1]}\`;`)() as string;
+    const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)];
+    assert.equal(inlineScripts.length, 1);
+    const inlineScript = inlineScripts[0][1];
+    assert.doesNotThrow(() => new Function(inlineScript));
+
+    const runtime = new Function(
+      'window',
+      `${inlineScript}\nreturn { AVAIL, buildGroupPopup };`,
+    )({ ReactNativeWebView: { postMessage: () => undefined } }) as {
+      AVAIL: Record<string, { hex: string }>;
+      buildGroupPopup: (group: unknown) => string;
+    };
+    assert.deepEqual(Object.keys(runtime.AVAIL).sort(), ['open_to_offers', 'unavailable']);
+    assert.equal(runtime.AVAIL.open_to_offers.hex, '#10B981');
+    const popup = runtime.buildGroupPopup({
+      locationPrecision: 'country',
+      technicians: ['TECH-001', 'TECH-002', 'TECH-003'].map((anonymousCode, index) => ({
+        id: `tech-${index + 1}`,
+        anonymousCode,
+        city: 'Madrid',
+        country: 'Spain',
+        yearsExperience: index + 2,
+        availability: 'open_to_offers',
+        verificationStatus: 'verified',
+        tradeLabels: index === 0 ? ['Sheet Metal Worker', 'Avionics Technician'] : ['Mechanic'],
+        licenseCategories: [],
+        typeRatings: [],
+        profileUnlocked: false,
+      })),
+    });
+    assert.match(popup, /3 technicians at this map point/);
+    for (const code of ['TECH-001', 'TECH-002', 'TECH-003']) assert.match(popup, new RegExp(code));
+    assert.match(popup, /Sheet Metal Worker/);
+    assert.match(popup, /Avionics Technician/);
+    assert.doesNotMatch(popup, /country centroid/);
+  });
+
+  await test('Mapa de ofertas nativo — el payload acepta apóstrofes, comillas y saltos de línea', () => {
+    const payload = [{
+      id: "offer-o'brien",
+      title: "O'Brien \"A320\"\nNight <shift> & support",
+      companyName: "D'Angelo Aviation",
+      location: "L'Aquila",
+    }];
+    const script = buildOfferMapMarkerUpdateScript(payload);
+    let received = '';
+
+    assert.doesNotThrow(() => {
+      new Function('window', script)({
+        updateOfferMarkers: (serialized: string) => { received = serialized; },
+      });
+    });
+    assert.deepEqual(JSON.parse(received), payload);
+    assert.ok(!script.includes('encodeURIComponent'));
+  });
+
+  await test('Mapa de ofertas nativo — HTML, errores tempranos y botones son ejecutables', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/components/OfferMap.native.tsx'),
+      'utf8',
+    );
+    const template = source.match(/const LEAFLET_HTML = `([\s\S]*?)`;\r?\n/);
+    assert.ok(template, 'No encuentro LEAFLET_HTML');
+    const html = new Function(`return \`${template[1]}\`;`)() as string;
+    const inlineScripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)];
+    assert.equal(inlineScripts.length, 2, 'El relay temprano y el mapa deben ser scripts separados');
+    for (const script of inlineScripts) assert.doesNotThrow(() => new Function(script[1]));
+
+    const messages: string[] = [];
+    const renderedPopups: string[] = [];
+    let clickHandler: ((event: { target: unknown }) => void) | null = null;
+    const windowStub: Record<string, any> = {
+      ReactNativeWebView: { postMessage: (message: string) => messages.push(message) },
+    };
+    const documentStub = {
+      addEventListener: (type: string, handler: (event: { target: unknown }) => void) => {
+        if (type === 'click') clickHandler = handler;
+      },
+    };
+    const mapStub = {
+      setView: () => mapStub,
+      fitBounds: () => undefined,
+    };
+    const markerLayerStub = {
+      addTo: () => markerLayerStub,
+      clearLayers: () => undefined,
+    };
+    const leafletStub = {
+      map: () => mapStub,
+      tileLayer: () => ({ addTo: () => undefined }),
+      layerGroup: () => markerLayerStub,
+      circleMarker: () => {
+        const marker = {
+          bindPopup: (popup: string) => {
+            renderedPopups.push(popup);
+            return marker;
+          },
+          bindTooltip: () => marker,
+          addTo: () => marker,
+        };
+        return marker;
+      },
+    };
+
+    new Function('window', inlineScripts[0][1])(windowStub);
+    const runtime = new Function(
+      'window',
+      'document',
+      'L',
+      `${inlineScripts[1][1]}\nreturn { buildOfferCard, initMap };`,
+    )(windowStub, documentStub, leafletStub) as {
+      buildOfferCard: (offer: unknown, divider: boolean) => string;
+      initMap: () => void;
+    };
+
+    const card = runtime.buildOfferCard({
+      id: "offer-o'brien",
+      title: "O'Brien <A320>",
+      companyName: 'D"Angelo',
+      location: "L'Aquila & coast",
+      score: 88,
+      matchLabel: 'Strong',
+      labelColor: '#0891B2',
+      blocked: false,
+      contractLabel: 'Contract',
+      productLabel: 'Aircraft',
+      approximate: false,
+    }, false);
+    assert.ok(!card.includes('onclick='), 'El botón no debe contener JavaScript inline');
+    assert.match(card, /O&#39;Brien &lt;A320&gt;/);
+    assert.match(card, /data-offer-id="offer-o&#39;brien"/);
+
+    assert.ok(clickHandler, 'No se registró la delegación de click');
+    const fakeButton = {
+      getAttribute: (name: string) => name === 'data-offer-id' ? "offer-o'brien" : null,
+      parentNode: documentStub,
+    };
+    (clickHandler as (event: { target: unknown }) => void)({ target: fakeButton });
+    assert.ok(messages.includes("offer-map-view:offer-o'brien"));
+
+    windowStub.onerror('Unexpected identifier offer');
+    assert.ok(messages.some((message) => message.includes('offer-map-error:JavaScript error:')));
+
+    runtime.initMap();
+    assert.ok(messages.includes('offer-map-ready'));
+    new Function('window', buildOfferMapMarkerUpdateScript([{
+      key: '40.00000:-4.00000:country',
+      latitude: 40,
+      longitude: -4,
+      locationPrecision: 'country',
+      offers: [{
+        id: "offer-o'brien",
+        title: "O'Brien <A320>",
+        companyName: 'D"Angelo',
+        location: "L'Aquila & coast",
+        score: 88,
+        matchLabel: 'Strong',
+        markerColor: '#0891B2',
+        labelColor: '#0891B2',
+        blocked: false,
+        contractLabel: 'Contract',
+        productLabel: 'Aircraft',
+        approximate: true,
+      }],
+    }]))(windowStub);
+    assert.equal(renderedPopups.length, 1);
+    assert.match(renderedPopups[0], /O&#39;Brien &lt;A320&gt;/);
   });
 
   // ── Selector <-> fila ───────────────────────────────────────────────────

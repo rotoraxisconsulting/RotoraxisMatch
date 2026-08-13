@@ -155,7 +155,14 @@ export function CompanyChip({
 
   if (!onPress) return body;
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.75}>
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected }}
+      hitSlop={{ top: 6, bottom: 6, left: 3, right: 3 }}
+      onPress={onPress}
+      activeOpacity={0.75}
+    >
       {body}
     </TouchableOpacity>
   );

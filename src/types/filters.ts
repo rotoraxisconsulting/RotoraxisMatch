@@ -1,5 +1,6 @@
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode } from './catalog';
 import { VerificationStatus } from './enums';
+import { LocationValue } from './location';
 
 // --- V2 types ---
 
@@ -45,6 +46,9 @@ export interface OfferSearchFilters {
  * screen and hook expose that V2 contract directly.
  */
 export interface TechnicianFilters {
+  technicianTypes?: TechnicianTypeCode[];
+  /** Canonical country/city selector value used by company search. */
+  location?: LocationValue;
   licenseCategory?: string;
   /**
    * @deprecated Legacy V1 aircraft code/label field retained for source

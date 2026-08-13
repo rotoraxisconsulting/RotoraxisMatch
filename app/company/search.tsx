@@ -6,7 +6,6 @@ import {
   StyleSheet,
   FlatList,
   ActivityIndicator,
-  TextInput,
   TouchableOpacity,
   useWindowDimensions,
 } from 'react-native';
@@ -44,9 +43,10 @@ import { calculateOfferTechnicianMatch } from '../../src/utils/matchingV2';
 import { useAircraftTypeRatingsCatalog } from '../../src/state/useAircraftTypeRatingsCatalog';
 import { AircraftRatingIndex } from '../../src/constants/aircraftTypeRatings';
 import { CollapsibleAircraftFilter } from '../../src/components/CollapsibleAircraftFilter';
+import { CountryCityPicker } from '../../src/components/CountryCityPicker';
 import { resolveTypeRatingLabels, resolveTechnicianProductTypes } from '../../src/utils/v2CompatAdapters';
 import { LICENSE_CATEGORIES } from '../../src/constants/licenses';
-import { technicianTypeLabels } from '../../src/constants/technicianTypes';
+import { TECHNICIAN_TYPES, technicianTypeLabels } from '../../src/constants/technicianTypes';
 import { OfferWithRequirements } from '../../src/types/offer';
 import { SafeTechnicianView } from '../../src/types';
 import { MatchScore } from '../../src/types/matching';
@@ -58,7 +58,8 @@ import { OfferRelationKind } from '../../src/utils/offerRelationStateMachine';
 // donde venga. Deliberadamente minima: solo lo que la tarjeta necesita para
 // decidir si puede enviar y que etiqueta poner.
 type OfferRelationSummary = { kind: OfferRelationKind; status: OfferRequest['status'] };
-import { AircraftTypeRatingCatalog } from '../../src/types/catalog';
+import { AircraftTypeRatingCatalog, TechnicianTypeCode } from '../../src/types/catalog';
+import { EMPTY_LOCATION } from '../../src/types/location';
 import { notify, confirmAction } from '../../src/utils/platformAlert';
 import { ViewTechnicianProfileButton } from '../../src/components/company/ViewTechnicianProfileButton';
 import { spacing } from '../../src/theme';
@@ -234,6 +235,14 @@ export default function TechnicianSearchScreen() {
     setPreviews({});
   }
 
+  function toggleTechnicianType(type: TechnicianTypeCode) {
+    const selected = filters.technicianTypes ?? [];
+    const next = selected.includes(type)
+      ? selected.filter((value) => value !== type)
+      : [...selected, type];
+    updateFilter('technicianTypes', next.length > 0 ? next : undefined);
+  }
+
   // Relacion existente con la oferta seleccionada, POR CUALQUIERA DE LOS DOS
   // CAMINOS: oferta directa que mandamos nosotros, o aplicacion que mando el
   // tecnico. Ambas bloquean un envio nuevo (evaluateDirectOfferConflict), asi
@@ -296,28 +305,35 @@ export default function TechnicianSearchScreen() {
                 </View>
               </View>
 
-              <View style={styles.fieldGrid}>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Country</Text>
-                  <TextInput
-                    value={filters.country ?? ''}
-                    onChangeText={(value) => updateFilter('country', value || undefined)}
-                    placeholder="Any country"
-                    placeholderTextColor={companyUi.textMuted}
-                    style={styles.input}
+              <CountryCityPicker
+                value={filters.location ?? EMPTY_LOCATION}
+                onChange={(location) => updateFilter(
+                  'location',
+                  location.country || location.city ? location : undefined,
+                )}
+                countryRequired={false}
+                countryPlaceholder="Any country"
+                cityPlaceholder="Any city"
+              />
+
+              <FilterGroup
+                label="Trade type"
+                helper="Select one or more. Results can match any selected trade."
+              >
+                <CompanyChip
+                  label="Any"
+                  selected={!filters.technicianTypes?.length}
+                  onPress={() => updateFilter('technicianTypes', undefined)}
+                />
+                {TECHNICIAN_TYPES.filter((type) => type.isActive).map((type) => (
+                  <CompanyChip
+                    key={type.code}
+                    label={type.label}
+                    selected={filters.technicianTypes?.includes(type.code) ?? false}
+                    onPress={() => toggleTechnicianType(type.code)}
                   />
-                </View>
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>City</Text>
-                  <TextInput
-                    value={filters.city ?? ''}
-                    onChangeText={(value) => updateFilter('city', value || undefined)}
-                    placeholder="Any city"
-                    placeholderTextColor={companyUi.textMuted}
-                    style={styles.input}
-                  />
-                </View>
-              </View>
+                ))}
+              </FilterGroup>
 
               {/* Mismas dos opciones que el mapa, mismo campo y misma función
                   de repositorio — antes esta pantalla ofrecía 2 estados y el
@@ -482,10 +498,19 @@ export default function TechnicianSearchScreen() {
   );
 }
 
-function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
+function FilterGroup({
+  label,
+  helper,
+  children,
+}: {
+  label: string;
+  helper?: string;
+  children: React.ReactNode;
+}) {
   return (
     <View style={styles.filterGroup}>
       <Text style={styles.filterLabel}>{label}</Text>
+      {helper ? <Text style={styles.filterHelper}>{helper}</Text> : null}
       <View style={styles.chipWrap}>{children}</View>
     </View>
   );
@@ -682,33 +707,19 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: companyUi.textSoft,
   },
-  fieldGrid: {
-    gap: 10,
-  },
-  field: { gap: 7 },
-  fieldLabel: {
-    fontSize: 12,
-    lineHeight: 15,
-    fontWeight: '700',
-    color: companyUi.textSoft,
-  },
-  input: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: companyUi.border,
-    borderRadius: 15,
-    paddingHorizontal: 13,
-    fontSize: 14,
-    fontWeight: '600',
-    color: companyUi.text,
-    backgroundColor: companyUi.surfaceSoft,
-  },
   filterGroup: { gap: 8 },
   filterLabel: {
     fontSize: 12,
     lineHeight: 15,
     fontWeight: '700',
     color: companyUi.textSoft,
+  },
+  filterHelper: {
+    marginTop: -4,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '500',
+    color: companyUi.textMuted,
   },
   chipWrap: {
     flexDirection: 'row',

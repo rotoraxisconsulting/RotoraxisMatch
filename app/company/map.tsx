@@ -25,7 +25,7 @@ export default function MapScreen() {
     setFilters((prev) => ({ ...prev, [key]: value }));
   }
 
-  const { technicians, loading, habilitationsById } = useMapTechnicians(filters);
+  const { technicians, loading, habilitationsById, technicianTypesById } = useMapTechnicians(filters);
 
   useEffect(() => {
     let active = true;
@@ -109,6 +109,7 @@ export default function MapScreen() {
       <TechnicianMap
         technicians={technicians}
         habilitationsById={habilitationsById}
+        technicianTypesById={technicianTypesById}
         filters={filters}
         onFilterChange={handleFilterChange}
         loading={loading}

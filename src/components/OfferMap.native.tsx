@@ -18,6 +18,7 @@ import {
   offerMapProductLabel,
 } from './offer-map/OfferMapControls';
 import { techUi } from './technician/TechnicianUI';
+import { buildOfferMapMarkerUpdateScript } from '../utils/offerMapWebViewBridge';
 
 export interface OfferMapProps {
   offers: OfferMapItem[];
@@ -31,6 +32,8 @@ export interface OfferMapProps {
   onBack?: () => void;
   onViewOffer: (offerId: string) => void;
 }
+
+const MAP_READY_TIMEOUT_MS = 12_000;
 
 const LEAFLET_HTML = `<!DOCTYPE html>
 <html>
@@ -72,8 +75,30 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 <body>
   <div id="map"></div>
   <script>
+    (function installEarlyErrorRelay() {
+      function earlyPost(message) {
+        try { window.ReactNativeWebView.postMessage(message); } catch (error) {}
+      }
+      window.__offerMapPost = earlyPost;
+      window.onerror = function(message, source, line, column, error) {
+        var detail = error && error.message ? error.message : String(message || 'unknown JavaScript error');
+        earlyPost('offer-map-error:JavaScript error: ' + detail);
+        return false;
+      };
+      window.onunhandledrejection = function(event) {
+        var reason = event && event.reason;
+        var detail = reason && reason.message ? reason.message : String(reason || 'unhandled promise rejection');
+        earlyPost('offer-map-error:JavaScript error: ' + detail);
+      };
+      earlyPost('offer-map-html-started');
+    })();
+  </script>
+  <script>
     function post(message) {
-      try { window.ReactNativeWebView.postMessage(message); } catch (error) {}
+      try {
+        if (typeof window.__offerMapPost === 'function') window.__offerMapPost(message);
+        else window.ReactNativeWebView.postMessage(message);
+      } catch (error) {}
     }
     function escHtml(value) {
       return String(value == null ? '' : value)
@@ -100,7 +125,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         '<div style="margin-top:7px;font-size:11px;line-height:15px;color:#527088;">'+escHtml(offer.location)+(offer.approximate ? ' &bull; Country-level location' : '')+'</div>' +
         '<div style="margin-top:7px;">'+chip(offer.score+'% match', offer.labelColor, '#EBF2F8')+eligibility+application+'</div>' +
         '<div style="margin-top:2px;font-size:10px;line-height:14px;color:#527088;">'+escHtml(offer.contractLabel)+' &bull; '+escHtml(offer.productLabel)+'</div>' +
-        '<button type="button" data-offer-id="'+escAttr(offer.id)+'" onclick="post(\'offer-map-view:\' + this.getAttribute(\'data-offer-id\'))" style="width:100%;min-height:44px;margin-top:10px;border:0;border-radius:12px;background:#0891B2;color:#FFFFFF;font-size:12px;font-weight:800;">View offer</button>' +
+        '<button type="button" data-offer-id="'+escAttr(offer.id)+'" style="width:100%;min-height:44px;margin-top:10px;border:0;border-radius:12px;background:#0891B2;color:#FFFFFF;font-size:12px;font-weight:800;">View offer</button>' +
       '</div>';
     }
     function buildPopup(group) {
@@ -112,16 +137,26 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       }).join('')+'</div>';
     }
 
+    document.addEventListener('click', function(event) {
+      var target = event.target;
+      while (target && target !== document) {
+        if (target.getAttribute) {
+          var offerId = target.getAttribute('data-offer-id');
+          if (offerId) {
+            post('offer-map-view:' + offerId);
+            return;
+          }
+        }
+        target = target.parentNode;
+      }
+    });
+
     var map = null;
     var markersLayer = null;
     var ready = false;
-    var pendingGroups = null;
+    var pendingPayload = null;
 
     function renderGroups(groups) {
-      if (!ready || !markersLayer) {
-        pendingGroups = groups;
-        return;
-      }
       markersLayer.clearLayers();
       var bounds = [];
       groups.forEach(function(group) {
@@ -155,32 +190,54 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       post('offer-map-markers:' + groups.length);
     }
 
-    window.updateOfferMarkers = function(groups) {
-      try { renderGroups(Array.isArray(groups) ? groups : []); }
-      catch (error) { post('offer-map-error:' + (error.message || 'marker error')); }
+    function parseGroups(payload) {
+      var groups = JSON.parse(payload);
+      if (!Array.isArray(groups)) throw new Error('Offer marker payload is not an array');
+      return groups;
+    }
+
+    window.updateOfferMarkers = function(payload) {
+      post('offer-map-update-received');
+      try {
+        if (!ready || !markersLayer) {
+          pendingPayload = payload;
+          return;
+        }
+        renderGroups(parseGroups(payload));
+      } catch (error) {
+        post('offer-map-error:' + (error.message || 'marker error'));
+      }
     };
 
     function initMap() {
       try {
+        post('offer-map-leaflet-loaded');
         map = L.map('map', { zoomControl: true }).setView([48.5, 8.0], 3);
+        post('offer-map-created');
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
           maxZoom: 18,
         }).addTo(map);
         markersLayer = L.layerGroup().addTo(map);
+        post('offer-map-marker-layer-created');
         ready = true;
-        if (pendingGroups) {
-          var groups = pendingGroups;
-          pendingGroups = null;
-          renderGroups(groups);
-        }
         post('offer-map-ready');
+        if (pendingPayload !== null) {
+          var payload = pendingPayload;
+          pendingPayload = null;
+          renderGroups(parseGroups(payload));
+        }
       } catch (error) {
         post('offer-map-error:' + (error.message || 'initialization error'));
       }
     }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" crossorigin="" onload="initMap()" onerror="post('offer-map-error:Leaflet failed to load')"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+    onload="initMap()"
+    onerror="window.__offerMapPost && window.__offerMapPost('offer-map-error:Leaflet failed to load')"
+  ></script>
 </body>
 </html>`;
 
@@ -220,17 +277,23 @@ export function OfferMap({
       approximate: offer.locationPrecision === 'country',
     })),
   })), [groups]);
-  const encodedPayload = useMemo(
-    () => encodeURIComponent(JSON.stringify(payload)),
+  const markerUpdateScript = useMemo(
+    () => buildOfferMapMarkerUpdateScript(payload),
     [payload],
   );
 
   useEffect(() => {
     if (!mapReady) return;
-    webViewRef.current?.injectJavaScript(
-      `window.updateOfferMarkers(JSON.parse(decodeURIComponent('${encodedPayload}'))); true;`,
-    );
-  }, [encodedPayload, mapReady]);
+    webViewRef.current?.injectJavaScript(markerUpdateScript);
+  }, [markerUpdateScript, mapReady]);
+
+  useEffect(() => {
+    if (mapReady || mapError || error) return;
+    const timeout = setTimeout(() => {
+      setMapError('The map took too long to initialize. Check your connection and try again.');
+    }, MAP_READY_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [error, mapKey, mapReady, mapError]);
 
   function handleMessage(event: WebViewMessageEvent) {
     const message = event.nativeEvent.data;
@@ -244,6 +307,7 @@ export function OfferMap({
       return;
     }
     if (message.startsWith('offer-map-error:')) {
+      setMapReady(false);
       setMapError(message.slice('offer-map-error:'.length));
     }
   }
@@ -262,17 +326,35 @@ export function OfferMap({
 
   return (
     <View style={styles.container}>
-      <WebView
-        key={mapKey}
-        ref={webViewRef}
-        source={{ html: LEAFLET_HTML }}
-        originWhitelist={['*']}
-        javaScriptEnabled
-        domStorageEnabled
-        onMessage={handleMessage}
-        onError={() => setMapError('The map could not be loaded.')}
-        style={styles.map}
-      />
+      <View style={styles.webViewContainer}>
+        <WebView
+          key={mapKey}
+          ref={webViewRef}
+          source={{ html: LEAFLET_HTML }}
+          originWhitelist={['*']}
+          javaScriptEnabled
+          domStorageEnabled
+          setSupportMultipleWindows={false}
+          onLoadStart={() => {
+            setMapReady(false);
+            setMapError(null);
+          }}
+          onMessage={handleMessage}
+          onError={(event) => {
+            setMapReady(false);
+            setMapError(event.nativeEvent.description || 'The map document could not be loaded.');
+          }}
+          onHttpError={(event) => {
+            setMapReady(false);
+            setMapError(`Map request failed with HTTP ${event.nativeEvent.statusCode}.`);
+          }}
+          onContentProcessDidTerminate={() => {
+            setMapReady(false);
+            setMapError('The iOS map process stopped unexpectedly. Try loading it again.');
+          }}
+          style={styles.map}
+        />
+      </View>
 
       <OfferMapHeader
         visibleCount={offers.length}
@@ -285,7 +367,7 @@ export function OfferMap({
 
       {!loading && !effectiveError && offers.length > 0 ? <OfferMapLegend /> : null}
 
-      {loading || !mapReady ? (
+      {!effectiveError && (loading || !mapReady) ? (
         <View style={styles.loadingOverlay} pointerEvents="none">
           <View style={styles.loadingCard}>
             <ActivityIndicator color={techUi.accent} size="large" />
@@ -344,7 +426,8 @@ export function OfferMap({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: techUi.page },
-  map: { flex: 1, backgroundColor: techUi.page },
+  webViewContainer: { flex: 1, width: '100%' },
+  map: { flex: 1, width: '100%', backgroundColor: techUi.page },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 999,

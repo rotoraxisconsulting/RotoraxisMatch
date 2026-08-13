@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  ActivityIndicator,
   View,
   Text,
   TouchableOpacity,
@@ -8,19 +7,26 @@ import {
   StyleSheet,
   useWindowDimensions,
 } from 'react-native';
-import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
-import { ArrowLeft, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react-native';
+import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip, useMap } from 'react-leaflet';
 import { SafeTechnicianView, AvailabilityStatus, VerificationStatus } from '../types';
 import { TechnicianHabilitation } from '../types/technician';
 import { MapFilters, MapFilterValue } from '../types/filters';
 import { MapOfferMatchOption } from '../types/mapOffers';
+import { TechnicianTypeCode } from '../types/catalog';
 import { colors, spacing } from '../theme';
 import { LICENSE_CATEGORIES } from '../constants/licenses';
 import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
-import { getFamilies } from '../constants/aircraftTypeRatingViews';
 import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { resolveTypeRatingLabels } from '../utils/v2CompatAdapters';
+import { groupTechnicianMapMarkers } from '../utils/technicianMapMarkers';
 import { CollapsibleAircraftFilter } from './CollapsibleAircraftFilter';
+import {
+  TECHNICIAN_MAP_AVAILABILITY,
+  TechnicianMapHeader,
+  TechnicianMapLegend,
+} from './technician-map/TechnicianMapControls';
+import { techUi } from './technician/TechnicianUI';
+import { technicianTypeLabel } from '../constants/technicianTypes';
 
 export interface TechnicianMapProps {
   technicians: SafeTechnicianView[];
@@ -29,6 +35,7 @@ export interface TechnicianMapProps {
   // labels for pins/popups instead of the flattened
   // technician.aircraftTypes family/legacy-code strings.
   habilitationsById: Record<string, TechnicianHabilitation[]>;
+  technicianTypesById: Record<string, TechnicianTypeCode[]>;
   filters: MapFilters;
   onFilterChange: (key: keyof MapFilters, value: MapFilterValue) => void;
   loading: boolean;
@@ -166,20 +173,65 @@ const popupOfferRowStyle: React.CSSProperties = {
   backgroundColor: colors.white,
 };
 
+const tradeChipStyle: React.CSSProperties = {
+  display: 'inline-block',
+  padding: '3px 8px',
+  borderRadius: 10,
+  fontSize: 11,
+  fontWeight: 700,
+  backgroundColor: '#E0F2FE',
+  color: '#075985',
+  border: '1px solid #7DD3FC',
+  marginRight: 3,
+  marginBottom: 3,
+};
+
+const groupedPopupListStyle: React.CSSProperties = {
+  maxHeight: 320,
+  overflowY: 'auto',
+  paddingRight: 3,
+};
+
+const groupedPopupCardStyle: React.CSSProperties = {
+  borderTop: `1px solid ${colors.border}`,
+  paddingTop: 12,
+  marginTop: 12,
+};
+
 // ─── inject leaflet css once (Metro web doesn't process CSS imports) ──────────
 
 function useLeafletCss() {
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const id = 'leaflet-css';
-    if (document.getElementById(id)) return;
-    const link = document.createElement('link');
-    link.id = id;
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
-    link.crossOrigin = '';
-    document.head.appendChild(link);
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
+      link.crossOrigin = '';
+      document.head.appendChild(link);
+    }
+
+    if (!document.getElementById('technician-map-leaflet-css')) {
+      const style = document.createElement('style');
+      style.id = 'technician-map-leaflet-css';
+      style.textContent = `
+        .leaflet-top.leaflet-left { top: 96px; left: 12px; }
+        .technician-marker-count.leaflet-tooltip {
+          background: transparent;
+          border: 0;
+          box-shadow: none;
+          color: #FFFFFF;
+          font-size: 12px;
+          font-weight: 800;
+          line-height: 1;
+          pointer-events: none;
+        }
+        .technician-marker-count.leaflet-tooltip::before { display: none; }
+      `;
+      document.head.appendChild(style);
+    }
   }, []);
 }
 
@@ -214,10 +266,7 @@ const VERIFICATION_OPTIONS = [
 // Dos estados desde 2026-07-29 — mismas opciones que la búsqueda, mismo campo
 // y misma función de repositorio. Cierra el hallazgo I9 (mapa con 3 estados
 // frente a búsqueda con 2) por construcción, no por convención.
-const AVAILABILITY_OPTIONS = [
-  { value: 'open_to_offers' as const, label: 'Open to offers' },
-  { value: 'unavailable' as const, label: 'Unavailable' },
-];
+const AVAILABILITY_OPTIONS = TECHNICIAN_MAP_AVAILABILITY.map(({ value, label }) => ({ value, label }));
 
 type MultiFilterKey =
   | 'licenseCategories'
@@ -250,10 +299,6 @@ function activeFilterCount(filters: MapFilters): number {
     selectedFilterValues(filters, 'verificationStatuses').length +
     selectedFilterValues(filters, 'availabilityStatuses').length
   );
-}
-
-function optionLabel(options: readonly { value: string; label: string }[], value: string): string {
-  return options.find((option) => option.value === value)?.label ?? value;
 }
 
 // ─── main component ───────────────────────────────────────────────────────────
@@ -349,6 +394,7 @@ function PopupOfferSelector({
 export default function TechnicianMapLeafletImpl({
   technicians,
   habilitationsById,
+  technicianTypesById,
   filters,
   onFilterChange,
   loading,
@@ -361,25 +407,26 @@ export default function TechnicianMapLeafletImpl({
   useLeafletCss();
   const { ratings } = useAircraftTypeRatingsCatalog();
   const ratingIndex = useMemo(() => buildAircraftRatingIndex(ratings), [ratings]);
-  const familyByKey = useMemo(() => new Map(getFamilies(ratings).map((f) => [f.key, f])), [ratings]);
   const { width } = useWindowDimensions();
-  const isCompactMap = width < 760;
   const [filterOpen, setFilterOpen] = useState(false);
-  const [panelCollapsed, setPanelCollapsed] = useState(isCompactMap);
   const [selectedOfferTechId, setSelectedOfferTechId] = useState<string | null>(null);
   const [sendingOfferKey, setSendingOfferKey] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
-  const sidePanelWidth = Math.min(width - 40, isCompactMap ? 224 : 232);
-  const filterPanelFrame = isCompactMap
-    ? { top: 320, left: 20, width: Math.min(width - 40, 320) }
-    : { left: sidePanelWidth + 40 };
+  const filterPanelFrame = { top: 100, right: 12, width: Math.min(width - 24, 360) };
 
   const selectedLicenses = selectedFilterValues(filters, 'licenseCategories');
   const selectedAircraft = selectedFilterValues(filters, 'aircraftFamilyKeys');
   const selectedVerification = selectedFilterValues(filters, 'verificationStatuses');
   const selectedAvailability = selectedFilterValues(filters, 'availabilityStatuses');
   const filterCount = activeFilterCount(filters);
-  const mappedTechnicians = technicians.filter(hasMapCoordinates);
+  const mappedTechnicians = useMemo(
+    () => technicians.filter(hasMapCoordinates),
+    [technicians],
+  );
+  const markerGroups = useMemo(
+    () => groupTechnicianMapMarkers(mappedTechnicians),
+    [mappedTechnicians],
+  );
 
   function setMultiFilter(key: MultiFilterKey, values: string[]) {
     onFilterChange(key, values.length > 0 ? values : undefined);
@@ -403,30 +450,6 @@ export default function TechnicianMapLeafletImpl({
     onFilterChange('availabilityStatus', undefined);
   }
 
-  const activeChips = [
-    ...selectedLicenses.map((value) => ({ key: 'licenseCategories' as const, value, label: value })),
-    ...selectedVerification.map((value) => ({
-      key: 'verificationStatuses' as const,
-      value,
-      label: optionLabel(VERIFICATION_OPTIONS, value),
-    })),
-    ...selectedAvailability.map((value) => ({
-      key: 'availabilityStatuses' as const,
-      value,
-      label: optionLabel(AVAILABILITY_OPTIONS, value),
-    })),
-    ...selectedAircraft.map((value) => ({
-      key: 'aircraftFamilyKeys' as const,
-      value,
-      label: familyByKey.get(value)?.displayName ?? value,
-    })),
-  ];
-  const legendItems = [
-    { color: colors.success, label: 'Available' },
-    { color: colors.technician, label: 'Open to offers' },
-    { color: colors.textMuted, label: 'Unavailable' },
-  ];
-
   async function handleSendOffer(technicianId: string, offerId: string) {
     if (!onSendOffer) return;
     setSendError(null);
@@ -439,6 +462,99 @@ export default function TechnicianMapLeafletImpl({
     } finally {
       setSendingOfferKey(null);
     }
+  }
+
+  function renderTechnicianPopup(t: SafeTechnicianView) {
+    const tradeLabels = (technicianTypesById[t.id] ?? []).map(technicianTypeLabel);
+
+    return (
+      <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', padding: '2px 0' }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: colors.text, marginBottom: 3 }}>
+          {t.fullName ?? t.anonymousCode}
+        </div>
+        <div style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>
+          {t.city}, {t.country}
+          {t.baseAirport ? ` · ${t.baseAirport}` : ''}
+          {' · '}
+          {t.yearsExperience} yrs exp
+        </div>
+
+        {tradeLabels.length > 0 ? (
+          <div style={{ marginBottom: 7 }}>
+            {tradeLabels.map((label) => (
+              <span key={label} style={tradeChipStyle}>{label}</span>
+            ))}
+          </div>
+        ) : (
+          <div style={{ marginBottom: 8, color: colors.textMuted, fontSize: 11 }}>
+            Trade not specified
+          </div>
+        )}
+
+        <div style={{ marginBottom: 8 }}>
+          <span style={statusChipStyle(availColor(t.availability.status ?? 'unavailable'))}>
+            {availLabel(t.availability.status ?? 'unavailable')}
+          </span>
+          <span style={statusChipStyle(verifColor(t.verificationStatus))}>
+            {t.verificationStatus}
+          </span>
+        </div>
+
+        {t.licenseCategories.length > 0 && (
+          <div style={{ marginBottom: 6 }}>
+            <div style={popupLabelStyle}>Licenses</div>
+            <div>
+              {t.licenseCategories.map((license) => (
+                <span key={license} style={navyChipStyle}>{license}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(() => {
+          const typeRatings = resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex);
+          return typeRatings.length > 0 ? (
+            <div style={{ marginBottom: 6 }}>
+              <div style={popupLabelStyle}>Type ratings</div>
+              <div style={{ fontSize: 12, color: colors.textSecondary }}>
+                {typeRatings.slice(0, 4).join(' · ')}
+                {typeRatings.length > 4 ? ` +${typeRatings.length - 4}` : ''}
+              </div>
+            </div>
+          ) : null;
+        })()}
+
+        {t.fullName && onViewProfile ? (
+          <button
+            type="button"
+            style={popupProfileButtonStyle}
+            onClick={() => onViewProfile(t.id)}
+          >
+            View profile
+          </button>
+        ) : null}
+        <button
+          type="button"
+          style={popupActionButtonStyle}
+          onClick={() => {
+            setSendError(null);
+            setSelectedOfferTechId((current) => (current === t.id ? null : t.id));
+          }}
+        >
+          Send direct offer
+        </button>
+        {selectedOfferTechId === t.id ? (
+          <PopupOfferSelector
+            technicianId={t.id}
+            options={offerMatchesByTechnician[t.id] ?? []}
+            loading={loadingOfferMatches}
+            sendingOfferKey={sendingOfferKey}
+            error={sendError}
+            onSend={handleSendOffer}
+          />
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -468,232 +584,72 @@ export default function TechnicianMapLeafletImpl({
         />
         <MapAutoFit technicians={mappedTechnicians} />
 
-        {mappedTechnicians.map((t) => (
-          <CircleMarker
-            key={t.id}
-            center={[Number(t.latitude), Number(t.longitude)]}
-            radius={9}
-            pathOptions={{
-              fillColor: markerColor(t.availability.status ?? 'unavailable'),
-              color: '#ffffff',
-              fillOpacity: 0.92,
-              weight: 2,
-            }}
-          >
-            <Popup maxWidth={260} minWidth={220}>
-              <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', padding: '2px 0' }}>
-                <div style={{ fontWeight: 700, fontSize: 15, color: colors.text, marginBottom: 3 }}>
-                  {t.fullName ?? t.anonymousCode}
-                </div>
-                <div style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>
-                  {t.city}, {t.country}
-                  {t.baseAirport ? ` · ${t.baseAirport}` : ''}
-                  {' · '}
-                  {t.yearsExperience} yrs exp
-                </div>
+        {markerGroups.map((group) => {
+          const isGroup = group.technicians.length > 1;
+          const isApproximate = group.locationPrecision !== 'city';
+          const singleTechnician = group.technicians[0];
 
-                <div style={{ marginBottom: 8 }}>
-                  <span style={statusChipStyle(availColor(t.availability.status ?? 'unavailable'))}>
-                    {availLabel(t.availability.status ?? 'unavailable')}
-                  </span>
-                  <span style={statusChipStyle(verifColor(t.verificationStatus))}>
-                    {t.verificationStatus}
-                  </span>
-                </div>
-
-                {t.licenseCategories.length > 0 && (
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={popupLabelStyle}>Licenses</div>
-                    <div>
-                      {t.licenseCategories.map((l) => (
-                        <span key={l} style={navyChipStyle}>{l}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {(() => {
-                  const typeRatings = resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex);
-                  return typeRatings.length > 0 ? (
-                    <div style={{ marginBottom: 6 }}>
-                      <div style={popupLabelStyle}>Type ratings</div>
-                      <div style={{ fontSize: 12, color: colors.textSecondary }}>
-                        {typeRatings.slice(0, 4).join(' · ')}
-                        {typeRatings.length > 4 ? ` +${typeRatings.length - 4}` : ''}
-                      </div>
-                    </div>
-                  ) : null;
-                })()}
-
-                {t.fullName && onViewProfile ? (
-                  <button
-                    type="button"
-                    style={popupProfileButtonStyle}
-                    onClick={() => onViewProfile(t.id)}
-                  >
-                    View profile
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  style={popupActionButtonStyle}
-                  onClick={() => {
-                    setSendError(null);
-                    setSelectedOfferTechId((current) => (current === t.id ? null : t.id));
-                  }}
+          return (
+            <CircleMarker
+              key={group.key}
+              center={[group.latitude, group.longitude]}
+              radius={isGroup ? 22 : isApproximate ? 12 : 9}
+              pathOptions={{
+                fillColor: isGroup
+                  ? colors.navy
+                  : markerColor(singleTechnician.availability.status ?? 'unavailable'),
+                color: isApproximate && !isGroup ? colors.navy : colors.white,
+                fillOpacity: isGroup ? 0.92 : isApproximate ? 0.34 : 0.92,
+                weight: isApproximate ? 3 : 2,
+                dashArray: isApproximate ? '4 3' : undefined,
+              }}
+            >
+              {isGroup ? (
+                <Tooltip
+                  permanent
+                  direction="center"
+                  className="technician-marker-count"
+                  opacity={1}
                 >
-                  Send direct offer
-                </button>
-                {selectedOfferTechId === t.id ? (
-                  <PopupOfferSelector
-                    technicianId={t.id}
-                    options={offerMatchesByTechnician[t.id] ?? []}
-                    loading={loadingOfferMatches}
-                    sendingOfferKey={sendingOfferKey}
-                    error={sendError}
-                    onSend={handleSendOffer}
-                  />
-                ) : null}
-              </div>
-            </Popup>
-          </CircleMarker>
-        ))}
+                  {group.technicians.length}
+                </Tooltip>
+              ) : isApproximate ? (
+                <Tooltip direction="top">Approximate country location</Tooltip>
+              ) : null}
+
+              <Popup maxWidth={isGroup ? 320 : 260} minWidth={isGroup ? 260 : 220}>
+              {isGroup ? (
+                <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+                  <div style={{ color: colors.text, fontSize: 16, fontWeight: 800 }}>
+                    {group.technicians.length} technicians at this map point
+                  </div>
+                  <div style={{ ...groupedPopupListStyle, marginTop: 8 }}>
+                    {group.technicians.map((technician, index) => (
+                      <div
+                        key={technician.id}
+                        style={index === 0 ? undefined : groupedPopupCardStyle}
+                      >
+                        {renderTechnicianPopup(technician)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : renderTechnicianPopup(singleTechnician)}
+              </Popup>
+            </CircleMarker>
+          );
+        })}
       </MapContainer>
 
-      {/* ── Side panel ── */}
-      <View style={[styles.sidePanel, { width: sidePanelWidth }]}>
-        {/* Back + Results — always visible */}
-        <View style={styles.panelTopRow}>
-          <TouchableOpacity
-            style={[styles.backButton, { flex: 1 }]}
-            onPress={onBack}
-            activeOpacity={0.78}
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-          >
-            <ArrowLeft color={colors.navy} size={17} strokeWidth={2.3} />
-            <Text style={styles.backButtonText}>Back</Text>
-          </TouchableOpacity>
+      <TechnicianMapHeader
+        visibleCount={technicians.length}
+        filterCount={filterCount}
+        loading={loading}
+        onBack={onBack}
+        onOpenFilters={() => setFilterOpen((open) => !open)}
+      />
 
-          <View style={[styles.resultsCard, { width: 76 }]}>
-            {loading ? (
-              <ActivityIndicator color={colors.navy} size="small" />
-            ) : (
-              <>
-                <Text style={styles.countNumber}>{technicians.length}</Text>
-                <Text style={styles.countLabel}>{technicians.length === 1 ? 'result' : 'results'}</Text>
-              </>
-            )}
-          </View>
-        </View>
-
-        {/* Expandable section — hidden on mobile when collapsed */}
-        {(!isCompactMap || !panelCollapsed) && (
-          <>
-            <TouchableOpacity
-              style={[styles.filterBtn, filterOpen && styles.filterBtnActive]}
-              onPress={() => setFilterOpen((v) => !v)}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel="Filters"
-            >
-              <SlidersHorizontal color={filterOpen ? colors.white : colors.navy} size={17} strokeWidth={2.2} />
-              <Text style={[styles.filterBtnText, filterOpen && styles.filterBtnTextActive]}>Filters</Text>
-              {filterCount > 0 ? (
-                <View style={[styles.filterBadge, filterOpen && styles.filterBadgeActive]}>
-                  <Text style={[styles.filterBadgeText, filterOpen && styles.filterBadgeTextActive]}>{filterCount}</Text>
-                </View>
-              ) : null}
-            </TouchableOpacity>
-
-            {filterCount > 0 ? (
-              <View style={styles.activeFiltersBlock}>
-                {activeChips.map((chip) => (
-                  <TouchableOpacity
-                    key={`${chip.key}-${chip.value}`}
-                    style={styles.activeChip}
-                    onPress={() => setMultiFilter(
-                      chip.key,
-                      selectedFilterValues(filters, chip.key).filter((item) => item !== chip.value),
-                    )}
-                  >
-                    <Text style={styles.activeChipText}>{chip.label} x</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ) : null}
-
-            <View style={styles.legendCard}>
-              <Text style={styles.panelLabel}>Availability</Text>
-              {legendItems.map(({ color, label }) => (
-                <View key={label} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: color }]} />
-                  <Text style={styles.legendText}>{label}</Text>
-                </View>
-              ))}
-            </View>
-          </>
-        )}
-
-        {/* Collapse toggle — mobile only */}
-        {isCompactMap && (
-          <TouchableOpacity
-            style={styles.collapseToggle}
-            onPress={() => {
-              setPanelCollapsed((v) => !v);
-              if (!panelCollapsed) setFilterOpen(false);
-            }}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel={panelCollapsed ? 'Expand panel' : 'Collapse panel'}
-          >
-            {panelCollapsed
-              ? <ChevronDown color={colors.textMuted} size={16} strokeWidth={2.5} />
-              : <ChevronUp color={colors.textMuted} size={16} strokeWidth={2.5} />
-            }
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* ── Active filter chips ── */}
-      {false && filterCount > 0 && !filterOpen && (
-        <View style={styles.activeChipsBar}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.activeChipsRow}
-          >
-            {activeChips.map((chip) => (
-              <TouchableOpacity
-                key={`${chip.key}-${chip.value}`}
-                style={styles.activeChip}
-                onPress={() => setMultiFilter(
-                  chip.key,
-                  selectedFilterValues(filters, chip.key).filter((item) => item !== chip.value),
-                )}
-              >
-                <Text style={styles.activeChipText}>{chip.label} x</Text>
-              </TouchableOpacity>
-            ))}
-            {filters.licenseCategory && (
-              <TouchableOpacity
-                style={styles.activeChip}
-                onPress={() => onFilterChange('licenseCategory', undefined)}
-              >
-                <Text style={styles.activeChipText}>{filters.licenseCategory} ×</Text>
-              </TouchableOpacity>
-            )}
-            {filters.verificationStatus && (
-              <TouchableOpacity
-                style={styles.activeChip}
-                onPress={() => onFilterChange('verificationStatus', undefined)}
-              >
-                <Text style={styles.activeChipText}>{filters.verificationStatus} ×</Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </View>
-      )}
+      {!loading && mappedTechnicians.length > 0 ? <TechnicianMapLegend /> : null}
 
       {/* ── Filter dropdown panel ── */}
       {filterOpen && (
@@ -726,6 +682,8 @@ export default function TechnicianMapLeafletImpl({
                   key={l.code}
                   style={[styles.chip, selectedLicenses.includes(l.code) && styles.chipActive]}
                   onPress={() => toggle('licenseCategories', l.code)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: selectedLicenses.includes(l.code) }}
                 >
                   <Text style={[styles.chipText, selectedLicenses.includes(l.code) && styles.chipTextActive]}>
                     {l.code}
@@ -741,6 +699,8 @@ export default function TechnicianMapLeafletImpl({
                   key={v.value}
                   style={[styles.chip, selectedVerification.includes(v.value) && styles.chipActive]}
                   onPress={() => toggle('verificationStatuses', v.value)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: selectedVerification.includes(v.value) }}
                 >
                   <Text style={[styles.chipText, selectedVerification.includes(v.value) && styles.chipTextActive]}>
                     {v.label}
@@ -756,6 +716,8 @@ export default function TechnicianMapLeafletImpl({
                   key={a.value}
                   style={[styles.chip, selectedAvailability.includes(a.value) && styles.chipActive]}
                   onPress={() => toggle('availabilityStatuses', a.value)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: selectedAvailability.includes(a.value) }}
                 >
                   <Text style={[styles.chipText, selectedAvailability.includes(a.value) && styles.chipTextActive]}>
                     {a.label}
@@ -773,19 +735,6 @@ export default function TechnicianMapLeafletImpl({
         </View>
       )}
 
-      {/* ── Legend ── */}
-      {false && <View style={styles.legend}>
-        {[
-          { color: colors.success, label: 'Available' },
-          { color: colors.technician, label: 'Open to offers' },
-          { color: colors.textMuted, label: 'Unavailable' },
-        ].map(({ color, label }) => (
-          <View key={label} style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: color }]} />
-            <Text style={styles.legendText}>{label}</Text>
-          </View>
-        ))}
-      </View>}
     </View>
   );
 }
@@ -977,15 +926,16 @@ const styles = StyleSheet.create({
   // Filter panel
   filterPanel: {
     position: 'absolute',
-    top: 28,
     width: 320,
-    maxHeight: 460,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
+    maxHeight: 520,
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: techUi.border,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
     elevation: 12,
     zIndex: 1003,
     overflow: 'hidden',
@@ -1000,15 +950,17 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   filterPanelTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.text,
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '800',
+    color: techUi.text,
   },
   filterPanelHelper: {
     fontSize: 12,
     lineHeight: 17,
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
+    fontWeight: '500',
+    color: techUi.textMuted,
+    marginBottom: spacing.md,
   },
   filterPanelActions: {
     flexDirection: 'row',
@@ -1016,21 +968,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   clearBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: colors.borderLight,
-    borderRadius: 8,
+    minHeight: 36,
+    paddingHorizontal: 10,
+    justifyContent: 'center',
+    backgroundColor: techUi.surfaceSoft,
+    borderRadius: 11,
   },
   clearBtnText: {
     fontSize: 12,
-    color: colors.textSecondary,
-    fontWeight: '500',
+    color: techUi.textSoft,
+    fontWeight: '700',
   },
   doneBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    backgroundColor: colors.blue,
-    borderRadius: 8,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    justifyContent: 'center',
+    backgroundColor: techUi.accent,
+    borderRadius: 11,
   },
   doneBtnText: {
     fontSize: 12,
@@ -1039,8 +993,8 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMuted,
+    fontWeight: '800',
+    color: techUi.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginTop: spacing.md,
@@ -1053,24 +1007,24 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    paddingVertical: 8,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.surfaceSoft,
   },
   chipActive: {
-    backgroundColor: colors.navy,
-    borderColor: colors.navy,
+    backgroundColor: techUi.accentSoft,
+    borderColor: techUi.accent,
   },
   chipText: {
     fontSize: 12,
-    fontWeight: '500',
-    color: colors.textSecondary,
+    fontWeight: '700',
+    color: techUi.textSoft,
   },
   chipTextActive: {
-    color: colors.white,
-    fontWeight: '600',
+    color: techUi.accent,
+    fontWeight: '800',
   },
 
   // Legend

@@ -4,6 +4,7 @@ import { indexCountriesByCode, resolveMapPin } from '../utils/locationBridge';
 import { useCountryCatalog } from './useCountryCatalog';
 import { MapFilters } from '../types/filters';
 import { AvailabilityStatus, TechnicianHabilitation } from '../types/technician';
+import { TechnicianTypeCode } from '../types/catalog';
 import { technicianRepositoryV2 } from '../repositories/v2/technicianRepositoryV2';
 import { offerRequestRepository } from '../repositories/v2/offerRequestRepository';
 import { offerApplicationRepository } from '../repositories/v2/offerApplicationRepository';
@@ -20,6 +21,10 @@ import { useCompanySession } from './SessionContext';
 interface UseMapTechniciansReturn {
   technicians: SafeTechnicianView[];
   loading: boolean;
+  // Profile trades are kept separate from the temporary V1-compatible
+  // technician shape. They already arrive from technician_profile_types;
+  // the map only needs to preserve them instead of discarding them.
+  technicianTypesById: Record<string, TechnicianTypeCode[]>;
   // Raw habilitations per technician (from the same server-filtered
   // preview fetch, before the V1-compat flattening) — the map component
   // resolves these to catalog displayName ("Type ratings") itself, same
@@ -61,6 +66,7 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
   const companyId = companySession?.companyId;
   const [technicians, setTechnicians] = useState<SafeTechnicianView[]>([]);
   const [habilitationsById, setHabilitationsById] = useState<Record<string, TechnicianHabilitation[]>>({});
+  const [technicianTypesById, setTechnicianTypesById] = useState<Record<string, TechnicianTypeCode[]>>({});
   const [loading, setLoading] = useState(true);
   // El catálogo de países: sin él no hay centroide al que caer cuando la
   // ciudad no vino del directorio. Comparte caché con el resto de la app.
@@ -103,8 +109,10 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
     const ratingIndex = buildAircraftRatingIndex(ratings);
 
     const nextHabilitationsById: Record<string, TechnicianHabilitation[]> = {};
+    const nextTechnicianTypesById: Record<string, TechnicianTypeCode[]> = {};
     previews.forEach((preview) => {
       nextHabilitationsById[preview.id] = preview.habilitations;
+      nextTechnicianTypesById[preview.id] = preview.technicianTypes;
     });
 
     const views = await Promise.all(
@@ -162,6 +170,7 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
       .sort((a, b) => (b.matchingScore ?? 0) - (a.matchingScore ?? 0));
     setTechnicians(scored);
     setHabilitationsById(nextHabilitationsById);
+    setTechnicianTypesById(nextTechnicianTypesById);
     setLoading(false);
   }, [
     filters.licenseCategory,
@@ -181,5 +190,5 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
     load();
   }, [load]);
 
-  return { technicians, loading, habilitationsById };
+  return { technicians, loading, habilitationsById, technicianTypesById };
 }

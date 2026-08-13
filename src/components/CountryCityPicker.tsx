@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   Modal,
   FlatList,
+  ScrollView,
   TextInput,
   StyleSheet,
   SafeAreaView,
@@ -57,6 +58,10 @@ interface CountryCityPickerProps {
   onChange: (value: LocationValue) => void;
   countryLabel?: string;
   cityLabel?: string;
+  /** Forms persist a required country; search filters deliberately allow none. */
+  countryRequired?: boolean;
+  countryPlaceholder?: string;
+  cityPlaceholder?: string;
   /** Inyectable para pruebas o storybook; por defecto el directorio real. */
   cityDirectory?: CityDirectory;
 }
@@ -66,6 +71,9 @@ export function CountryCityPicker({
   onChange,
   countryLabel = 'Country',
   cityLabel = 'City',
+  countryRequired = true,
+  countryPlaceholder = 'Select country',
+  cityPlaceholder = 'Add a city (optional)',
   cityDirectory,
 }: CountryCityPickerProps) {
   return (
@@ -73,6 +81,8 @@ export function CountryCityPicker({
       <CountryField
         label={countryLabel}
         value={value.country}
+        required={countryRequired}
+        placeholder={countryPlaceholder}
         onChange={(country) =>
           // Cambiar de país TIRA la ciudad. 'Valencia' con las coordenadas de
           // España deja de ser cierto en cuanto el país es Venezuela, y una
@@ -85,6 +95,7 @@ export function CountryCityPicker({
         countryCode={value.country?.code ?? null}
         countryName={value.country?.name ?? null}
         value={value.city}
+        placeholder={cityPlaceholder}
         onChange={(city) => onChange({ ...value, city })}
         directory={cityDirectory}
       />
@@ -97,10 +108,14 @@ export function CountryCityPicker({
 function CountryField({
   label,
   value,
+  required,
+  placeholder,
   onChange,
 }: {
   label: string;
   value: LocationValue['country'];
+  required: boolean;
+  placeholder: string;
   onChange: (country: LocationValue['country']) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -128,21 +143,64 @@ function CountryField({
     close();
   }
 
+  function renderCountry(entry: CountryCatalogEntry) {
+    const selected = entry.code === value?.code;
+    return (
+      <TouchableOpacity
+        key={entry.code}
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        style={[styles.listItem, selected && styles.listItemSelected]}
+        onPress={() => select(entry)}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.flag}>{countryFlag(entry.code)}</Text>
+        <View style={styles.itemTextBlock}>
+          <Text style={[styles.listItemText, selected && styles.listItemTextSelected]}>{entry.name}</Text>
+          <Text style={styles.itemSubtext}>{entry.code}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
   return (
     <View style={styles.field}>
       <View style={styles.labelRow}>
         <Text style={styles.fieldLabel}>{label}</Text>
-        <Text style={styles.requiredMark}>Required</Text>
+        <Text style={required ? styles.requiredMark : styles.optionalMark}>
+          {required ? 'Required' : 'Optional'}
+        </Text>
       </View>
 
-      <TouchableOpacity style={styles.pickerButton} onPress={() => setOpen(true)} activeOpacity={0.75}>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${label}: ${value.name}` : `${label}: ${placeholder}`}
+        style={styles.pickerButton}
+        onPress={() => setOpen(true)}
+        activeOpacity={0.75}
+      >
         <View style={styles.pickerValueRow}>
           {value ? <Text style={styles.flag}>{countryFlag(value.code)}</Text> : null}
           <Text style={value ? styles.pickerValue : styles.pickerPlaceholder} numberOfLines={1}>
-            {value?.name ?? 'Select country'}
+            {value?.name ?? placeholder}
           </Text>
         </View>
-        <ChevronDown color={companyUi.textMuted} size={16} strokeWidth={2} />
+        {!required && value ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`Clear ${label.toLowerCase()}`}
+            onPress={(event) => {
+              event.stopPropagation();
+              onChange(null);
+            }}
+            hitSlop={10}
+            activeOpacity={0.7}
+          >
+            <X color={companyUi.textMuted} size={16} strokeWidth={2} />
+          </TouchableOpacity>
+        ) : (
+          <ChevronDown color={companyUi.textMuted} size={16} strokeWidth={2} />
+        )}
       </TouchableOpacity>
 
       <PickerSheet visible={open} title="Select country" onClose={close}>
@@ -168,29 +226,33 @@ function CountryField({
           <View style={styles.statusBlock}>
             <Text style={styles.statusText}>The country catalog is empty.</Text>
           </View>
+        ) : Platform.OS === 'web' ? (
+          /* FlatList uses VirtualizedList, whose native scroll metrics are not
+             reliable when a DOM overflow container lives inside this modal.
+             A web ScrollView keeps the browser as the sole scroll owner. */
+          <ScrollView
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+          >
+            {filtered.length > 0
+              ? filtered.map(renderCountry)
+              : <Text style={styles.emptyText}>No countries match "{query.trim()}".</Text>}
+          </ScrollView>
         ) : (
           <FlatList
             style={styles.list}
             contentContainerStyle={styles.listContent}
             data={filtered}
             keyExtractor={(c) => c.code}
+            scrollEnabled
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+            keyboardDismissMode="on-drag"
             keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => {
-              const selected = item.code === value?.code;
-              return (
-                <TouchableOpacity
-                  style={[styles.listItem, selected && styles.listItemSelected]}
-                  onPress={() => select(item)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.flag}>{countryFlag(item.code)}</Text>
-                  <View style={styles.itemTextBlock}>
-                    <Text style={[styles.listItemText, selected && styles.listItemTextSelected]}>{item.name}</Text>
-                    <Text style={styles.itemSubtext}>{item.code}</Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            }}
+            renderItem={({ item }) => renderCountry(item)}
             ListEmptyComponent={<Text style={styles.emptyText}>No countries match "{query.trim()}".</Text>}
           />
         )}
@@ -206,6 +268,7 @@ function CityField({
   countryCode,
   countryName,
   value,
+  placeholder,
   onChange,
   directory,
 }: {
@@ -213,6 +276,7 @@ function CityField({
   countryCode: string | null;
   countryName: string | null;
   value: CitySelection | null;
+  placeholder: string;
   onChange: (city: CitySelection | null) => void;
   directory?: CityDirectory;
 }) {
@@ -247,6 +311,47 @@ function CityField({
     close();
   }
 
+  function renderCity(city: DirectoryCity) {
+    const selected = value?.kind === 'directory' && value.geonameId === city.geonameId;
+    return (
+      <TouchableOpacity
+        key={city.geonameId}
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        style={[styles.listItem, selected && styles.listItemSelected]}
+        onPress={() => selectFromDirectory(city)}
+        activeOpacity={0.7}
+      >
+        <MapPin color={selected ? companyUi.accent : companyUi.textMuted} size={16} strokeWidth={2.2} />
+        <View style={styles.itemTextBlock}>
+          <Text style={[styles.listItemText, selected && styles.listItemTextSelected]}>{city.name}</Text>
+          <Text style={styles.itemSubtext}>
+            {city.asciiName !== city.name ? `${city.asciiName} · ` : ''}
+            {city.population > 0 ? `${formatPopulation(city.population)} inhabitants` : city.timezone}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  const cityListFooter = (
+    <View>
+      <CitySearchStatus state={state} hasResults={cities.length > 0} query={trimmed} onRetry={retry} />
+
+      {trimmed ? (
+        <TouchableOpacity style={styles.manualRow} onPress={useTypedText} activeOpacity={0.7}>
+          <PenLine color={companyUi.textSoft} size={16} strokeWidth={2.2} />
+          <View style={styles.itemTextBlock}>
+            <Text style={styles.manualTitle}>Use "{trimmed}"</Text>
+            <Text style={styles.itemSubtext}>Saved as typed, without map coordinates.</Text>
+          </View>
+        </TouchableOpacity>
+      ) : null}
+
+      <Attribution />
+    </View>
+  );
+
   return (
     <View style={styles.field}>
       <View style={styles.labelRow}>
@@ -255,6 +360,9 @@ function CityField({
       </View>
 
       <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={value ? `${label}: ${value.name}` : `${label}: ${disabled ? 'select a country first' : placeholder}`}
+        accessibilityState={{ disabled }}
         style={[styles.pickerButton, disabled && styles.pickerButtonDisabled]}
         onPress={() => !disabled && setOpen(true)}
         activeOpacity={disabled ? 1 : 0.75}
@@ -268,11 +376,20 @@ function CityField({
             )
           ) : null}
           <Text style={value && !disabled ? styles.pickerValue : styles.pickerPlaceholder} numberOfLines={1}>
-            {disabled ? 'Select a country first' : (value?.name ?? 'Add a city (optional)')}
+            {disabled ? 'Select a country first' : (value?.name ?? placeholder)}
           </Text>
         </View>
         {value ? (
-          <TouchableOpacity onPress={() => onChange(null)} hitSlop={10} activeOpacity={0.7}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`Clear ${label.toLowerCase()}`}
+            onPress={(event) => {
+              event.stopPropagation();
+              onChange(null);
+            }}
+            hitSlop={10}
+            activeOpacity={0.7}
+          >
             <X color={companyUi.textMuted} size={16} strokeWidth={2} />
           </TouchableOpacity>
         ) : (
@@ -289,52 +406,34 @@ function CityField({
           returnKeyType="done"
         />
 
-        <FlatList
-          style={styles.list}
-          contentContainerStyle={styles.listContent}
-          data={cities}
-          keyExtractor={(c) => String(c.geonameId)}
-          keyboardShouldPersistTaps="handled"
-          renderItem={({ item }) => {
-            const selected = value?.kind === 'directory' && value.geonameId === item.geonameId;
-            return (
-              <TouchableOpacity
-                style={[styles.listItem, selected && styles.listItemSelected]}
-                onPress={() => selectFromDirectory(item)}
-                activeOpacity={0.7}
-              >
-                <MapPin color={selected ? companyUi.accent : companyUi.textMuted} size={16} strokeWidth={2.2} />
-                <View style={styles.itemTextBlock}>
-                  <Text style={[styles.listItemText, selected && styles.listItemTextSelected]}>{item.name}</Text>
-                  <Text style={styles.itemSubtext}>
-                    {item.asciiName !== item.name ? `${item.asciiName} · ` : ''}
-                    {item.population > 0 ? `${formatPopulation(item.population)} inhabitants` : item.timezone}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            );
-          }}
-          /* El pie es lo que garantiza que el campo NUNCA atrapa al usuario:
-             la fila de "usar lo escrito" está aquí siempre que haya texto,
-             pase lo que pase con la red. */
-          ListFooterComponent={
-            <View>
-              <CitySearchStatus state={state} hasResults={cities.length > 0} query={trimmed} onRetry={retry} />
-
-              {trimmed ? (
-                <TouchableOpacity style={styles.manualRow} onPress={useTypedText} activeOpacity={0.7}>
-                  <PenLine color={companyUi.textSoft} size={16} strokeWidth={2.2} />
-                  <View style={styles.itemTextBlock}>
-                    <Text style={styles.manualTitle}>Use "{trimmed}"</Text>
-                    <Text style={styles.itemSubtext}>Saved as typed, without map coordinates.</Text>
-                  </View>
-                </TouchableOpacity>
-              ) : null}
-
-              <Attribution />
-            </View>
-          }
-        />
+        {Platform.OS === 'web' ? (
+          <ScrollView
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+          >
+            {cities.map(renderCity)}
+            {/* Keep manual entry, status and attribution inside the same
+                browser-owned scroll surface as the directory results. */}
+            {cityListFooter}
+          </ScrollView>
+        ) : (
+          <FlatList
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            data={cities}
+            keyExtractor={(c) => String(c.geonameId)}
+            scrollEnabled
+            nestedScrollEnabled
+            showsVerticalScrollIndicator
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => renderCity(item)}
+            ListFooterComponent={cityListFooter}
+          />
+        )}
       </PickerSheet>
     </View>
   );
@@ -573,6 +672,7 @@ const styles = StyleSheet.create({
   },
   sheet: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: Platform.OS === 'web' ? 'rgba(15, 23, 42, 0.46)' : sheetBg,
     ...(Platform.OS === 'web'
       ? {
@@ -584,6 +684,7 @@ const styles = StyleSheet.create({
   },
   sheetPanel: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: Platform.OS === 'web' ? companyUi.surface : sheetBg,
     ...(Platform.OS === 'web'
       ? ({
@@ -648,6 +749,16 @@ const styles = StyleSheet.create({
   },
   list: {
     flex: 1,
+    minHeight: 0,
+    ...(Platform.OS === 'web'
+      ? ({
+          overflowY: 'auto',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+          WebkitOverflowScrolling: 'touch',
+          scrollbarGutter: 'stable',
+        } as any)
+      : {}),
   },
   listContent: {
     paddingBottom: spacing.md,

@@ -25,6 +25,7 @@ import {
 } from './supabaseMappers';
 import { documentRepositoryV2 } from './documentRepositoryV2';
 import { planLicenseRemoval, LicenseEntry } from '../../utils/licenseUpdatePlan';
+import { matchesTechnicianSearchIdentity } from '../../utils/technicianSearchFilterMatch';
 
 // `technician_type` (singular) NO se pide en ninguno de los dos SELECT desde
 // la Fase 6 tanda A: los tipos salen de `technician_profile_types` vía
@@ -153,21 +154,16 @@ function matchesAny<T>(selected: T[] | undefined, value: T | undefined): boolean
   return value !== undefined && selected.includes(value);
 }
 
-// Fase 6 tanda A: INTERSECCIÓN, no igualdad. Un técnico entra si comparte
-// AL MENOS UN tipo con los buscados — es la razón de ser de la tanda: quien
-// es aviónico y mecánico tiene que salir en las dos búsquedas. La igualdad
-// contra un único tipo era justo el portero que se retira.
-function intersects(selected: string[] | undefined, values: readonly string[]): boolean {
-  if (!selected || selected.length === 0) return true;
-  return selected.some((s) => values.includes(s));
-}
-
+// Oficios y localización catalogada comparten una función pura y probada:
+// oficios con OR, país por ISO y ciudad del directorio por GeoNames id.
 function matchesSearchFilters(
   preview: SafeTechnicianPreview,
   filters: {
     technicianTypes?: string[];
     licenseCodes?: string[];
     aircraftFamilyKeys?: string[];
+    countryCode?: string;
+    cityGeonameId?: number;
     country?: string;
     city?: string;
     verificationStatuses?: string[];
@@ -176,9 +172,7 @@ function matchesSearchFilters(
   },
   ratingIndex: AircraftRatingIndex,
 ): boolean {
-  if (!intersects(filters.technicianTypes, preview.technicianTypes)) return false;
-  if (filters.country && preview.country !== filters.country) return false;
-  if (filters.city && preview.city !== filters.city) return false;
+  if (!matchesTechnicianSearchIdentity(preview, filters)) return false;
   if (!matchesAny(filters.verificationStatuses, preview.verificationStatus)) return false;
   if (!matchesAny(filters.availabilityStatuses, preview.availability.status)) return false;
   if (filters.availableImmediately === true && !preview.availability.immediately) return false;
@@ -614,6 +608,8 @@ export const technicianRepositoryV2 = {
     technicianTypes?: string[];
     licenseCodes?: string[];
     aircraftFamilyKeys?: string[];
+    countryCode?: string;
+    cityGeonameId?: number;
     country?: string;
     city?: string;
     verificationStatuses?: string[];

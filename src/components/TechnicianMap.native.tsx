@@ -11,19 +11,27 @@ import {
   Alert,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { ArrowLeft, CheckCircle, Clock, Send, SlidersHorizontal } from 'lucide-react-native';
+import { CheckCircle, Clock, RotateCcw, Send, X } from 'lucide-react-native';
 import { SafeTechnicianView } from '../types';
 import { TechnicianHabilitation } from '../types/technician';
 import { MapFilters, MapFilterValue } from '../types/filters';
 import { MapOfferMatchOption } from '../types/mapOffers';
+import { TechnicianTypeCode } from '../types/catalog';
 import { colors, spacing } from '../theme';
 import { LICENSE_CATEGORIES } from '../constants/licenses';
 import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
-import { getFamilies } from '../constants/aircraftTypeRatingViews';
 import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
 import { resolveTypeRatingLabels } from '../utils/v2CompatAdapters';
+import { groupTechnicianMapMarkers } from '../utils/technicianMapMarkers';
 import { CollapsibleAircraftFilter } from './CollapsibleAircraftFilter';
+import {
+  TECHNICIAN_MAP_AVAILABILITY,
+  TechnicianMapHeader,
+  TechnicianMapLegend,
+} from './technician-map/TechnicianMapControls';
+import { techUi } from './technician/TechnicianUI';
 import { notify, confirmAction } from '../utils/platformAlert';
+import { technicianTypeLabel } from '../constants/technicianTypes';
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
@@ -34,6 +42,7 @@ export interface TechnicianMapProps {
   // labels for pins/popups instead of the flattened
   // technician.aircraftTypes family/legacy-code strings.
   habilitationsById: Record<string, TechnicianHabilitation[]>;
+  technicianTypesById: Record<string, TechnicianTypeCode[]>;
   filters: MapFilters;
   onFilterChange: (key: keyof MapFilters, value: MapFilterValue) => void;
   loading: boolean;
@@ -76,10 +85,21 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       left: 12px !important;
     }
 
-    .leaflet-popup-content { margin: 14px 16px !important; min-width: 200px; max-width: 240px; }
+    .leaflet-popup-content { margin: 14px 16px !important; min-width: 200px; max-width: 300px; }
     .leaflet-popup-tip-container { display: none; }
     .leaflet-popup-close-button { top: 8px !important; right: 8px !important; font-size: 18px !important; color: #94A3B8 !important; }
     .leaflet-control-attribution { font-size: 8px !important; }
+    .technician-marker-count.leaflet-tooltip {
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      color: #FFFFFF;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .technician-marker-count.leaflet-tooltip:before { display: none; }
   </style>
 </head>
 <body>
@@ -97,8 +117,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     post("html-started");
 
     var AVAIL = {
-      available:      { hex: '#10B981', bg: 'rgba(16,185,129,0.12)', br: 'rgba(16,185,129,0.3)' },
-      open_to_offers: { hex: '#00B4D8', bg: 'rgba(0,180,216,0.12)',  br: 'rgba(0,180,216,0.3)' },
+      open_to_offers: { hex: '#10B981', bg: 'rgba(16,185,129,0.12)', br: 'rgba(16,185,129,0.3)' },
       unavailable:    { hex: '#94A3B8', bg: 'rgba(148,163,184,0.12)',br: 'rgba(148,163,184,0.3)' },
     };
     var VERIF = {
@@ -122,6 +141,9 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     function buildPopup(m) {
       var ac = AVAIL[m.availability] || AVAIL.unavailable;
       var vc = VERIF[m.verificationStatus] || VERIF.pending;
+      var trades = (m.tradeLabels || []).map(function(label) {
+        return '<span style="display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#E0F2FE;color:#075985;border:1px solid #7DD3FC;margin:0 3px 3px 0;">'+escHtml(label)+'</span>';
+      }).join('');
       var licenses = (m.licenseCategories || []).map(function(l) {
         return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(10,22,40,0.07);color:#1E3A5F;border:1px solid rgba(10,22,40,0.15);margin:0 3px 3px 0;">'+escHtml(l)+'</span>';
       }).join('');
@@ -134,10 +156,26 @@ const LEAFLET_HTML = `<!DOCTYPE html>
       return '<div>' +
         '<div style="font-weight:700;font-size:15px;color:#1A2332;margin-bottom:2px;">'+escHtml(m.displayName || m.anonymousCode)+'</div>' +
         '<div style="font-size:12px;color:#475569;margin-bottom:8px;">'+escHtml(m.city)+', '+escHtml(m.country)+(m.baseAirport?' &bull; '+escHtml(m.baseAirport):'')+' &bull; '+escHtml(String(m.yearsExperience))+' yrs exp</div>' +
+        (trades ? '<div style="margin-bottom:7px;">'+trades+'</div>' : '<div style="font-size:11px;color:#64748B;margin-bottom:8px;">Trade not specified</div>') +
         '<div style="margin-bottom:8px;">'+chip(availLabel(m.availability),ac)+chip(m.verificationStatus,vc)+'</div>' +
         (licenses ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Licenses</div><div style="margin-bottom:8px;">'+licenses+'</div>' : '') +
         (typeRatings ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Type ratings</div><div style="font-size:12px;color:#475569;margin-bottom:6px;">'+typeRatings+'</div>' : '') +
         profileButton + sendButton +
+      '</div>';
+    }
+
+    function buildGroupPopup(group) {
+      var members = Array.isArray(group.technicians) ? group.technicians : [];
+      if (members.length === 1) return buildPopup(members[0]);
+
+      var cards = members.map(function(m, index) {
+        var divider = index === 0 ? '' : 'border-top:1px solid #E2E8F0;padding-top:12px;margin-top:12px;';
+        return '<div style="'+divider+'">'+buildPopup(m)+'</div>';
+      }).join('');
+
+      return '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">' +
+        '<div style="color:#1A2332;font-size:16px;font-weight:800;margin-bottom:8px;">'+members.length+' technicians at this map point</div>' +
+        '<div style="max-height:320px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:3px;">'+cards+'</div>' +
       '</div>';
     }
 
@@ -146,22 +184,36 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         markersLayer.clearLayers();
         var bounds = [];
         var added = 0;
-        arr.forEach(function(m) {
-          var lat = Number(m.latitude);
-          var lng = Number(m.longitude);
-          if (!m.anonymousCode || isNaN(lat) || isNaN(lng) || !isFinite(lat) || !isFinite(lng)) {
-            post("invalid-coordinates:" + (m.anonymousCode || "unknown"));
+        arr.forEach(function(group) {
+          var lat = Number(group.latitude);
+          var lng = Number(group.longitude);
+          var members = Array.isArray(group.technicians) ? group.technicians : [];
+          if (members.length === 0 || isNaN(lat) || isNaN(lng) || !isFinite(lat) || !isFinite(lng)) {
+            post("invalid-marker-group:" + (group.key || "unknown"));
             return;
           }
-          var ac = AVAIL[m.availability] || AVAIL.unavailable;
+          var isGroup = members.length > 1;
+          var isApproximate = group.locationPrecision !== 'city';
+          var ac = AVAIL[members[0].availability] || AVAIL.unavailable;
           var circle = L.circleMarker([lat, lng], {
-            radius: 10,
-            fillColor: ac.hex,
-            color: '#ffffff',
-            fillOpacity: 0.9,
-            weight: 2.5,
+            radius: isGroup ? 22 : (isApproximate ? 12 : 10),
+            fillColor: isGroup ? '#0A1628' : ac.hex,
+            color: isApproximate && !isGroup ? '#0A1628' : '#ffffff',
+            fillOpacity: isGroup ? 0.92 : (isApproximate ? 0.34 : 0.9),
+            weight: isApproximate ? 3 : 2.5,
+            dashArray: isApproximate ? '4 3' : null,
           });
-          circle.bindPopup(buildPopup(m), { maxWidth: 260, closeButton: true });
+          if (isGroup) {
+            circle.bindTooltip(String(members.length), {
+              permanent: true,
+              direction: 'center',
+              className: 'technician-marker-count',
+              opacity: 1,
+            });
+          } else if (isApproximate) {
+            circle.bindTooltip('Approximate country location', { direction: 'top' });
+          }
+          circle.bindPopup(buildGroupPopup(group), { maxWidth: isGroup ? 320 : 260, closeButton: true });
           circle.addTo(markersLayer);
           bounds.push([lat, lng]);
           added++;
@@ -278,10 +330,6 @@ function activeFilterCount(f: MapFilters): number {
   );
 }
 
-function optionLabel(options: readonly { value: string; label: string }[], value: string): string {
-  return options.find((option) => option.value === value)?.label ?? value;
-}
-
 function hasMapCoordinates(t: SafeTechnicianView): boolean {
   return Number.isFinite(Number(t.latitude)) && Number.isFinite(Number(t.longitude));
 }
@@ -302,6 +350,8 @@ function FilterChip({
       style={[styles.filterChip, selected && styles.filterChipActive]}
       onPress={onPress}
       activeOpacity={0.75}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: selected }}
     >
       <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
         {label}
@@ -321,10 +371,7 @@ const VERIFICATION_OPTIONS = [
 // Dos estados desde 2026-07-29 — ver la nota gemela en
 // TechnicianMapLeafletImpl.tsx. Las dos implementaciones del mapa ofrecen las
 // mismas opciones por construcción.
-const AVAILABILITY_OPTIONS = [
-  { value: 'open_to_offers', label: 'Open to offers' },
-  { value: 'unavailable', label: 'Unavailable' },
-] as const;
+const AVAILABILITY_OPTIONS = TECHNICIAN_MAP_AVAILABILITY.map(({ value, label }) => ({ value, label }));
 
 interface FilterSheetProps {
   visible: boolean;
@@ -362,29 +409,40 @@ function FilterSheet({ visible, filters, onFilterChange, onClose }: FilterSheetP
   const hasFilters = activeFilterCount(filters) > 0;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={onClose} />
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      <TouchableOpacity
+        accessibilityLabel="Close filters"
+        style={styles.sheetOverlay}
+        activeOpacity={1}
+        onPress={onClose}
+      />
       <View style={styles.sheet}>
         <View style={styles.sheetHandle} />
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>Filter Technicians</Text>
-          <View style={styles.sheetHeaderRight}>
-            {hasFilters && (
-              <TouchableOpacity onPress={clearAll} style={styles.clearAllBtn}>
-                <Text style={styles.clearAllText}>Clear all</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <Text style={styles.closeBtnText}>Done</Text>
-            </TouchableOpacity>
+          <View style={styles.sheetTitleBlock}>
+            <Text style={styles.sheetTitle}>Filter technicians</Text>
+            <Text style={styles.sheetSubtitle}>
+              Match any option within a section and every active section.
+            </Text>
           </View>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Close filters"
+            activeOpacity={0.75}
+            onPress={onClose}
+            style={styles.sheetClose}
+          >
+            <X color={techUi.text} size={20} strokeWidth={2.3} />
+          </TouchableOpacity>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} style={styles.sheetScroll}>
-          <Text style={styles.sheetHelper}>
-            Select multiple options in each group. Results combine all active groups.
-          </Text>
-
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
           <Text style={styles.sheetSectionLabel}>License Category</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.chipRow}>
@@ -430,6 +488,27 @@ function FilterSheet({ visible, filters, onFilterChange, onClose }: FilterSheetP
             />
           </View>
         </ScrollView>
+
+        <View style={styles.sheetFooter}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            activeOpacity={0.75}
+            disabled={!hasFilters}
+            onPress={clearAll}
+            style={[styles.resetButton, !hasFilters && styles.buttonDisabled]}
+          >
+            <RotateCcw color={techUi.textSoft} size={17} strokeWidth={2.2} />
+            <Text style={styles.resetButtonText}>Reset</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            activeOpacity={0.75}
+            onPress={onClose}
+            style={styles.showButton}
+          >
+            <Text style={styles.showButtonText}>Show technicians</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
@@ -559,6 +638,7 @@ function OfferSelectionSheet({
 export function TechnicianMap({
   technicians,
   habilitationsById,
+  technicianTypesById,
   filters,
   onFilterChange,
   loading,
@@ -581,24 +661,26 @@ export function TechnicianMap({
 
   const { ratings } = useAircraftTypeRatingsCatalog();
   const ratingIndex = useMemo(() => buildAircraftRatingIndex(ratings), [ratings]);
-  const familyByKey = useMemo(() => new Map(getFamilies(ratings).map((f) => [f.key, f])), [ratings]);
 
   const markerPayload = useMemo(
     () =>
-      technicians
-        .filter(hasMapCoordinates)
-        .map((t) => ({
+      groupTechnicianMapMarkers(technicians.filter(hasMapCoordinates)).map((group) => ({
+        key: group.key,
+        latitude: group.latitude,
+        longitude: group.longitude,
+        locationPrecision: group.locationPrecision,
+        technicians: group.technicians.map((t) => ({
           id: t.id,
           anonymousCode: t.anonymousCode,
           displayName: t.fullName,
           profileUnlocked: Boolean(t.fullName),
-          latitude: Number(t.latitude),
-          longitude: Number(t.longitude),
+          locationPrecision: t.locationPrecision,
           baseAirport: t.baseAirport,
           city: t.city,
           country: t.country,
           licenseCategories: t.licenseCategories,
           typeRatings: resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex),
+          tradeLabels: (technicianTypesById[t.id] ?? []).map(technicianTypeLabel),
           // `specialties` se quito del payload el 2026-07-29: el campo no tiene
           // almacenamiento (siempre []) y la plantilla HTML inyectada nunca lo
           // leyo. Ver app/technician/profile.tsx.
@@ -607,7 +689,8 @@ export function TechnicianMap({
           availability: t.availability.status,
           matchingScore: t.matchingScore,
         })),
-    [technicians, habilitationsById, ratingIndex],
+      })),
+    [technicians, habilitationsById, technicianTypesById, ratingIndex],
   );
 
   useEffect(() => {
@@ -619,33 +702,6 @@ export function TechnicianMap({
   }, [markerPayload, mapReady]);
 
   const filterCount = activeFilterCount(filters);
-  const selectedLicenses = selectedFilterValues(filters, 'licenseCategories');
-  const selectedAircraft = selectedFilterValues(filters, 'aircraftFamilyKeys');
-  const selectedVerification = selectedFilterValues(filters, 'verificationStatuses');
-  const selectedAvailability = selectedFilterValues(filters, 'availabilityStatuses');
-  const activeChips = [
-    ...selectedLicenses.map((value) => ({ key: 'licenseCategories' as const, value, label: value })),
-    ...selectedVerification.map((value) => ({
-      key: 'verificationStatuses' as const,
-      value,
-      label: optionLabel(VERIFICATION_OPTIONS, value),
-    })),
-    ...selectedAvailability.map((value) => ({
-      key: 'availabilityStatuses' as const,
-      value,
-      label: optionLabel(AVAILABILITY_OPTIONS, value),
-    })),
-    ...selectedAircraft.map((value) => ({
-      key: 'aircraftFamilyKeys' as const,
-      value,
-      label: familyByKey.get(value)?.displayName ?? value,
-    })),
-  ];
-
-  function removeFilterValue(key: MultiFilterKey, value: string) {
-    const next = selectedFilterValues(filters, key).filter((item) => item !== value);
-    onFilterChange(key, next.length > 0 ? next : undefined);
-  }
 
   const selectedOfferTechnician = selectedOfferTechId
     ? technicians.find((technician) => technician.id === selectedOfferTechId) ?? null
@@ -713,93 +769,15 @@ export function TechnicianMap({
         />
       </View>
 
-      {/* Filter button + count pill */}
-      <View style={styles.topOverlay}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={onBack}
-          activeOpacity={0.78}
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-        >
-          <ArrowLeft color={colors.navy} size={17} strokeWidth={2.3} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.filterBtn}
-          onPress={() => setFilterSheetOpen(true)}
-          activeOpacity={0.85}
-        >
-          <SlidersHorizontal color={colors.navy} size={17} strokeWidth={2.2} />
-          <Text style={styles.filterBtnText}>Filters</Text>
-          {filterCount > 0 ? (
-            <View style={styles.filterBadge}>
-              <Text style={styles.filterBadgeText}>{filterCount}</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
+      <TechnicianMapHeader
+        visibleCount={technicians.length}
+        filterCount={filterCount}
+        loading={loading}
+        onBack={onBack}
+        onOpenFilters={() => setFilterSheetOpen(true)}
+      />
 
-        <View style={styles.countPill}>
-          {loading ? (
-            <ActivityIndicator color={colors.navy} size="small" />
-          ) : (
-            <>
-              <Text style={styles.countNumber}>{technicians.length}</Text>
-              <Text style={styles.countLabel}>{technicians.length === 1 ? 'result' : 'results'}</Text>
-            </>
-          )}
-        </View>
-      </View>
-
-      {/* Active filter chips */}
-      {filterCount > 0 && (
-        <View style={styles.activeFiltersOverlay}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.activeFiltersRow}
-          >
-            {activeChips.map((chip) => (
-              <TouchableOpacity
-                key={`${chip.key}-${chip.value}`}
-                style={styles.activeChip}
-                onPress={() => removeFilterValue(chip.key, chip.value)}
-              >
-                <Text style={styles.activeChipText}>{chip.label} x</Text>
-              </TouchableOpacity>
-            ))}
-            {filters.licenseCategory && (
-              <TouchableOpacity
-                style={styles.activeChip}
-                onPress={() => onFilterChange('licenseCategory', undefined)}
-              >
-                <Text style={styles.activeChipText}>{filters.licenseCategory} ×</Text>
-              </TouchableOpacity>
-            )}
-            {filters.verificationStatus && (
-              <TouchableOpacity
-                style={styles.activeChip}
-                onPress={() => onFilterChange('verificationStatus', undefined)}
-              >
-                <Text style={styles.activeChipText}>{filters.verificationStatus} ×</Text>
-              </TouchableOpacity>
-            )}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Legend */}
-      <View style={styles.legend}>
-        {[
-          { color: colors.success, label: 'Available' },
-          { color: colors.technician, label: 'Open to offers' },
-          { color: colors.textMuted, label: 'Unavailable' },
-        ].map(({ color, label }) => (
-          <View key={label} style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: color }]} />
-            <Text style={styles.legendText}>{label}</Text>
-          </View>
-        ))}
-      </View>
+      {!loading && markerPayload.length > 0 ? <TechnicianMapLegend /> : null}
 
       {/* Filter sheet */}
       <FilterSheet
@@ -983,38 +961,59 @@ const styles = StyleSheet.create({
   },
 
   sheetOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(10,21,32,0.46)',
   },
   sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    maxHeight: '75%',
-    paddingBottom: Platform.OS === 'ios' ? 34 : spacing.lg,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '86%',
+    maxWidth: 620,
+    alignSelf: 'center',
+    backgroundColor: techUi.surface,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingTop: 8,
+    overflow: 'hidden',
   },
   sheetHandle: {
-    width: 36,
+    width: 42,
     height: 4,
-    backgroundColor: colors.border,
+    backgroundColor: techUi.border,
     borderRadius: 2,
     alignSelf: 'center',
-    marginTop: spacing.sm,
-    marginBottom: spacing.sm,
+    marginBottom: 6,
   },
   sheetHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: spacing.md,
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight,
+    paddingVertical: spacing.sm,
   },
+  sheetTitleBlock: { flex: 1, minWidth: 0 },
   sheetTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.text,
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '800',
+    color: techUi.text,
+  },
+  sheetSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: techUi.textMuted,
+  },
+  sheetClose: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: techUi.surfaceSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sheetHeaderRight: {
     flexDirection: 'row',
@@ -1054,8 +1053,44 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   sheetScroll: {
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
   },
+  sheetFooter: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: Platform.OS === 'ios' ? 34 : spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: techUi.borderSoft,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    backgroundColor: techUi.surface,
+  },
+  resetButton: {
+    minWidth: 112,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: techUi.border,
+    backgroundColor: techUi.surfaceSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+  },
+  resetButtonText: { color: techUi.textSoft, fontSize: 13, fontWeight: '800' },
+  showButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: techUi.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  showButtonText: { color: colors.white, fontSize: 13, fontWeight: '800' },
+  buttonDisabled: { opacity: 0.42 },
   offerLoadingRow: {
     minHeight: 96,
     alignItems: 'center',
@@ -1178,8 +1213,8 @@ const styles = StyleSheet.create({
   },
   sheetSectionLabel: {
     fontSize: 11,
-    fontWeight: '700',
-    color: colors.textMuted,
+    fontWeight: '800',
+    color: techUi.textMuted,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: spacing.sm,
@@ -1201,23 +1236,23 @@ const styles = StyleSheet.create({
   },
   filterChip: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
+    paddingVertical: 9,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.surfaceSoft,
   },
   filterChipActive: {
-    backgroundColor: colors.navy,
-    borderColor: colors.navy,
+    backgroundColor: techUi.accentSoft,
+    borderColor: techUi.accent,
   },
   filterChipText: {
     fontSize: 12,
-    fontWeight: '500',
-    color: colors.textSecondary,
+    fontWeight: '700',
+    color: techUi.textSoft,
   },
   filterChipTextActive: {
-    color: colors.white,
-    fontWeight: '600',
+    color: techUi.accent,
+    fontWeight: '800',
   },
 });

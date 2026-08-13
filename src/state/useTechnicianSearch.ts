@@ -82,16 +82,25 @@ export function useTechnicianSearch(): UseTechnicianSearchReturn {
       setLoading(true);
       setHasSearched(true);
 
-      // Map V1 TechnicianFilters (single-select UI) → V2 search params
-      // (array-based — technicianRepositoryV2.search() takes arrays for
-      // every multi-value dimension, single UI selections just wrap in a
-      // 1-element array; the map screen's own multi-select filters pass
-      // their arrays straight through to the same signature).
+      // Normalize the screen state into the repository contract. The trade
+      // and aircraft dimensions already arrive as arrays; legacy singular
+      // filters such as license and availability are wrapped here.
       const v2Filters = {
+        technicianTypes: filters.technicianTypes?.length ? filters.technicianTypes : undefined,
         licenseCodes: filters.licenseCategory ? [filters.licenseCategory] : undefined,
         aircraftFamilyKeys: filters.aircraftFamilyKeys?.length ? filters.aircraftFamilyKeys : undefined,
-        country: filters.country ?? undefined,
-        city: filters.city ?? undefined,
+        countryCode: filters.location?.country?.code,
+        cityGeonameId: filters.location?.city?.kind === 'directory'
+          ? filters.location.city.geonameId
+          : undefined,
+        // Manual cities have no stable directory id. Legacy string filters
+        // remain as a compatibility fallback for older callers.
+        country: filters.location?.country ? undefined : filters.country,
+        city: filters.location?.city?.kind === 'manual'
+          ? filters.location.city.name
+          : filters.location
+            ? undefined
+            : filters.city,
         verificationStatuses: filters.verificationStatus ? [filters.verificationStatus] : undefined,
         availabilityStatuses: filters.availabilityStatus ? [filters.availabilityStatus as AvailabilityStatus] : undefined,
       };
