@@ -423,25 +423,34 @@ alcance real de esta fase.
    - JSON seeds huérfanos de src/data/seeds/ confirmados sin consumidores
    - Docs obsoletos de docs/ → ARCHIVAR en docs/archive/, no borrar
    - ts-prune o similar para exports muertos
-   - **Bloque de la Fase 6 tanda C (10/08/2026), verificado por grep sin ni
-     un llamador vivo.** Los cuatro se van juntos o no se va ninguno: son
-     una sola cadena, `requires_license` -> `isLicensedTechnicianType` ->
-     `offerTargetsLicensedProfiles` -> (nadie).
-     - `isLicensedTechnicianType` (src/constants/technicianTypes.ts)
-     - `offerTargetsLicensedProfiles` (idem)
-     - `TechnicianTypeCatalog.requiresLicense` (src/types/catalog.ts) — su
-       único lector era `isLicensedTechnicianType`
-     - `technician_types.requires_license` **la columna en Postgres**
-       (verificada en vivo, existe). Al caer el campo del tipo TS la columna
-       se queda sin ningún lector; dropearla o no es decisión de este
-       barrido, pero tiene que decidirse aquí y no quedarse olvidada como
-       una tercera fuente de verdad sin dueño.
+   - **Bloque de la Fase 6 tanda C (10/08/2026) — REDUCIDO EL 13/08/2026 A UN
+     SOLO EXPORT.** Se anotó como una cadena de cuatro
+     (`requires_license` -> `isLicensedTechnicianType` ->
+     `offerTargetsLicensedProfiles` -> nadie) y la cadena se ha partido: tres
+     de los cuatro eslabones VOLVIERON A TENER LECTORES.
+     - ~~`isLicensedTechnicianType`~~ **FUERA DE LA LISTA**: el formulario de
+       oferta decide con él si la pregunta "¿hace falta licencia?" existe
+       siquiera (chapa, pintura y composite no tienen eje Part-66 que pedir),
+       y `licensesSelectableForOfferType` (src/constants/licenses.ts) hace con
+       él el mismo corte sobre la lista de licencias.
+     - ~~`TechnicianTypeCatalog.requiresLicense`~~ y
+       ~~`technician_types.requires_license`~~ **FUERA**, arrastradas por lo
+       anterior: vuelven a tener lector.
+     - `offerTargetsLicensedProfiles` (src/constants/technicianTypes.ts) —
+       lo ÚNICO que sigue en pie aquí, y ya no arrastra a nadie al caer. La
+       pregunta que respondía — "¿esta oferta tiene eje Part-66?" — la
+       contesta desde la tanda C `offers.requires_certification`. Sus dos
+       tests siguen verdes marcados `[SIN CONSUMIDORES]` en
+       scripts/testMatching.ts: consérvalos hasta el barrido, bórralos con
+       ella.
 
-     La pregunta que respondía toda la cadena — "¿esta oferta tiene eje
-     Part-66?" — la contesta desde la tanda C `offers.requires_certification`.
-     Sus tests siguen verdes marcados `[SIN CONSUMIDORES]` en
-     scripts/testMatching.ts: consérvalos hasta el barrido, borralos con la
-     cadena.
+     La lección para el barrido: `isLicensedTechnicianType` respondía "¿este
+     OFICIO tiene licencias?", que es propiedad del oficio y siempre fue
+     cierta; sólo se quedó sin lectores porque el consumidor que le tocaba
+     —el formulario de oferta— aún no existía. `offerTargetsLicensedProfiles`
+     respondía "¿esta OFERTA exige licencia?", que es decisión de la empresa y
+     nunca debió deducirse del oficio. Quedarse sin lectores no significa lo
+     mismo en los dos casos.
    - **Bloque de la Fase 6 tanda D (10/08/2026), verificado por grep.**
      - `RequirementLevel` (src/types/catalog.ts) — sus cuatro imports ya se
        retiraron al corregir la tanda; el tipo se quedó sin usos. Muere con
@@ -2722,6 +2731,12 @@ siendo "avionic" → B1.3 entra, B2 no). "Keep them" es respuesta legítima: un
 técnico PUEDE tener licencias sin el tipo marcado, y como el score no depende
 del tipo, no falsea nada.
 
+⚠⚠ **SUPERADO EL 13/08/2026** — todo lo que sigue hasta el bloque "Sin tocar"
+describe un estado que ya no existe: el diálogo de licencias huérfanas se
+retiró entero y el mapa SÍ es hoy una invariante. Ver la sección final
+"Fase 8 — La licencia decide el oficio". Se conserva porque explica por qué el
+reparto de ramas es el que es, y ese reparto no ha cambiado.
+
 ⚠ `LICENSES_BY_TECHNICIAN_TYPE` es **heurística de UI, no invariante**. Cada
 código tiene su rama menos uno:
 
@@ -3201,3 +3216,160 @@ consulta exacta que lo decide:
       AND NOT (raw_user_meta_data ? 'location_country_code');
 
 En cuanto dé 0, se van juntos. Antes no.
+
+## Fase 8 — La licencia decide el oficio (13/08/2026)
+
+El oficio de un técnico se decía en DOS sitios que podían contradecirse: la
+casilla que marcó al registrarse y las licencias que declaró. En la base había
+tres perfiles con casilla de aviónico y licencias de mecánico.
+
+Mientras el tipo no puntuaba, la contradicción era inofensiva — y así está
+escrito, con todas las letras, en la Fase 6 tanda A: `LICENSES_BY_TECHNICIAN_TYPE`
+era "heurística de UI, JAMÁS una invariante", y un técnico con licencia sin el
+tipo marcado era "un estado VÁLIDO". Desde el techo por tipo de perfil (commit
+5193b27) el tipo SÍ mueve el score, así que la misma contradicción pasó a
+decidir puntuaciones. Se elimina en origen en vez de arbitrarla.
+
+**La dirección es licencia → casilla, y sólo ésa.** El técnico sigue pudiendo
+declarar CUALQUIER licencia: la lista de chips del perfil no se filtra por
+nada. Lo que cambia es que la casilla implicada se marca sola y se bloquea.
+
+### Tanda A — el mapa pasa a invariante
+
+`LICENSES_BY_TECHNICIAN_TYPE` conserva los mismos valores y cambia de estatus.
+Puede ser invariante porque el reparto no es criterio nuestro: B1.x es rama
+mecánica y B2/B2L aviónica **por definición Part-66**. La `C` sigue fuera del
+mapa por el motivo de siempre — la sostienen tanto perfiles B1 como B2, así
+que de ella no se deduce oficio.
+
+Dos funciones puras nuevas en `src/constants/licenses.ts`:
+
+- `typesImpliedByLicenses(codes)` — los tipos que esas licencias implican. La
+  `C` no implica ninguno; sin licencias, `[]`.
+- `licensesSelectableForOfferType(code)` — para el formulario de oferta: la
+  rama del oficio **más la `C`**, y `[]` para chapa/pintura/composite. La `C`
+  se añade AQUÍ y no dentro del mapa a propósito: allí significaría "esta
+  licencia dice que eres mecánico", que es falso; aquí significa "un puesto de
+  mantenimiento base lo puede ocupar un B1 o un B2", que es cierto.
+  Un tipo licenciado SIN rama declarada (hoy sólo `pilot`) devuelve el catálogo
+  entero, no `[]`: desconocer la rama es motivo para no restringir, nunca para
+  dejar un puesto licenciado sin ninguna licencia que pedir.
+
+Y una tercera, `typesAfterLicenseChange(...)`, que es la mecánica de la tanda B
+extraída para poder probarla: "quita los que implicaban las licencias de ANTES,
+pon los que implican las de AHORA". De ahí salen las dos propiedades que
+importan — los tipos manuales sobreviven, y ninguna licencia deja colgado el
+tipo de otra.
+
+### Tanda B — el perfil
+
+`findOrphanedLicenses`, su diálogo y sus cinco tests **desaparecen enteros**:
+ya no puede darse el caso que los motivaba. Un tipo implicado no se puede
+desmarcar, así que ninguna licencia puede quedar huérfana.
+
+- Chip implicado: marcado, atenuado y no desmarcable (`lockedCodes` en
+  `TechnicianTypeSelector`). Al tocarlo avisa DÓNDE se quita, por el mismo
+  criterio que el mínimo de uno: un chip que no responde parece la app rota.
+- `replaceProfileTypes` recibe ahora las licencias y **RECHAZA** —no completa—
+  un conjunto de tipos al que le falte alguno implicado. Mismo criterio que el
+  mínimo de un tipo, que ya lanzaba: completar en silencio escribiría algo
+  distinto de lo que el llamante pidió y respondería "guardado".
+- **Orden de guardado**: `replaceProfileTypes` corre ANTES de escribir las
+  licencias, así que recibe las que van a QUEDAR, no las que hay en la fila. Con
+  las de la fila, un guardado que reduce licencias se rechazaría a sí mismo.
+- `loadProfile` marca los implicados que la fila no traiga, sin ensuciar el
+  formulario. Es lo que repara las filas anteriores a esta invariante: sin ello,
+  la pantalla contradiría en el chip la regla que el guardado impone, y el
+  técnico se comería un error sin haber tocado nada.
+- Caso residual asumido: si `removeUnreferencedLicenses` no puede retirar una
+  licencia (habilitaciones vivas), su tipo ya se quitó de
+  `technician_profile_types`. La recarga lo vuelve a marcar y el siguiente
+  guardado lo repone. Sobra un tipo en pantalla, nunca falta una licencia.
+
+### Tanda C — la oferta
+
+- `RequiredLicensesSection` filtra por `licensesSelectableForOfferType`
+  **ADEMÁS** de por producto (migración 047). Los dos filtros, no uno: el
+  producto acota la célula, el oficio acota la rama.
+- Chapa, pintura y composite: la pregunta "¿hace falta licencia?" **no se
+  pinta**. No es responder "no", es que no hay nada que responder. Lo decide
+  `isLicensedTechnicianType`, que era justo el consumidor que le faltaba.
+- Cambiar el tipo arrastra la licencia, reutilizando la consecuencia que cada
+  pantalla ya define para esa transición, sin inventar una tercera:
+  a un oficio SIN licencia → como apagar el interruptor (tanda E): se va la
+  licencia y **las aeronaves se quedan**; a otro oficio licenciado que no la
+  admite → como `onSelectLicense`: se va con las aeronaves. Creando se repinta
+  sobre la marcha; editando se avisa.
+- `offerRepository` rechaza al escribir (create y update) una licencia fuera de
+  la rama del tipo, y `requiresCertification` en un oficio sin licencia. En
+  `update` la comprobación es sobre el estado RESULTANTE, no sobre el patch.
+
+### El CHECK en Postgres: DECIDIDO QUE NO (13/08/2026)
+
+Se propuso atar licencia↔tipo con un CHECK, al lado de
+`chk_offers_license_matches_certification` (migración 053), que ya ata
+licencia↔interruptor. **No se hace, y no por pereza:**
+
+El mapa licencia→rama vive en TypeScript (`LICENSES_BY_TECHNICIAN_TYPE`). Un
+CHECK tendría que repetir esa lista a mano en SQL, y entonces habría **dos
+verdades sobre la misma regla**. El día que una cambie —añadir una categoría,
+mover una rama— la otra se queda muda: nadie recibe un aviso, simplemente
+alguien deja de poder guardar una oferta perfectamente legítima y no hay
+forma de saber por qué desde la pantalla. Es exactamente el fallo que este
+documento persigue en su sección de "pares spec-TS / enforcer-BD con riesgo de
+deriva", y añadirle un par nuevo a sabiendas sería ir en contra.
+
+Las dos puertas que ya existen bastan para lo que hay: el formulario esconde
+lo que no aplica, y `offerRepository` rechaza en `create` y en `update` — que
+es donde pasa TODA escritura de ofertas de la app.
+
+**Si algún día hiciera falta de verdad**, la forma limpia NO es un CHECK: es
+una **columna de rama en el catálogo de licencias** (`license_categories`) con
+su FK, de la que TypeScript leyera en vez de declarar la suya. Eso sí deja una
+sola verdad, y encima en el sitio donde ya viven los códigos. Un CHECK con la
+lista escrita a mano no; sería una segunda copia disfrazada de garantía.
+
+### Tanda D — los datos (aplicados en vivo, sin migración: son de prueba)
+
+Tres INSERT en `technician_profile_types`, ninguna licencia borrada — la
+licencia es el dato fiable de los dos:
+
+| perfil | licencias | casilla previa | añadida |
+|---|---|---|---|
+| 6146de18 (TF0E8866C8) | A2, B1.1, B1.2 | avionic | mechanic |
+| 91c69d2c (T3FD8E0D5F) | B1.1, B1.3 | avionic | mechanic |
+| e057315a (TC0A47CC8A) | B1.3, B2 | mechanic | avionic |
+
+La casilla `avionic` sin B2 de los dos primeros se conserva: marcar un tipo a
+mano sigue siendo libre, lo que no se puede es desmarcar uno implicado.
+
+Borrada la oferta `c6cc91be` ("sss": `avionic` pidiendo B1.2 — la contradicción
+que la tanda C ya impide), con su fila hija de aeronave por cascada. Cero
+candidaturas y cero ofertas directas la referenciaban. Las dos ofertas
+restantes cumplen la regla nueva, así que ninguna queda inguardable.
+
+### Verificación
+
+`tsc` 0 · `test:matching` 168/168 (163 previos − 5 de huérfanas + 10 nuevos) ·
+`test:url-validation` PASS · `test:location` 43/43 ·
+`validate:aircraft-ratings` PASS (606 activas, 80/80) ·
+`validate:state-machine` PASS · `validate:auth-hooks` PASS.
+
+Prueba final sobre la oferta 5daef699 ("Sheet MW": chapista, sin certificar,
+sin aeronaves → `NO_REQUIREMENTS_WEIGHTS`, techo 75) con los datos corregidos:
+
+- **Mecánico → 19.** Los cinco perfiles con `mechanic` dan 19 clavados
+  (`PROFILE_TYPE_MISMATCH_CAP`), incluidos los tres recién corregidos.
+- **Chapista verificado → 60, y SE QUEDA ASÍ** (decidido el 13/08/2026). El 75
+  del encargo daba por supuesto el mismo país, y en los datos reales no lo es:
+  la oferta es de Estados Unidos y los tres chapistas vivos están en IT, BE y
+  AR, así que sacan 30 verificado + 30 contrato + **0 de localización**. Los 15
+  que faltan son exactamente el componente de país, y que falten es correcto.
+  Comprobado con un perfil hipotético idéntico pero en US: da 75 clavado.
+
+  **Lo que se valida aquí es la DISTANCIA entre los dos, no el número
+  absoluto**: 19 el mecánico contra 60 el chapista. Un oficio que no es el del
+  puesto tiene que quedar clarísimamente por debajo del que sí lo es, y con 41
+  puntos de separación lo está. No se toca el país de la oferta ni el del
+  técnico para cuadrar un número redondo: sería falsear el fixture hasta que dé
+  la respuesta esperada, que es justo lo contrario de una comprobación.
