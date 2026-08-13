@@ -3544,10 +3544,10 @@ para cuando algo lo consuma de verdad.
   confirma la aeronave") y volvería a aplicar si alguna rama futura puntúa la
   aeronave ahí.
 
-### Los dos tests de la rama vieja
+### Los tres tests de la rama vieja
 
-Los dos afirmaban el comportamiento que esta fase declara incorrecto. Uno se
-reescribe y el otro se borra, y la diferencia entre ambos casos importa:
+Los tres afirmaban, o dejaron de afirmar, algo que esta fase cambia. Uno se
+reescribe y dos se borran, y la diferencia entre los casos importa:
 
 1. **Reescrito** — `Fase 5 — a license-only requirement scores at the category
    fraction`. **Su sujeto sigue siendo válido**: cómo reparte una oferta que
@@ -3560,6 +3560,35 @@ reescribe y el otro se borra, y la diferencia entre ambos casos importa:
    79 por casualidad aritmética. Un test cuya invariante desapareció parece
    cobertura sin serlo, que es peor que no tenerlo. Lo que su fixture demuestra
    ahora lo cubren los tests de la escalera, y allí es la afirmación principal.
+3. **Borrado, sin sustituto** — `Fase 5 — holding the category alone stays far
+   below a confirmed exact rating`. Su aserción quedó en `45 > 0 * 3`,
+   trivialmente cierta desde que la rama de sólo-licencia paga 0 en
+   habilitación. Su propiedad sigue fijada y con un fixture que la dice mejor
+   —la MISMA oferta y el MISMO técnico salvo por el rating—: el 39 en el test de
+   la trampa, el 100 en el primer escalón de la escalera. Comparar dos ofertas
+   distintas nunca fue la forma de decirlo.
+
+### El patrón, y el criterio para los tests que vengan
+
+**Los tres se vaciaron por lo mismo: estaban escritos contra NÚMEROS.** 13, 20,
+79, `45 > 0 * 3`. Un cambio de pesos los deja mudos —o trivialmente ciertos— sin
+que nadie se entere, porque un test que pasa no avisa de nada: sigue en verde
+mientras la propiedad que se creía cubierta ya no la comprueba nadie. Los dos
+peores casos ni siquiera fallaron al cambiar los pesos; el de `BROAD_ONLY_CAP`
+llevaba desde la tanda E pasando por casualidad aritmética.
+
+Los tests de la escalera están escritos como **PROPIEDAD**: "bajar la exigencia
+nunca sube el porcentaje", "las tres ramas que piden algo topan igual", "la
+diferencia entre dentro y fuera del país es exactamente el peso de
+localización", "el bloque de cualificación suma 65 se reparta como se reparta".
+Sobreviven a cualquier reajuste de pesos, y si algún día uno deja de valer, es
+que la decisión cambió — que es justo cuando un test debe hablar.
+
+**Criterio para lo que se escriba después de esta fase**: el número va en la
+aserción sólo cuando el número ES la decisión (los cuatro escalones 100/100/100/75
+lo son, y por eso están fijados literales). Todo lo demás se escribe contra
+`getMatchScoreWeights(offer)` o como relación entre dos resultados, nunca contra
+una constante copiada a mano.
 
 ### Verificación
 
@@ -3574,5 +3603,5 @@ NO tiene la licencia pedida sigue en 35 con su `missingRequirements` intacto; la
 trampa del tope por ambos lados; y las cuatro tablas de pesos (65 / 65 / 65 / 0,
 y sumas 100 / 100 / 100 / 75).
 
-`tsc --noEmit` **0 errores** · `test:matching` **173/173** (168 previos + 6
-nuevos − 1 borrado; el reescrito no cambia el recuento).
+`tsc --noEmit` **0 errores** · `test:matching` **172/172** (168 previos + 6
+nuevos − 2 borrados; el reescrito no cambia el recuento).

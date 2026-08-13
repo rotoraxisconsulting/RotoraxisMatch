@@ -640,26 +640,18 @@ async function main() {
     );
   });
 
-  await test('Fase 5 — holding the category alone stays far below a confirmed exact rating for the same weight', () => {
-    // The ordering the mission's business principle demands, now that the
-    // approximate middle tier is gone: category-only (0.29) must never come
-    // close to an exact rating (1.0) on the habilitation axis.
-    const technician = makeTechnician({
-      licenses: [makeLicense('B1.1')],
-      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
-    });
-    const categoryOnly = calculateOfferTechnicianMatch(
-      makeOffer({ licenseCode: 'B1.1' }), technician, RATING_INDEX,
-    );
-    const exact = calculateOfferTechnicianMatch(
-      makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }), technician, RATING_INDEX,
-    );
-    assert.equal(exact.breakdown.habilitation, 45);
-    assert.ok(
-      exact.breakdown.habilitation > categoryOnly.breakdown.habilitation * 3,
-      `an exact rating must dominate a category-only match, got ${exact.breakdown.habilitation} vs ${categoryOnly.breakdown.habilitation}`,
-    );
-  });
+  // Fase 9 — AQUÍ VIVÍA 'Fase 5 — holding the category alone stays far below a
+  // confirmed exact rating for the same weight', y se BORRA por el mismo
+  // criterio que el de abajo: su aserción quedó en `45 > 0 * 3`, trivialmente
+  // cierta desde que la rama de sólo-licencia paga 0 en habilitación. Una
+  // aserción que ya no puede fallar ocupa el sitio de la cobertura sin darla.
+  //
+  // Su propiedad —tener la categoría sin el rating nunca alcanza al match
+  // exacto cuando la oferta nombra la aeronave— sigue fijada, y con un fixture
+  // que la dice mejor: la MISMA oferta y el MISMO técnico salvo por el rating.
+  // El 39 lo fija el test de la trampa del `zeroOnRequestedAxis`; el 100, el
+  // primer escalón de la escalera. Comparar dos ofertas DISTINTAS, como hacía
+  // este test, nunca fue la forma de decirlo.
 
   // Fase 9 — AQUÍ VIVÍA 'Fase 5.3 — a perfect broad-only match is capped below
   // Excellent (BROAD_ONLY_CAP), and says why', y se BORRA sin sustituto.
