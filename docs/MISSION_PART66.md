@@ -3467,6 +3467,72 @@ aeronave, el peso de licencia sería 0 y el tope caería siempre. **No existe** 
 NULL cuando el interruptor está apagado. Es la razón por la que este CHECK vale
 lo que cuesta.
 
+### Un candidato perfecto en oferta de sólo licencia SE LEE "Excellent match"
+
+Y es correcto. La empresa pidió un B1.1; el técnico tiene el B1.1, está
+verificado, acepta el contrato y está en el país. **Cumple todo lo que la oferta
+pide**, así que la oferta no tiene nada más que preguntarle. Que la pantalla
+diga "Excellent match" es exacto: no afirma que el técnico sea excelente, afirma
+que encaja en ESTA oferta, que es lo único que un score por par oferta+técnico
+puede afirmar.
+
+El principio completo de la fase, enunciado entero:
+
+> **Se llega a 100 cuando se confirma lo que la oferta pide, pida mucho o pida
+> poco. El techo baja a 75 sólo cuando la oferta no pide nada y por tanto no hay
+> nada que confirmar.**
+
+La lectura contraria —"pedir menos debería topar más bajo"— es la que producía
+el 68, y confunde dos cosas distintas: **lo exigente que es una oferta** (asunto
+de la empresa, que decide qué pide) con **lo bien que un técnico encaja en ella**
+(lo único que el porcentaje mide). Un técnico que ve dos ofertas seguidas en su
+lista no está comparando lo difíciles que son; está leyendo cuánto encaja en
+cada una.
+
+### T2 llega a 81, cruza "Excellent" y SE QUEDA ASÍ (13/08/2026)
+
+Un técnico con la licencia y un rating de la MISMA FAMILIA con otro motor (T2,
+`related_family`, 0,57) puntúa 15 + 26 + 20 + 15 + 5 = **81**, por encima del
+umbral de "Excellent" (≥80). Decidido: **no se toca.**
+
+- **T2 es un requisito cumplido de forma APROXIMADA, no incumplido.** Son cosas
+  distintas y ya tienen tratamientos distintos: para lo segundo existe
+  `INCOMPLETE_AIRCRAFT_SET_CAP`, que topa en 59 cuando la oferta exige todas sus
+  aeronaves y alguna no está. Aplicarle a T2 el trato del incumplimiento
+  borraría esa distinción.
+- **Las dos garantías escritas sobre T2 se siguen cumpliendo**: puntúa 0,57 en
+  vez de 1 —nunca es silenciosamente igual a un match exacto— y **siempre** emite
+  su aclaración "Same family, different engine: X vs Y". Quien lee un 81 lee
+  también de qué motor se trata.
+- **Un quinto peldaño en la escalera de topes para mover un número de 81 a 79
+  cuesta más de lo que aclara.** La escalera es la parte del scorer que más
+  cuesta razonar, y este tope existiría para una diferencia de dos puntos que
+  ninguna decisión de contratación toma.
+
+Esto **responde el hilo que dejó abierto la tanda E** al retirar
+`BROAD_ONLY_CAP`: allí quedó anotado "si algún día sube `legacy_category_only`,
+revisa si hace falta un techo para esa rama". La Fase 9 hace efectivamente eso
+—por peso, no por fracción— y la respuesta es no, ni para esa rama ni para T2.
+
+Conviene dejar dicho, porque el comentario retirado lo sugería y es falso: **ese
+tope nunca gobernó T2.** Se aplicaba a la rama ancha de categoría
+(`evaluateLicenseCategoryMatch`), no a `evaluateHabilitationRequirement`. La
+frase que se le atribuía —"sabes de la aeronave pero no lo has demostrado con
+papel"— sí describe a T2, pero el tope no era suyo ni lo alcanzaba.
+
+Y para que conste el estado de partida: **ningún comentario pedía que T2 no
+llegase a "Excellent" y ningún test fijaba el 81** — el único test de T2
+comprueba `> 0 && < 45` sobre la habilitación, sin banda. Los 81 no eran un
+descuido ni una decisión registrada; eran un resultado que nadie había decidido.
+Ahora sí lo está, y esta sección es esa decisión.
+
+### Pendiente, anotado y sin tocar
+
+`level` vale `'legacy'` en la rama de sólo-licencia, una etiqueta que ya no
+describe nada legado. **Ninguna UI lo lee**: sólo lo escribe el scorer y lo
+asertan los tests, así que renombrarlo hoy es ruido sin lector. Queda apuntado
+para cuando algo lo consuma de verdad.
+
 ### Lo que NO cambia
 
 - Las otras tres ramas de pesos, punto por punto.
@@ -3477,8 +3543,23 @@ lo que cuesta.
   conserva porque describe una evidencia real ("tiene la categoría, nada
   confirma la aeronave") y volvería a aplicar si alguna rama futura puntúa la
   aeronave ahí.
-- `level` sigue valiendo `'legacy'` en esta rama. Ninguna UI lo lee (sólo el
-  scorer lo escribe y los tests lo asertan), así que renombrarlo sería ruido.
+
+### Los dos tests de la rama vieja
+
+Los dos afirmaban el comportamiento que esta fase declara incorrecto. Uno se
+reescribe y el otro se borra, y la diferencia entre ambos casos importa:
+
+1. **Reescrito** — `Fase 5 — a license-only requirement scores at the category
+   fraction`. **Su sujeto sigue siendo válido**: cómo reparte una oferta que
+   sólo pide licencia. Lo que cambia es el reparto (13 + 20 → 0 + 65) y el
+   nombre, porque "at the category fraction" describe algo que ya no ocurre.
+2. **Borrado, sin sustituto** — `Fase 5.3 — a perfect broad-only match is capped
+   below Excellent (BROAD_ONLY_CAP)`. **Su invariante ya no existía**: el tope
+   se retiró en la tanda E por inalcanzable, así que desde entonces el test no
+   comprobaba ningún techo — pasaba porque el 68 del reparto viejo era menor que
+   79 por casualidad aritmética. Un test cuya invariante desapareció parece
+   cobertura sin serlo, que es peor que no tenerlo. Lo que su fixture demuestra
+   ahora lo cubren los tests de la escalera, y allí es la afirmación principal.
 
 ### Verificación
 
@@ -3493,46 +3574,5 @@ NO tiene la licencia pedida sigue en 35 con su `missingRequirements` intacto; la
 trampa del tope por ambos lados; y las cuatro tablas de pesos (65 / 65 / 65 / 0,
 y sumas 100 / 100 / 100 / 75).
 
-`tsc --noEmit` 0 errores · `test:matching` 174 pasan, **2 fallan** — ver abajo.
-
-### Los dos tests que la decisión invalida (PENDIENTE DE DECISIÓN)
-
-Ninguno se ha tocado. Los dos viven en la rama de sólo-licencia y **afirman el
-comportamiento que esta fase declara incorrecto**:
-
-1. `Fase 5 — a license-only requirement scores at the category fraction, with
-   its own clarification` — espera `habilitation === 13` y `license === 20`.
-   Ahora son 0 y 65. Es literalmente el reparto que la fase cambia.
-2. `Fase 5.3 — a perfect broad-only match is capped below Excellent
-   (BROAD_ONLY_CAP), and says why` — espera `total <= 79`. Ahora da 95 (100
-   menos localización, porque los fixtures están en países distintos). Su
-   sujeto, `BROAD_ONLY_CAP`, **ya no existe**: se retiró en la Fase 6 tanda E
-   por inalcanzable. Lo que el test seguía comprobando desde entonces era el
-   techo de 68 que producía el reparto viejo.
-
-### Duda abierta que NO se ha tocado — T2 llega a 81 y cruza "Excellent"
-
-Un técnico con licencia y un rating de la MISMA FAMILIA con otro motor (T2,
-`related_family`, 0,57) puntúa 15 + 26 + 20 + 15 + 5 = **81**, sobre el umbral de
-"Excellent" (≥80). Lo que dicen los comentarios del código, literalmente:
-
-- **`BROAD_ONLY_CAP` (79) ya no existe.** Se retiró en la Fase 6 tanda E, y el
-  comentario que documenta la retirada es explícito en que fue **por
-  inalcanzable, no por cambio de criterio**: el máximo de su rama era 68.
-- **Ese tope nunca gobernó T2.** Se aplicaba a la rama ancha de categoría
-  (`evaluateLicenseCategoryMatch`), no a `evaluateHabilitationRequirement`. El
-  mismo comentario corrige la atribución: la frase "sabes de la aeronave pero no
-  lo has demostrado con papel" describe a T2, pero el tope no era suyo.
-- **Ningún comentario dice que T2 no deba leerse como "Excellent".** El único
-  criterio escrito sobre T2 es que "nunca sea silenciosamente igual a un match
-  exacto": puntúa menos y siempre emite su aclaración "Same family, different
-  engine". Las dos cosas se cumplen.
-- **Ningún test fija el 81.** El único test de T2 comprueba `> 0 && < 45` sobre
-  la habilitación, sin banda.
-
-Es decir: los 81 no son ni un descuido ni una decisión registrada — son un
-resultado que nadie ha decidido. La retirada del tope dejó anotado "si algún día
-sube `legacy_category_only`, revisa si hace falta un techo para esa rama"; esta
-fase hace efectivamente eso (por peso, no por fracción) y responde "no hace
-falta techo, porque cumplir lo que la oferta pide vale 100". Para T2 la pregunta
-sigue abierta y la decide el usuario.
+`tsc --noEmit` **0 errores** · `test:matching` **173/173** (168 previos + 6
+nuevos − 1 borrado; el reescrito no cambia el recuento).

@@ -615,9 +615,16 @@ async function main() {
   // Fase 5 (2026-08-04) — the sibling test that asserted the
   // 'legacy_aircraft_confirmed' tier scored 26 (round(45 * 0.57)) is gone with
   // that tier: it could only ever be reached through requiredAircraftTypes.
-  // 0.29 below and BROAD_ONLY_CAP are deliberately unchanged.
+  // Fase 9: la mención a BROAD_ONLY_CAP que había aquí se cae con el propio
+  // tope, retirado en la tanda E. La fracción 0,29 sigue en el código y hoy
+  // multiplica a cero — ver el test siguiente.
 
-  await test('Fase 5 — a license-only requirement scores at the category fraction, with its own clarification', () => {
+  await test('Fase 9 — una oferta que sólo pide licencia paga el bloque de cualificación ENTERO en la licencia', () => {
+    // Mismo sujeto que el test de Fase 5 que sustituye —cómo reparte una
+    // oferta que sólo pide licencia—, otro reparto. Aquél se llamaba "at the
+    // category fraction" y esperaba 13 de 45: la aeronave que la oferta NUNCA
+    // pidió descontaba 32 puntos. Con LICENSE_ONLY_WEIGHTS no hay fracción que
+    // aplicar porque no hay eje de aeronave que puntuar.
     const licenseOnlyOffer = makeOffer({ licenseCode: 'B1.1' });
     const technician = makeTechnician({
       licenses: [makeLicense('B1.1')],
@@ -625,11 +632,11 @@ async function main() {
     });
     const licenseOnly = calculateOfferTechnicianMatch(licenseOnlyOffer, technician, RATING_INDEX);
     assert.equal(licenseOnly.level, 'legacy');
-    assert.equal(licenseOnly.breakdown.habilitation, 13, 'round(45 * 0.29) — BROAD_TIER_FRACTIONS.legacy_category_only');
-    assert.equal(licenseOnly.breakdown.license, 20);
+    assert.equal(licenseOnly.breakdown.habilitation, 0, 'sin aeronave nombrada no hay eje que puntuar NI que descontar');
+    assert.equal(licenseOnly.breakdown.license, 65, 'los 45 de habilitación, íntegros');
     assert.ok(
       licenseOnly.clarifications.includes('Category-only match — no specific aircraft requirement to verify.'),
-      'the reduced score must be explained, not appear as an unexplained number',
+      'la aclaración se mantiene: ya no explica un recorte, dice qué se ha comprobado y qué no',
     );
   });
 
@@ -654,23 +661,19 @@ async function main() {
     );
   });
 
-  await test('Fase 5.3 — a perfect broad-only match is capped below Excellent (BROAD_ONLY_CAP), and says why', () => {
-    const offer = makeOffer({
-      contractType: 'permanent',
-      minYearsExperience: 1,
-      licenseCode: 'B1.1',
-    });
-    const technician = makeTechnician({
-      verificationStatus: 'verified',
-      availability: { immediately: true, contractTypes: ['permanent'] },
-      licenses: [makeLicense('B1.1')],
-      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-a320-cfm56' })],
-    });
-    const result = calculateOfferTechnicianMatch(offer, technician, RATING_INDEX);
-    assert.ok(result.total <= 79, `a broad-only match must never reach Excellent, got ${result.total}`);
-    assert.notEqual(result.label, 'Excellent match');
-    assert.ok(result.clarifications.includes('Category-only match — no specific aircraft requirement to verify.'));
-  });
+  // Fase 9 — AQUÍ VIVÍA 'Fase 5.3 — a perfect broad-only match is capped below
+  // Excellent (BROAD_ONLY_CAP), and says why', y se BORRA sin sustituto.
+  //
+  // Su invariante dejó de existir en la tanda E, cuando se retiró
+  // BROAD_ONLY_CAP por inalcanzable. Desde entonces no comprobaba ningún tope:
+  // pasaba porque el 68 que producía el reparto viejo era menor que 79 por
+  // casualidad aritmética. Un test cuya invariante ya no existe parece
+  // cobertura sin serlo, que es peor que no tenerlo.
+  //
+  // Lo que su fixture demuestra AHORA —el candidato perfecto en una oferta de
+  // sólo licencia llega a 100 y se lee "Excellent"— lo cubren los tests de la
+  // escalera de la Fase 9, y allí es la afirmación principal, no un efecto
+  // colateral.
 
   await test('Fase 5.3 — applyScoreCeilings: most restrictive ceiling always wins, in any combination', () => {
     // `hasBlocker` joined this object when BLOCKER_CAP was added — the flags
@@ -1895,6 +1898,136 @@ async function main() {
     const suma = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
     assert.equal(result.total, suma, 'tener de más nunca resta: eso lo valora la empresa, no el algoritmo');
     assert.equal(result.total, 95, 'mismo 95 que sin sobrecualificación: la experiencia extra no suma ni resta');
+  });
+
+  // ── Fase 9: la escalera de exigencia es MONÓTONA ──────────────────────
+  //
+  // El hallazgo que abrió la fase: mismo técnico, mismo puesto, cuatro
+  // versiones de la oferta de más exigente a menos, medidas 100 / 68 / 100 /
+  // 75. Cumplir el 100% de lo que una oferta pedía puntuaba por DEBAJO de una
+  // oferta que no pedía nada, y las dos salen seguidas en la lista del técnico
+  // con su porcentaje al lado.
+  //
+  // El técnico "perfecto" de esta sección lo es en los cinco ejes a la vez
+  // (verificado, licencia + rating, contrato, mismo país, tipo de perfil): sin
+  // eso, un 100 no puede salir de ninguna rama y la escalera no se puede medir.
+  const PERFECTO_A320: Partial<TechnicianWithRelations> = {
+    verificationStatus: 'verified',
+    availability: { immediately: true, contractTypes: ['permanent'] },
+    locationCountryCode: 'XX', // el mismo país que makeOffer(), que por defecto no coincide
+    ...EXACT_A320,
+  };
+
+  await test('Fase 9 — la escalera de exigencia es monótona: 100 / 100 / 100 / 75', () => {
+    const tecnico = makeTechnician(PERFECTO_A320);
+    const escalera = [
+      { pide: 'licencia + aeronave', offer: makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }), esperado: 100 },
+      { pide: 'sólo licencia', offer: makeOffer(), esperado: 100 },
+      {
+        pide: 'sólo aeronave',
+        offer: makeOffer({ requiresCertification: false, licenseCode: undefined, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }),
+        esperado: 100,
+      },
+      { pide: 'nada', offer: makeOffer({ requiresCertification: false, licenseCode: undefined }), esperado: 75 },
+    ];
+
+    const totales = escalera.map(({ offer }) => calculateOfferTechnicianMatch(offer, tecnico, RATING_INDEX).total);
+    assert.deepEqual(totales, escalera.map((e) => e.esperado), `escalera medida: ${totales.join(' / ')}`);
+
+    // Y la PROPIEDAD, no sólo los cuatro números: bajar la exigencia nunca
+    // sube el porcentaje, y la única bajada está en el último escalón.
+    for (let i = 1; i < totales.length; i += 1) {
+      assert.ok(totales[i] <= totales[i - 1], `la escalera sube en el escalón ${i}: ${totales.join(' / ')}`);
+    }
+    assert.equal(new Set(totales.slice(0, 3)).size, 1, 'las tres ramas que piden algo topan igual');
+  });
+
+  await test('Fase 9 — candidato perfecto en oferta de sólo licencia: 100, y el bloque entero lo paga la licencia', () => {
+    const result = calculateOfferTechnicianMatch(makeOffer(), makeTechnician(PERFECTO_A320), RATING_INDEX);
+    assert.equal(result.breakdown.license, 65, 'los 45 de habilitación van ÍNTEGROS a licencia');
+    assert.equal(result.breakdown.habilitation, 0, 'la oferta no nombró aeronave: no hay eje de aeronave que puntuar');
+    const suma = Object.values(result.breakdown).reduce((a, b) => a + b, 0);
+    assert.equal(result.total, suma, 'ningún cap se aplica');
+    assert.equal(result.total, 100);
+    assert.equal(result.label, 'Excellent match');
+  });
+
+  await test('Fase 9 — el mismo candidato en otro país: 95, y la diferencia es EXACTAMENTE la ubicación', () => {
+    const offer = makeOffer();
+    const dentro = calculateOfferTechnicianMatch(offer, makeTechnician(PERFECTO_A320), RATING_INDEX);
+    const fuera = calculateOfferTechnicianMatch(
+      offer, makeTechnician({ ...PERFECTO_A320, locationCountryCode: 'ZZ' }), RATING_INDEX,
+    );
+    assert.equal(fuera.total, 95);
+    assert.equal(dentro.total - fuera.total, getMatchScoreWeights(offer).location, 'nada más del scorer se movió');
+  });
+
+  await test('Fase 9 — quien NO tiene la licencia pedida sigue en 35, con su missingRequirements intacto', () => {
+    // El otro extremo de la misma rama: subirle el techo al que cumple no
+    // puede subirle ni un punto al que no cumple. 15 verificado + 15 contrato
+    // + 5 país, con los dos topes (39 y 59) por encima sin llegar a morder.
+    const offer = makeOffer({ licenseCode: 'B1.1' });
+    const sinLicencia = makeTechnician({ ...PERFECTO_A320, licenses: [makeLicense('B2')], habilitations: [] });
+
+    const result = calculateOfferTechnicianMatch(offer, sinLicencia, RATING_INDEX);
+    assert.equal(result.breakdown.license, 0);
+    assert.equal(result.total, 35);
+    assert.equal(result.label, 'Weak match');
+    assert.deepEqual(result.missingRequirements, ['Required license: B1.1']);
+  });
+
+  await test('Fase 9 — LA TRAMPA: el tope de cero cualificación pregunta por el eje QUE LA OFERTA PIDE', () => {
+    // Con LICENSE_ONLY_WEIGHTS el peso de habilitación es 0, así que un
+    // `habilitation === 0` pelado se cumpliría SIEMPRE en esta rama y el tope
+    // de 39 caería sobre todo el mundo, candidato perfecto incluido: 100 → 39,
+    // peor que el 68 que la fase venía a arreglar. Este test existe para que
+    // nadie vuelva a escribirlo así.
+    const soloLicencia = calculateOfferTechnicianMatch(makeOffer(), makeTechnician(PERFECTO_A320), RATING_INDEX);
+    assert.equal(soloLicencia.breakdown.habilitation, 0, 'la premisa de la trampa: la fila vale 0');
+    assert.equal(soloLicencia.total, 100, 'y aun así no se topa en 39: el eje que la oferta pidió está cumplido');
+
+    // Y la regla que el tope EXISTE para defender, intacta: en una oferta que
+    // sí nombra aeronave, tener la licencia sin el rating sigue topado en 39.
+    const conAeronave = makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] });
+    const licenciaSinRating = makeTechnician({
+      ...PERFECTO_A320,
+      licenses: [makeLicense('B1.1')],
+      habilitations: [makeHab('B1.1', { aircraftTypeRatingId: 'fx-b777-ge90' })], // otro fabricante: ni T1 ni T2
+    });
+
+    const result = calculateOfferTechnicianMatch(conAeronave, licenciaSinRating, RATING_INDEX);
+    assert.equal(result.breakdown.habilitation, 0, 'no tiene el rating pedido ni uno de la misma familia');
+    assert.equal(result.breakdown.license, 20, 'la licencia sí puntúa: la oferta la pidió');
+    assert.ok(result.total <= 39, `esperaba ZERO_QUALIFICATION_CAP, got ${result.total}`);
+  });
+
+  await test('Fase 9 — las cuatro tablas de pesos: el bloque de cualificación vale siempre 65, y sólo la rama sin requisitos baja a 75', () => {
+    const suma = (w: ReturnType<typeof getMatchScoreWeights>) =>
+      w.verified + w.habilitation + w.license + w.contractFit + w.location;
+
+    const licenciaYAeronave = getMatchScoreWeights(makeOffer({ requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }));
+    const soloLicencia = getMatchScoreWeights(makeOffer());
+    const soloAeronave = getMatchScoreWeights(
+      makeOffer({ requiresCertification: false, licenseCode: undefined, requiredHabilitations: [makeHabReq('fx-a320-cfm56')] }),
+    );
+    const nada = getMatchScoreWeights(makeOffer({ requiresCertification: false, licenseCode: undefined }));
+
+    assert.equal(licenciaYAeronave.habilitation + licenciaYAeronave.license, 65, '45 + 20');
+    assert.equal(soloLicencia.habilitation + soloLicencia.license, 65, '0 + 65');
+    assert.equal(soloAeronave.habilitation + soloAeronave.license, 65, '65 + 0');
+    assert.equal(nada.habilitation + nada.license, 0, 'sin requisitos no hay bloque de cualificación que repartir');
+
+    assert.equal(suma(licenciaYAeronave), 100);
+    assert.equal(suma(soloLicencia), 100);
+    assert.equal(suma(soloAeronave), 100);
+    assert.equal(suma(nada), 75, 'el único descenso legítimo de la escalera');
+
+    // Estos ceros son los denominadores que pinta la UI (BreakdownRow /
+    // BreakdownItem, `max={weights.habilitation}`): las cuatro pantallas
+    // guardan `max > 0`, así que la fila sale "0/0" apagada — exactamente lo
+    // que ya hacen hoy habilitación y licencia en las ofertas sin requisitos.
+    assert.equal(soloLicencia.habilitation, 0);
+    assert.equal(soloAeronave.license, 0);
   });
 
   // ── Fase 6 tanda D: "basta con una" vs "hacen falta todas" ────────────

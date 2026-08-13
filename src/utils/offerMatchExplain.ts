@@ -19,10 +19,12 @@
 //     with any of them unmet at T1 caps the total at
 //     INCOMPLETE_AIRCRAFT_SET_CAP (stays in the "Partial" label range at
 //     most);
-//   - a qualification-requiring offer where the technician's habilitation
-//     score is zero caps the total further, at ZERO_QUALIFICATION_CAP
-//     (stays "Weak" — verified/availability/location alone can
-//     never manufacture a "Partial" result out of zero real qualification).
+//   - a qualification-requiring offer where the technician scores zero on the
+//     axis THE OFFER ASKED FOR (the aircraft when it names one, the license
+//     when it names only that — Fase 9) caps the total further, at
+//     ZERO_QUALIFICATION_CAP (stays "Weak" — verified/availability/location
+//     alone can never manufacture a "Partial" result out of zero real
+//     qualification).
 //   - a different declared profile type is a strong but SOFT mismatch: it
 //     caps the score at PROFILE_TYPE_MISMATCH_CAP while keeping the offer
 //     selectable and the percentage visible;
@@ -51,14 +53,38 @@ import { TECHNICIAN_TYPES } from '../constants/technicianTypes';
 import { AircraftRatingIndex, areRatingsRelated, getAircraftTypeRatingLabel } from '../constants/aircraftTypeRatings';
 import { localDateToIso } from './dateField';
 
-// Qualification (habilitation + license) dominates the score whenever the
-// offer actually specifies one — the whole point of this rebalance. When an
-// offer specifies NO qualification requirement at all, there is nothing to
-// award those 65 points for; NO_REQUIREMENTS_WEIGHTS redistributes the
-// remaining signals (verified/availability/location) onto a scale that tops
-// out at 75 — "Strong match" at best, deliberately never reaching
-// "Excellent" (>=80) from profile quality alone, since nothing here
-// confirms the technician actually fits THIS offer's requirements.
+// ── EL BLOQUE DE CUALIFICACIÓN VALE SIEMPRE 65 ───────────────────────────
+//
+// Cuatro tablas, un solo principio: los 65 puntos de cualificación se reparten
+// entre LOS EJES QUE LA OFERTA NOMBRE, y un eje que la oferta no ha pedido no
+// descuenta nada.
+//
+//   la oferta nombra…    tabla                       65 repartidos así
+//   licencia + aeronave  QUALIFICATION_WEIGHTS       45 habilitación + 20 licencia
+//   sólo aeronave        NO_CERTIFICATION_WEIGHTS    65 habilitación
+//   sólo licencia        LICENSE_ONLY_WEIGHTS        65 licencia
+//   nada                 NO_REQUIREMENTS_WEIGHTS     no hay bloque → la escala baja a 75
+//
+// Las tres primeras topan en 100, y eso es lo que mantiene MONÓTONA la
+// escalera de exigencia: cumplir todo lo que una oferta pide vale 100, pida
+// mucho o pida poco. El técnico ve las ofertas en una lista con su porcentaje
+// al lado, así que un techo estructural distinto por rama se leería como
+// "encajo peor aquí" cuando lo único que cambia es la escala.
+//
+// El 75 de la cuarta es EL ÚNICO DESCENSO LEGÍTIMO de la escalera, y lo es
+// porque allí no hay nada que confirmar: sin requisitos, ninguna señal dice
+// que este técnico encaje en ESTA oferta, así que la calidad del perfil por sí
+// sola nunca debe alcanzar "Excellent" (>=80).
+//
+// Cuando un eje sale del reparto, sus puntos van ÍNTEGROS al eje que la oferta
+// SÍ nombra, nunca repartidos entre las señales sueltas (verificado, contrato,
+// ubicación): ésas no son cualificación, y reforzarlas dejaría que un perfil
+// genérico compensara justo lo que la oferta exige. Precedente doble — la
+// retirada de `experience` (2026-07-28) y la Fase 6 tanda E.
+
+// Licencia Y aeronave: el bloque se parte, y no a partes iguales — tener el
+// rating de la aeronave es la señal fuerte, tener la categoría a secas la
+// débil.
 //
 // ── Sub-fase de experiencia (2026-07-28) ──────────────────────────────
 // El componente `experience` YA NO EXISTE. Principio de producto fijado por
@@ -73,6 +99,27 @@ import { localDateToIso } from './dateField';
 // licencia sin el rating). Concentrarlos afila justo la discriminación que
 // esta misión persigue.
 const QUALIFICATION_WEIGHTS = { verified: 15, habilitation: 45, license: 20, contractFit: 15, location: 5 } as const;
+
+// Fase 6 tanda E — ofertas que NO exigen certificar ("ayudante para el A320,
+// sin licencia"). No hay licencia que puntuar (el CHECK de la 053 la fuerza a
+// NULL), así que sus 20 puntos van ÍNTEGROS a habilitación: sin licencia, la
+// AERONAVE es toda la cualificación que la oferta pide, y se lleva el bloque
+// entero.
+const NO_CERTIFICATION_WEIGHTS = { verified: 15, habilitation: 65, license: 0, contractFit: 15, location: 5 } as const;
+
+// Fase 9 — el caso espejo del anterior, y el que faltaba: la oferta exige
+// licencia pero NO nombra ninguna aeronave ("necesito un B1.1; la flota ya la
+// verás"). Los 45 de habilitación van ÍNTEGROS a licencia, por el mismo motivo
+// escrito en la tanda E — si la oferta sólo nombra una licencia, la licencia es
+// toda la cualificación que pide.
+//
+// Antes de esta tabla la rama caía en QUALIFICATION_WEIGHTS y resolvía la fila
+// de habilitación por el tier ancho (0,29 → 13 de 45): descontaba 32 puntos por
+// una aeronave que la oferta nunca pidió. El candidato perfecto sacaba 68 y
+// quedaba POR DEBAJO del 75 de una oferta que no pide nada — la escalera dejaba
+// de ser monótona justo donde el técnico la lee, en su lista de ofertas.
+const LICENSE_ONLY_WEIGHTS = { verified: 15, habilitation: 0, license: 65, contractFit: 15, location: 5 } as const;
+
 // habilitation/license are always 0 here (never awarded, never penalized —
 // see the no-requirements branch below) — kept as explicit fields rather
 // than omitted so `weights` stays a single consistent shape instead of a
@@ -83,22 +130,6 @@ const QUALIFICATION_WEIGHTS = { verified: 15, habilitation: 45, license: 20, con
 // Los 15 que liberaba `experience` se reparten DENTRO de ese techo
 // (25/25/10 → 30/30/15), así que el máximo de esta rama no cambia.
 const NO_REQUIREMENTS_WEIGHTS = { verified: 30, habilitation: 0, license: 0, contractFit: 30, location: 15 } as const;
-
-// Fase 6 tanda E — ofertas que NO exigen certificar ("ayudante para el A320,
-// sin licencia"). No hay licencia que puntuar (el CHECK de la 053 la fuerza a
-// NULL), así que sus 20 puntos van ÍNTEGROS a habilitación, no repartidos.
-//
-// Es el mismo criterio, y el mismo precedente, que cuando se retiró el
-// componente `experience`: repartir habría reforzado las señales DÉBILES
-// (perfil verificado, ubicación), que no son cualificación. Sin licencia, la
-// AERONAVE es toda la cualificación que la oferta pide, así que se lleva el
-// bloque entero — 65, exactamente el mismo que en la rama que certifica.
-//
-// Y suma 100, no 80. El motivo no es estético: la pantalla del técnico lista
-// ofertas con su porcentaje al lado, así que un techo estructural más bajo en
-// las ofertas de ayudante se leería como "encajo peor aquí" cuando lo que
-// cambia es la escala, no el encaje.
-const NO_CERTIFICATION_WEIGHTS = { verified: 15, habilitation: 65, license: 0, contractFit: 15, location: 5 } as const;
 
 export interface MatchScoreWeights {
   verified: number;
@@ -124,8 +155,18 @@ export function getMatchScoreWeights(offer: OfferWithRequirements): MatchScoreWe
   //
   // Fase 6 tanda E: tres ramas, no dos. Una oferta que no certifica PERO
   // nombra aeronaves sí tiene cualificación que pedir — sólo que no de papel.
+  //
+  // Fase 9: cuatro. La que faltaba es la simétrica de la anterior — exige
+  // licencia y no nombra aeronave.
   if (!offerAsksForQualification(offer)) return NO_REQUIREMENTS_WEIGHTS;
-  return offer.requiresCertification ? QUALIFICATION_WEIGHTS : NO_CERTIFICATION_WEIGHTS;
+  if (!offer.requiresCertification) return NO_CERTIFICATION_WEIGHTS;
+  // `licenseCode != null` no es redundante con requiresCertification: el CHECK
+  // de la 053 ata la licencia a la exigencia en la dirección que importa, pero
+  // el scorer nunca da por hecho lo que la base garantiza. Sin licencia y con
+  // aeronaves, la evaluación cae igualmente en el evaluador de conocimiento
+  // (ver `evaluate` más abajo), así que esa combinación se queda donde estaba.
+  if (offer.licenseCode != null && offer.requiredHabilitations.length === 0) return LICENSE_ONLY_WEIGHTS;
+  return QUALIFICATION_WEIGHTS;
 }
 
 // ¿La oferta pide ALGO comprobable sobre la cualificación? Una licencia, una
@@ -186,10 +227,15 @@ const VIGENCIA_DEGRADATION_FRACTION = 0.1;
 //                     posición en la escalera — lo único que cambia es de
 //                     dónde sale el flag: de una etiqueta por fila que nadie
 //                     entendía, a una decisión declarada de la oferta.
-//   ZERO_QUALIFICATION_CAP — the offer asks for real qualification (exact
-//                     or broad) and the technician's habilitation score
-//                     came out to zero — stricter than the two above,
-//                     applies even for a preferred-only mismatch.
+//   ZERO_QUALIFICATION_CAP — the offer asks for real qualification and the
+//                     technician scored ZERO ON THE AXIS IT ASKED FOR —
+//                     stricter than the two above, applies even for a
+//                     preferred-only mismatch.
+//                     Fase 9: qué eje es lo decide la oferta. Si nombra
+//                     aeronave, la habilitación; si sólo nombra licencia, la
+//                     licencia. Preguntar siempre por la habilitación tumbaba
+//                     a TODA la rama de sólo-licencia, cuyo peso de
+//                     habilitación es 0 por construcción.
 //   PROFILE_TYPE_MISMATCH_CAP — the offer asks for a different trade than
 //                     every type declared by the technician. This is a strong
 //                     ranking penalty, NOT an eligibility blocker: the offer
@@ -707,9 +753,13 @@ export function calculateOfferTechnicianMatch(
       level = 'legacy';
       if (broad.matchText) matches.push(broad.matchText);
       if (broad.clarificationText) clarifications.push(broad.clarificationText);
-      // Never full/exact credit (Fase 5.3 fix) — holding the category is
-      // real evidence but never a confirmed exact rating, so it scores at
-      // 0.29 (BROAD_TIER_FRACTIONS.legacy_category_only).
+      // Fase 9: con LICENSE_ONLY_WEIGHTS el peso de habilitación es 0, así que
+      // esta fila sale 0 — que es lo correcto y lo que arregla la fase: la
+      // oferta no nombró ninguna aeronave, luego no hay eje de aeronave que
+      // puntuar NI que descontar. La fracción 0,29 sobrevive porque describe
+      // una evidencia real ("tiene la categoría, nada confirma la aeronave") y
+      // volvería a aplicarse si alguna rama futura vuelve a puntuar la
+      // aeronave aquí; hoy multiplica a cero.
       habilitation = Math.round(weights.habilitation * BROAD_TIER_FRACTIONS[broad.tier]);
       license = weights.license;
     } else {
@@ -822,9 +872,20 @@ export function calculateOfferTechnicianMatch(
   // Every score ceiling is applied in one place — see applyScoreCeilings()
   // and the ladder documented above it. Most restrictive always wins,
   // however many apply at once.
+  // Fase 9 — `isZeroQualification` pregunta por EL EJE QUE LA OFERTA PIDE, no
+  // por habilitación siempre. Con LICENSE_ONLY_WEIGHTS el peso de habilitación
+  // es 0, así que un `habilitation === 0` pelado se cumpliría SIEMPRE en esa
+  // rama y el tope de 39 caería sobre todo el mundo — incluido el candidato
+  // perfecto, que pasaría de 68 a 39 y empeoraría justo el problema que la
+  // fase arregla. La regla que el tope defiende no cambia ni un ápice: en una
+  // oferta que nombra aeronave, tener la licencia sin el rating sigue topado
+  // en ZERO_QUALIFICATION_CAP.
+  const zeroOnRequestedAxis =
+    offer.requiredHabilitations.length > 0 ? habilitation === 0 : license === 0;
+
   const total = applyScoreCeilings(rawTotal, {
     hasIncompleteAircraftSet: missingRequirements.length > 0,
-    isZeroQualification: hasQualificationRequirements && habilitation === 0,
+    isZeroQualification: hasQualificationRequirements && zeroOnRequestedAxis,
     hasProfileTypeMismatch: profileTypeMismatch,
     hasBlocker: blockers.length > 0,
   });
