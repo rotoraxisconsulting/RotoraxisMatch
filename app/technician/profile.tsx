@@ -999,14 +999,17 @@ export default function TechnicianProfileScreen() {
             <View style={styles.fieldGap} />
             <FieldLabel>Email</FieldLabel>
             <TextInput
-              style={styles.input}
+              style={[styles.input, styles.readOnlyInput]}
               value={form.email}
-              onChangeText={(v) => updateField('email', v)}
+              readOnly
               placeholder="email@example.com"
               placeholderTextColor={techUi.textMuted}
               autoCapitalize="none"
               keyboardType="email-address"
             />
+            <Text style={styles.privacyNote}>
+              This email cannot be changed from your profile.
+            </Text>
             <View style={styles.fieldGap} />
             <FieldLabel>Phone</FieldLabel>
             <TextInput
@@ -1485,6 +1488,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: techUi.text,
     backgroundColor: techUi.surfaceSoft,
+  },
+  readOnlyInput: {
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.page,
+    color: techUi.textSoft,
   },
   chipRow: {
     flexDirection: 'row',

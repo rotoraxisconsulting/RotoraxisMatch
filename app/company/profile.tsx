@@ -339,10 +339,13 @@ function CompanyEditForm({
       <EditableField
         label="Contact email"
         value={form.email}
-        onChangeText={(email) => onChange({ email })}
         keyboardType="email-address"
         autoCapitalize="none"
+        readOnly
       />
+      <Text style={styles.fieldHint}>
+        This email cannot be changed from the company profile.
+      </Text>
       <EditableField
         label="Phone"
         value={form.phone}
@@ -372,22 +375,25 @@ function EditableField({
   onChangeText,
   keyboardType,
   autoCapitalize,
+  readOnly = false,
   style,
 }: {
   label: string;
   value: string;
-  onChangeText: (value: string) => void;
+  onChangeText?: (value: string) => void;
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  readOnly?: boolean;
   style?: object;
 }) {
   return (
     <View style={[styles.inputGroup, style]}>
       <Text style={styles.inputLabel}>{label}</Text>
       <TextInput
-        style={styles.input}
+        style={[styles.input, readOnly && styles.readOnlyInput]}
         value={value}
         onChangeText={onChangeText}
+        readOnly={readOnly}
         placeholderTextColor={companyUi.textMuted}
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
@@ -597,6 +603,11 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '600',
     color: companyUi.text,
+  },
+  readOnlyInput: {
+    borderColor: companyUi.borderSoft,
+    backgroundColor: companyUi.page,
+    color: companyUi.textSoft,
   },
   typeField: {
     gap: spacing.sm,
