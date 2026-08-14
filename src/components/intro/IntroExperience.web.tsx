@@ -42,7 +42,7 @@ const SLIDES = [
     title: 'Search by what actually matters',
     subtitle: null,
     description:
-      'Filter by license, type rating, base airport, country, availability and years of experience.',
+      'Filter by license, type rating, country, availability and years of experience.',
   },
   {
     id: 'platform' as const,
