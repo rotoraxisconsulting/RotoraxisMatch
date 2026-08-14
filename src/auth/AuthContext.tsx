@@ -89,9 +89,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     // Restore an existing session if no auth event won the race first.
-    void supabase.auth.getSession().then(({ data: { session: s } }) => {
-      if (active && !authEventObserved) applySession(s);
-    });
+    void supabase.auth.getSession()
+      .then(({ data: { session: s } }) => {
+        if (active && !authEventObserved) applySession(s);
+      })
+      .catch((error) => {
+        console.error('Failed to restore the auth session:', error);
+        if (active && !authEventObserved) applySession(null);
+      });
 
     return () => {
       active = false;
