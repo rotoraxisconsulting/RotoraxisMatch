@@ -14,19 +14,21 @@
     "validate:aircraft-ratings": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-validate-aircraft-ratings scripts/validateAircraftTypeRatingsCatalog.ts && node .tmp-validate-aircraft-ratings/scripts/validateAircraftTypeRatingsCatalog.js",
     "generate:easa-catalog": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-generate-easa-catalog scripts/generateEasaFullCatalogMigration.ts && node .tmp-generate-easa-catalog/generateEasaFullCatalogMigration.js",
     "validate:state-machine": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-validate-state-machine scripts/validateOfferStateMachine.ts && node .tmp-validate-state-machine/scripts/validateOfferStateMachine.js",
-    "validate:auth-hooks": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-validate-auth-hooks scripts/validateAuthHooks.ts && node .tmp-validate-auth-hooks/validateAuthHooks.js"
+    "validate:auth-hooks": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-validate-auth-hooks scripts/validateAuthHooks.ts && node .tmp-validate-auth-hooks/validateAuthHooks.js",
+    "validate:store-privacy": "tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --outDir .tmp-validate-store-privacy scripts/validateStorePrivacy.ts && node .tmp-validate-store-privacy/validateStorePrivacy.js",
+    "validate:store-privacy:release": "npm run validate:store-privacy -- --release"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/datetimepicker": "8.4.4",
     "@supabase/supabase-js": "^2.107.0",
     "@types/leaflet": "^1.9.21",
-    "expo": "^54.0.34",
+    "expo": "~54.0.36",
     "expo-constants": "~18.0.13",
     "expo-document-picker": "~14.0.8",
-    "expo-file-system": "~19.0.22",
+    "expo-file-system": "~19.0.23",
     "expo-linking": "~8.0.12",
-    "expo-router": "~6.0.23",
+    "expo-router": "~6.0.24",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "gsap": "^3.15.0",
@@ -38,6 +40,7 @@
     "react-native": "^0.81.5",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.2",
     "react-native-webview": "^13.15.0"
   },

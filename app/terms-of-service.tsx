@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { colors, spacing } from '../src/theme';
+import { TERMS_OF_SERVICE_LAST_UPDATED } from '../src/constants/legal';
 
 export default function TermsOfServiceScreen() {
   const router = useRouter();
@@ -28,11 +29,11 @@ export default function TermsOfServiceScreen() {
         </TouchableOpacity>
 
         <Text style={styles.h1}>Terms of Service</Text>
-        <Text style={styles.meta}>Aviation Job Talent · Last updated: June 2025</Text>
+        <Text style={styles.meta}>Aviation Job Talent · Last updated: {TERMS_OF_SERVICE_LAST_UPDATED}</Text>
 
         <Section title="1. Acceptance">
           <P>
-            By creating an account or using Aviation Job Talent (the "Platform"), you agree to these Terms of Service ("Terms") and our Privacy Policy. If you do not agree, do not use the Platform.
+            By creating an account or using Aviation Job Talent (the "Platform"), you agree to these Terms of Service ("Terms") and acknowledge that you have read our Privacy Policy. If you do not agree to the Terms, do not use the Platform.
           </P>
           <P>
             The Platform is operated by <Bold>[LEGAL_ENTITY_NAME]</Bold>, <Bold>[LEGAL_ADDRESS]</Bold>.
@@ -50,16 +51,16 @@ export default function TermsOfServiceScreen() {
 
         <Section title="3. Account types">
           <P><Bold>Technician accounts</Bold> allow you to create a professional profile, upload credentials, browse job offers, apply to offers and communicate with companies after acceptance.</P>
-          <P><Bold>Company accounts</Bold> allow you to search anonymised technician profiles, post job offers, send direct offers to technicians and communicate with them after acceptance.</P>
+          <P><Bold>Company accounts</Bold> allow you to search privacy-limited technician profiles without direct identifiers, post job offers, send direct offers to technicians and communicate with them after acceptance.</P>
           <P><Bold>Admin accounts</Bold> are internal staff accounts used for platform moderation and credential verification.</P>
         </Section>
 
         <Section title="4. Technician identity and privacy">
           <P>
-            Your full name, email, phone and identity documents are <Bold>never visible to companies</Bold> by default. They are only disclosed to the specific company with which you have an accepted connection.
+            Your full name, email, phone and professional links are <Bold>never visible to companies</Bold> by default. They are only disclosed to the specific company with which you have an accepted connection.
           </P>
           <P>
-            By accepting a connection (accepting a direct offer or having your application accepted), you consent to your identity and admin-verified documents being disclosed to that company.
+            By accepting a connection (accepting a direct offer or having your application accepted), you consent to your identity and permitted admin-verified professional documents, such as licences, training records and resumes, being disclosed to that company.
           </P>
           <P>
             Medical certificates and identity documents (passports, national IDs) are used only for credential verification by our team and are <Bold>never shared with companies</Bold>.
@@ -114,7 +115,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="10. Termination">
           <P>
-            You may delete your account at any time via Settings → Delete account. We may suspend or terminate accounts that violate these Terms.
+            You may delete your account via Settings → Delete account. A sole company administrator must first assign another administrator or contact support so the company record can be handled without being orphaned. We may suspend or terminate accounts that violate these Terms.
           </P>
           <P>
             Upon termination, your personal data is handled in accordance with our Privacy Policy (Section 8).
@@ -138,13 +139,13 @@ export default function TermsOfServiceScreen() {
 
         <Section title="13. Changes">
           <P>
-            We may update these Terms. We will notify registered users by email at least 14 days before material changes take effect. Continued use after that date constitutes acceptance.
+            We may update these Terms. We will notify users of material changes where required and request renewed acceptance where applicable.
           </P>
         </Section>
 
         <Section title="14. Contact">
           <P>
-            General support: <Bold>[SUPPORT_EMAIL]</Bold>{'\n'}
+            General support: <Bold>support@aviationjobtalent.com</Bold>{'\n'}
             Legal: <Bold>[LEGAL_ENTITY_NAME]</Bold>, <Bold>[LEGAL_ADDRESS]</Bold>
           </P>
         </Section>

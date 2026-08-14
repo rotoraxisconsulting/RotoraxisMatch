@@ -31,7 +31,7 @@ export default function PublicDeleteAccountScreen() {
 
         <Text style={styles.h1}>How to delete your account</Text>
         <Text style={styles.subtitle}>
-          You have the right to permanently delete your account and all associated personal data at any time.
+          You can permanently delete your account, direct identifiers and uploaded documents at any time.
         </Text>
 
         {/* If the user is logged in, offer direct action */}
@@ -51,7 +51,7 @@ export default function PublicDeleteAccountScreen() {
         ) : (
           <View style={styles.callout}>
             <Text style={styles.calloutText}>
-              Sign in first, then go to <Text style={styles.bold}>Settings → Delete account</Text>.
+              Sign in on this website, then open Settings → Delete account. You do not need to reinstall the mobile app.
             </Text>
             <TouchableOpacity
               style={styles.btn}
@@ -65,23 +65,27 @@ export default function PublicDeleteAccountScreen() {
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Step-by-step guide</Text>
-          <Step n={1} text='Open the app and sign in to your account.' />
-          <Step n={2} text='Tap the Settings icon (⚙) on the home screen.' />
+          <Step n={1} text='Sign in using the button above or open the app and sign in.' />
+          <Step n={2} text='Open Settings from your dashboard.' />
           <Step n={3} text='Scroll down to the Account section and tap "Delete account…"' />
           <Step n={4} text='Read the information about what will be deleted.' />
           <Step n={5} text='Type DELETE in the confirmation field and tap "Permanently delete my account".' />
-          <Step n={6} text='Your account and personal data will be removed immediately.' />
+          <Step n={6} text='The app confirms success only after your account credentials and uploaded files have been removed.' />
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>What is deleted</Text>
+          <Text style={styles.cardTitle}>What is deleted and what can remain</Text>
           <Text style={styles.p}>
             <Text style={styles.bold}>Technicians: </Text>
-            All personal information (name, email, phone, date of birth), all uploaded documents (removed from storage), cover notes on applications, and chat messages you sent. Your authentication credentials are permanently removed.
+            Names, contact details, date of birth, uploaded documents, cover notes, message content and authentication credentials are removed. A limited record of professional qualifications, coarse location and marketplace history remains linked by an internal account identifier, as explained in the Privacy Policy.
           </Text>
           <Text style={styles.p}>
             <Text style={styles.bold}>Company users: </Text>
-            Your company membership and personal account information, chat messages you sent. The company account and its job offers remain if other members exist.
+            Your name, contact details, membership, message content and authentication credentials are removed. A limited deleted-account record retains the internal account identifier. The company profile, offers and marketplace history can remain for other members and platform integrity.
+          </Text>
+          <Text style={styles.p}>
+            <Text style={styles.bold}>Only company administrator: </Text>
+            The current deletion flow requires you to assign another administrator before deleting your membership. If you cannot do this, contact support for help with the company record and your deletion request.
           </Text>
         </View>
 
@@ -98,7 +102,7 @@ export default function PublicDeleteAccountScreen() {
         </View>
 
         <Text style={styles.legal}>
-          This page fulfils the GDPR "right to erasure" (Art. 17) and Apple/Google App Store data deletion requirements.
+          This external deletion path complements the deletion option available inside the app.
         </Text>
       </ScrollView>
     </SafeAreaView>

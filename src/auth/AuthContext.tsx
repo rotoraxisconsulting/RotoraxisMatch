@@ -28,30 +28,76 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restore existing session on app start
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    let active = true;
+    let hydrationGeneration = 0;
+    let authEventObserved = false;
+    let currentUserId: string | null = null;
+
+    // Supabase warns against awaiting other Supabase calls inside an
+    // onAuthStateChange callback because the auth client can deadlock. Keep
+    // that callback synchronous and move profile/consent I/O to a later task.
+    function applySession(s: Session | null): void {
+      const nextUserId = s?.user.id ?? null;
+      const userChanged = currentUserId !== nextUserId;
+      currentUserId = nextUserId;
       setSession(s);
       if (s) {
-        fetchProfile(s.user.id);
+        if (userChanged) {
+          // Never render one account's profile alongside another account's
+          // session while the replacement profile is being loaded.
+          setProfile(null);
+          setLoading(true);
+        }
+        const generation = ++hydrationGeneration;
+        setTimeout(() => {
+          void (async () => {
+            let nextProfile: SupabaseProfile | null = null;
+            let profileLoadSucceeded = false;
+            try {
+              await ensureRoleProfile(s.user);
+              nextProfile = await loadProfile(s.user.id);
+              profileLoadSucceeded = true;
+              await ensureLegalConsent(s.user);
+            } catch (error) {
+              console.error('Failed to hydrate the authenticated profile:', error);
+            }
+            if (!active || generation !== hydrationGeneration) return;
+            // A transient PostgREST error must not erase an already loaded
+            // profile and cause a logged-in user to be redirected as a guest.
+            if (profileLoadSucceeded) setProfile(nextProfile);
+            setLoading(false);
+          })();
+        }, 0);
       } else {
+        hydrationGeneration += 1;
+        setProfile(null);
         setLoading(false);
       }
-    });
+    }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, s) => {
-        setSession(s);
-        if (s) {
-          await ensureRoleProfile(s.user);
-          fetchProfile(s.user.id);
-        } else {
-          setProfile(null);
-          setLoading(false);
+      (event, s) => {
+        if (!active) return;
+        authEventObserved = true;
+        if (event === 'TOKEN_REFRESHED' && s && currentUserId === s.user.id) {
+          // Keep the fresh token without repeating profile/consent I/O.
+          setSession(s);
+          return;
         }
-      }
+        applySession(s);
+      },
     );
 
-    return () => subscription.unsubscribe();
+    // Restore an existing session if no auth event won the race first.
+    void supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (active && !authEventObserved) applySession(s);
+    });
+
+    return () => {
+      active = false;
+      hydrationGeneration += 1;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Called on every SIGNED_IN event. When email confirmation is enabled,
@@ -154,17 +200,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function fetchProfile(userId: string): Promise<void> {
+  /**
+   * Email confirmation can make signUp() return no session, so the signup
+   * screen cannot insert its audit row at that moment. On the first confirmed
+   * session, copy the exact version and acceptance time already stored in Auth
+   * metadata. Never substitute the current version: that would record consent
+   * to text the user did not see.
+   */
+  async function ensureLegalConsent(user: User): Promise<void> {
+    const meta = user.user_metadata ?? {};
+    const consentVersion = typeof meta.tos_version === 'string' ? meta.tos_version.trim() : '';
+    if (!consentVersion) return;
+
+    const rawAcceptedAt = typeof meta.tos_accepted_at === 'string' ? meta.tos_accepted_at : '';
+    const acceptedAt = rawAcceptedAt && !Number.isNaN(Date.parse(rawAcceptedAt))
+      ? new Date(rawAcceptedAt).toISOString()
+      : undefined;
+
+    const { error } = await supabase.from('user_consents').upsert(
+      {
+        user_id: user.id,
+        consent_type: 'tos_privacy',
+        consent_version: consentVersion,
+        ...(acceptedAt ? { accepted_at: acceptedAt } : {}),
+      },
+      { onConflict: 'user_id,consent_type,consent_version', ignoreDuplicates: true },
+    );
+
+    // Authentication must remain available if the audit write is temporarily
+    // unavailable. This helper runs again on every restored/signed-in session.
+    if (error) console.error('Failed to record legal consent audit row:', error.message);
+  }
+
+  async function loadProfile(userId: string): Promise<SupabaseProfile | null> {
     const { data, error } = await supabase
       .from('profiles')
       .select('id, role, status, created_at')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
 
-    if (!error && data) {
-      setProfile(data as SupabaseProfile);
-    }
-    setLoading(false);
+    if (error) throw error;
+    return data ? data as SupabaseProfile : null;
   }
 
   async function signIn(

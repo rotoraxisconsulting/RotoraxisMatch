@@ -86,6 +86,17 @@ export async function uploadDocumentToStorage(
 }
 
 /**
+ * Removes a private document object. Used to roll back an upload when the
+ * matching database row could not be created, so account deletion can never
+ * miss an orphaned file that has no `documents.storage_path` reference.
+ */
+export async function removeDocumentFromStorage(storagePath: string): Promise<string | null> {
+  if (!storagePath) return null;
+  const { error } = await supabase.storage.from(BUCKET).remove([storagePath]);
+  return error?.message ?? null;
+}
+
+/**
  * Opens a document URL in a way that works on iOS Safari.
  *
  * iOS Safari blocks window.open() / navigations that happen after an await because the

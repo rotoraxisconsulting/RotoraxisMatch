@@ -1,7 +1,16 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npx expo export --platform web",
   "outputDirectory": "dist",
+  "cleanUrls": true,
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/company/applications/:id", "destination": "/company/applications/[id]" },
+    { "source": "/company/chats/:id", "destination": "/company/chats/[id]" },
+    { "source": "/company/direct-offers/:id", "destination": "/company/direct-offers/[id]" },
+    { "source": "/company/offers/:id", "destination": "/company/offers/[id]" },
+    { "source": "/company/technician/:id", "destination": "/company/technician/[id]" },
+    { "source": "/technician/chats/:id", "destination": "/technician/chats/[id]" },
+    { "source": "/technician/direct-offers/:id", "destination": "/technician/direct-offers/[id]" },
+    { "source": "/technician/offers/:id", "destination": "/technician/offers/[id]" }
   ]
 }

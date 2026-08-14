@@ -127,6 +127,7 @@ export default function TechnicianSearchScreen() {
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(preselectedOfferId ?? null);
   const [previews, setPreviews] = useState<PreviewMap>({});
   const [scores, setScores] = useState<ScoreMap>({});
+  const [scoredOfferId, setScoredOfferId] = useState<string | null>(null);
   const [offerRequests, setOfferRequests] = useState<OfferRequest[]>([]);
   const [offerApplications, setOfferApplications] = useState<OfferApplication[]>([]);
   const [sendingTechId, setSendingTechId] = useState<string | null>(null);
@@ -181,10 +182,14 @@ export default function TechnicianSearchScreen() {
   useEffect(() => {
     let active = true;
 
+    // A score only belongs to one offer. Clear the previous map immediately
+    // so changing the selected offer never shows or sorts by stale scores.
+    setScores({});
+    setScoredOfferId(null);
+
     async function loadPreviewData() {
       if (!results.length) {
         setPreviews({});
-        setScores({});
         return;
       }
 
@@ -217,6 +222,7 @@ export default function TechnicianSearchScreen() {
       if (!active) return;
       setPreviews(nextPreviews);
       setScores(nextScores);
+      setScoredOfferId(selectedOffer && catalogState === 'success' ? selectedOffer.id : null);
     }
 
     loadPreviewData();
@@ -225,6 +231,34 @@ export default function TechnicianSearchScreen() {
     };
   }, [results, selectedOffer, ratingIndex, catalogState]);
 
+  const orderedResults = useMemo(() => {
+    // Preserve the repository order until every score for the currently
+    // selected offer has finished loading. This prevents list jumping while
+    // the async calculation is still in flight.
+    if (!selectedOffer || scoredOfferId !== selectedOffer.id) return results;
+
+    return results
+      .map((technician, originalIndex) => ({ technician, originalIndex }))
+      .sort((a, b) => {
+        const aScore = scores[a.technician.id];
+        const bScore = scores[b.technician.id];
+
+        if (aScore && bScore) {
+          const aEligible = aScore.blockers.length === 0;
+          const bEligible = bScore.blockers.length === 0;
+          if (aEligible !== bEligible) return aEligible ? -1 : 1;
+
+          const scoreDifference = bScore.total - aScore.total;
+          if (scoreDifference !== 0) return scoreDifference;
+        } else if (aScore || bScore) {
+          return aScore ? -1 : 1;
+        }
+
+        return a.originalIndex - b.originalIndex;
+      })
+      .map(({ technician }) => technician);
+  }, [results, scores, selectedOffer, scoredOfferId]);
+
   async function handleSearch() {
     await search();
   }
@@ -232,6 +266,7 @@ export default function TechnicianSearchScreen() {
   function handleClearFilters() {
     clearFilters();
     setScores({});
+    setScoredOfferId(null);
     setPreviews({});
   }
 
@@ -283,7 +318,7 @@ export default function TechnicianSearchScreen() {
   return (
     <CompanyScreen>
       <FlatList
-        data={results}
+        data={orderedResults}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[companyStyles.content, isWide && companyStyles.contentWide]}
         showsVerticalScrollIndicator={false}

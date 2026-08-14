@@ -57,6 +57,7 @@ const DELETION_REASONS = [
   'other',
 ];
 const COMMENT_MAX_LENGTH = 1000;
+const STORAGE_BATCH_SIZE = 100;
 
 /**
  * Guarda el motivo de baja una vez la cuenta YA se ha borrado.
@@ -84,6 +85,44 @@ async function recordDeletionFeedback(supabaseAdmin, role, feedback) {
   }
 }
 
+/**
+ * Enumerate every real object below one technician-owned prefix, including
+ * nested folders. Paths from the public `documents` table are deliberately
+ * not trusted here: a forged row must never let service_role delete another
+ * user's object during account deletion.
+ */
+async function listTechnicianStoragePaths(bucket, technicianId) {
+  const paths = [];
+  const folders = [technicianId];
+
+  for (let folderIndex = 0; folderIndex < folders.length; folderIndex += 1) {
+    if (folders.length > 10000) {
+      throw new AppError(500, 'The uploaded-document folder is too complex to delete safely.');
+    }
+
+    const folder = folders[folderIndex];
+    for (let offset = 0; ; offset += STORAGE_BATCH_SIZE) {
+      const { data: entries, error: listErr } = await bucket.list(folder, {
+        limit: STORAGE_BATCH_SIZE,
+        offset,
+      });
+      if (listErr) {
+        throw new AppError(500, 'Could not inspect the uploaded-document folder. The account was not deleted.');
+      }
+
+      for (const entry of entries ?? []) {
+        if (!entry?.name) continue;
+        const path = `${folder}/${entry.name}`;
+        if (entry.id) paths.push(path);
+        else folders.push(path);
+      }
+      if ((entries ?? []).length < STORAGE_BATCH_SIZE) break;
+    }
+  }
+
+  return [...new Set(paths)];
+}
+
 async function deleteAccountTechnician(supabaseAdmin, userId) {
   // 1. Resolve technician_profiles row — sólo para localizar los ficheros.
   const { data: techProfile, error: techErr } = await supabaseAdmin
@@ -94,24 +133,29 @@ async function deleteAccountTechnician(supabaseAdmin, userId) {
   if (techErr) throw new AppError(500, 'Could not retrieve technician profile.');
 
   if (techProfile) {
-    // 2. Borrar los FICHEROS del bucket. Es lo único de este bloque que la base
-    //    de datos no puede hacer por sí sola, y por eso sigue aquí. Las FILAS de
-    //    `documents` las borra el trigger, junto con el resto de la lápida.
-    const { data: docs } = await supabaseAdmin
-      .from('documents')
-      .select('storage_path')
-      .eq('technician_id', techProfile.id);
+    // 2. Borrar todos los FICHEROS bajo la carpeta propia, incluso huérfanos
+    //    sin fila `documents`. Las FILAS las borra después el trigger SQL.
+    const bucket = supabaseAdmin.storage.from('technician-documents');
+    const paths = await listTechnicianStoragePaths(bucket, techProfile.id);
+    for (let start = 0; start < paths.length; start += STORAGE_BATCH_SIZE) {
+      const { error: storageErr } = await bucket.remove(paths.slice(start, start + STORAGE_BATCH_SIZE));
+      if (storageErr) {
+        throw new AppError(500, 'Could not remove every uploaded document. Some files may already be gone; retry account deletion.');
+      }
+    }
 
-    const paths = (docs ?? []).map((d) => d.storage_path).filter(Boolean);
-    if (paths.length > 0) {
-      await supabaseAdmin.storage.from('technician-documents').remove(paths);
+    const remainingPaths = await listTechnicianStoragePaths(bucket, techProfile.id);
+    if (remainingPaths.length > 0) {
+      throw new AppError(500, 'Storage did not confirm removal of every uploaded document. Retry account deletion.');
     }
   }
 
   // 3. Borrar el usuario de auth. El trigger AFTER DELETE `on_auth_user_deleted`
   //    construye la lápida entera (anonimizar PII, limpiar cover notes y mensajes,
   //    borrar filas de documents, profiles.status='deleted') dentro de esta misma
-  //    transacción: si algo falla, no se borra nada y no queda fantasma.
+  //    transacción: esas mutaciones de BD son atómicas. Storage es un sistema
+  //    externo y ya puede haberse vaciado si este último paso falla; por eso la
+  //    operación anterior es reintentable y nunca comunica éxito parcial.
   const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
   if (deleteErr) throw new AppError(500, 'Could not remove authentication credentials.');
 }

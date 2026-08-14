@@ -49,7 +49,7 @@ const SLIDES = [
     title: 'Web, Android and iOS',
     subtitle: null,
     description:
-      'One account across every device, with secure sign-in and encrypted document storage.',
+      'One account across every device, with secure sign-in and private document storage.',
   },
 ] as const;
 

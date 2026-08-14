@@ -19,8 +19,7 @@ import { EMPTY_LOCATION, LocationValue } from '../../../src/types/location';
 import { persistedLocationFromValue } from '../../../src/utils/locationBridge';
 import { Button } from '../../../src/components/Button';
 import { colors, spacing } from '../../../src/theme';
-
-const CONSENT_VERSION = '2025-06';
+import { LEGAL_CONSENT_VERSION } from '../../../src/constants/legal';
 
 function isValidEmail(s: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -54,7 +53,7 @@ export default function CompanySignupScreen() {
     if (password !== confirmPassword) return 'Passwords do not match.';
     // Sólo el país es obligatorio; la ciudad es opcional.
     if (!location.country) return 'Select your country.';
-    if (!tosAccepted) return 'You must accept the Terms of Service and Privacy Policy to continue.';
+    if (!tosAccepted) return 'You must agree to the Terms of Service and acknowledge the Privacy Policy to continue.';
     return null;
   }
 
@@ -77,6 +76,7 @@ export default function CompanySignupScreen() {
       location_city_lng: persisted.locationCityLng ?? null,
       location_city_geoname_id: persisted.locationCityGeonameId ?? null,
     };
+    const legalAcceptedAt = new Date().toISOString();
 
     // Step 1: Create auth user — trigger auto-creates profiles row
     const { data, error: signUpError } = await supabase.auth.signUp({
@@ -89,8 +89,8 @@ export default function CompanySignupScreen() {
           company_type: companyType,
           // Fase 7 F2c: país y ciudad, no un aeropuerto.
           ...signupLocationMetadata,
-          tos_accepted_at: new Date().toISOString(),
-          tos_version: CONSENT_VERSION,
+          tos_accepted_at: legalAcceptedAt,
+          tos_version: LEGAL_CONSENT_VERSION,
         },
       },
     });
@@ -122,7 +122,8 @@ export default function CompanySignupScreen() {
       }
 
       // Record ToS consent. ignoreDuplicates: true — user_consents has no
-      // UPDATE policy (immutable audit trail, migration 015); a retried
+      // UPDATE policy while the account is active (append-only audit trail,
+      // migration 015); a retried
       // signup for the same user_id/version must skip the conflicting row
       // rather than take the default upsert's ON CONFLICT DO UPDATE path,
       // which RLS would reject.
@@ -130,7 +131,8 @@ export default function CompanySignupScreen() {
         {
           user_id: data.user!.id,
           consent_type: 'tos_privacy',
-          consent_version: CONSENT_VERSION,
+          consent_version: LEGAL_CONSENT_VERSION,
+          accepted_at: legalAcceptedAt,
         },
         { onConflict: 'user_id,consent_type,consent_version', ignoreDuplicates: true },
       );
@@ -235,32 +237,39 @@ export default function CompanySignupScreen() {
           </View>
 
           {/* ToS + Privacy consent checkbox */}
-          <TouchableOpacity
-            style={styles.consentRow}
+          <View style={styles.consentRow}>
+            <TouchableOpacity
             onPress={() => setTosAccepted((v) => !v)}
             activeOpacity={0.75}
-          >
-            <View style={[styles.checkbox, tosAccepted && styles.checkboxChecked]}>
-              {tosAccepted ? <Text style={styles.checkmark}>✓</Text> : null}
-            </View>
+            hitSlop={11}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: tosAccepted }}
+            accessibilityLabel="Agree to the Terms of Service and acknowledge the Privacy Policy"
+            >
+              <View style={[styles.checkbox, tosAccepted && styles.checkboxChecked]}>
+                {tosAccepted ? <Text style={styles.checkmark}>✓</Text> : null}
+              </View>
+            </TouchableOpacity>
             <Text style={styles.consentText}>
-              I have read and agree to the{' '}
+              I agree to the{' '}
               <Text
                 style={styles.consentLink}
                 onPress={(e) => { e.stopPropagation(); router.push('/terms-of-service' as any); }}
+                accessibilityRole="link"
               >
                 Terms of Service
               </Text>
-              {' '}and{' '}
+              {' '}and acknowledge that I have read the{' '}
               <Text
                 style={styles.consentLink}
                 onPress={(e) => { e.stopPropagation(); router.push('/privacy-policy' as any); }}
+                accessibilityRole="link"
               >
                 Privacy Policy
               </Text>
               .
             </Text>
-          </TouchableOpacity>
+          </View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 

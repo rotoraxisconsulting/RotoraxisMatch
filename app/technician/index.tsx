@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   View,
   Text,
@@ -36,8 +37,14 @@ import { useAuth } from '../../src/auth/AuthContext';
 import { useSession } from '../../src/state/SessionContext';
 import { supabase } from '../../src/lib/supabase';
 import { activityRepository } from '../../src/repositories/v2/activityRepository';
-import { getOfferMatchesForTechnician, OfferMatchResult } from '../../src/utils/matchingV2';
+import { inboxRepository } from '../../src/repositories/v2/inboxRepository';
+import {
+  getMatchDisplayLabel,
+  getOfferMatchesForTechnician,
+  OfferMatchResult,
+} from '../../src/utils/matchingV2';
 import { MatchBadge } from '../../src/components/MatchBadge';
+import { CONTRACT_TYPES } from '../../src/constants/contractTypes';
 import { colors, spacing } from '../../src/theme';
 import type { Company, MatchRequest } from '../../src/types';
 
@@ -85,6 +92,7 @@ const ui = {
   textSoft: '#2B3D52',
   textMuted: '#527088',
   accent: '#0891B2',
+  accentStrong: '#0E7490',
   accentSoft: '#B3E5F5',
   blue: '#1D4ED8',
   blueSoft: '#DBEAFE',
@@ -108,6 +116,55 @@ const softShadow = Platform.select<ViewStyle>({
   },
 });
 
+const MINIMUM_USEFUL_MATCH = 40;
+
+function getContractTypeLabel(code: string): string {
+  return CONTRACT_TYPES.find((option) => option.code === code)?.label ?? code.replace(/_/g, ' ');
+}
+
+function getOpportunityReasons(match: OfferMatchResult): string[] {
+  const { score } = match;
+  const qualificationReasons = score.matches.filter((reason) => reason !== 'Verified profile');
+  const supportingReasons = [
+    score.breakdown.contractFit > 0 ? 'Contract type fits your preferences' : null,
+    score.breakdown.location > 0 ? 'Same country as your profile' : null,
+    score.matches.includes('Verified profile') ? 'Verified profile' : null,
+  ].filter((reason): reason is string => Boolean(reason));
+
+  const reasons = [...new Set([...qualificationReasons, ...supportingReasons])].slice(0, 3);
+  return reasons.length > 0 ? reasons : ['Some role requirements match your profile'];
+}
+
+function getOpportunityCaution(match: OfferMatchResult): string {
+  return match.score.missingRequirements[0]
+    ?? match.score.clarifications[0]
+    ?? match.score.vigenciaNotices[0]?.detail
+    ?? 'Review the full role requirements before applying';
+}
+
+function getProfileImprovementHints(match: OfferMatchResult | null): string[] {
+  if (!match) {
+    return [
+      'Add your licences, aircraft ratings and experience',
+      'Set your preferred countries and contract types',
+    ];
+  }
+
+  const hints: string[] = [];
+  if (match.score.profileTypeMismatch) hints.push('Review the technician roles selected in your profile');
+  if (match.offer.requiredHabilitations.length > 0 && match.score.breakdown.habilitation === 0) {
+    hints.push('Add or update your aircraft ratings and experience');
+  }
+  if (match.offer.licenseCode && match.score.breakdown.license === 0) {
+    hints.push('Add your current licence information');
+  }
+  if (match.score.breakdown.contractFit === 0) hints.push('Review your preferred contract types');
+  if (match.score.breakdown.location === 0) hints.push('Update your preferred work location');
+
+  const uniqueHints = [...new Set(hints)].slice(0, 3);
+  return uniqueHints.length > 0 ? uniqueHints : ['Review your qualifications and matching preferences'];
+}
+
 export default function TechnicianDashboard() {
   const router = useRouter();
   const { profile, loading: authLoading } = useAuth();
@@ -122,7 +179,9 @@ export default function TechnicianDashboard() {
   const [pendingApplications, setPendingApplications] = useState(0);
   const [documentCount, setDocumentCount] = useState(0);
   const [countsLoading, setCountsLoading] = useState(true);
-  const [topMatchOffers, setTopMatchOffers] = useState<OfferMatchResult[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState(true);
+  const [matchesLoadFailed, setMatchesLoadFailed] = useState(false);
+  const [bestEligibleMatch, setBestEligibleMatch] = useState<OfferMatchResult | null>(null);
 
   // Unread activity badges for NavCards
   const [unreadDirectOffers, setUnreadDirectOffers] = useState(0);
@@ -183,7 +242,11 @@ export default function TechnicianDashboard() {
       if (!profile?.id) return;
       // Fase 5.4 — techSession es `LocalTechnicianSession | null`.
       const techId = techSession?.technicianId;
-      if (!techId) return;
+      if (!techId) {
+        setMatchesLoadFailed(false);
+        setMatchesLoading(false);
+        return;
+      }
       // Señal de cancelacion: sin ella, dos cargas en vuelo escriben las dos y
       // gana la que termine la ultima. getOfferMatchesForTechnician() carga y
       // espera su propio catalogo de ratings, asi que aqui el score nunca sale
@@ -198,17 +261,33 @@ export default function TechnicianDashboard() {
         activityRepository.getUnreadCount('technician', techId, ['direct_offer_received']),
         activityRepository.getUnreadCount('technician', techId, ['application_accepted', 'application_rejected']),
         activityRepository.getUnreadCount('technician', techId, ['chat_message_received']),
+        inboxRepository.getTechnicianInbox(techId),
         getOfferMatchesForTechnician(techId),
-      ]).then(([docs, reqs, apps, chats, unreadOffers, unreadApps, unreadChatCount, matches]) => {
+      ]).then(([docs, reqs, apps, chats, unreadOffers, unreadApps, unreadChatCount, inbox, matches]) => {
         if (!signal.active) return;
         setDocumentCount(docs.count ?? 0);
         setPendingDirectOffers(reqs.count ?? 0);
         setPendingApplications(apps.count ?? 0);
         setChatCount(chats.count ?? 0);
-        setTopMatchOffers((matches as OfferMatchResult[]).slice(0, 3));
+        // This card is for discovering a new opportunity. Once either side
+        // has created a relation for an offer, its next step lives in direct
+        // offers, applications or chats — it must not be recommended again.
+        const relatedOfferIds = new Set(
+          inbox.map((relation) => relation.offerId).filter((offerId): offerId is string => Boolean(offerId)),
+        );
+        setBestEligibleMatch((matches as OfferMatchResult[]).find(
+          ({ offer, score }) => score.blockers.length === 0 && !relatedOfferIds.has(offer.id),
+        ) ?? null);
+        setMatchesLoadFailed(false);
+        setMatchesLoading(false);
         setUnreadDirectOffers(unreadOffers as number);
         setUnreadApplications(unreadApps as number);
         setUnreadChats(unreadChatCount as number);
+      }).catch(() => {
+        if (!signal.active) return;
+        setBestEligibleMatch(null);
+        setMatchesLoadFailed(true);
+        setMatchesLoading(false);
       });
       return () => { signal.active = false; };
     }, [profile?.id, techSession?.technicianId]),
@@ -259,6 +338,9 @@ export default function TechnicianDashboard() {
   ];
 
   const actionWidthStyle = isNarrow ? styles.actionFull : styles.actionHalf;
+  const showOpportunity = Boolean(
+    bestEligibleMatch && bestEligibleMatch.score.total >= MINIMUM_USEFUL_MATCH,
+  );
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -338,43 +420,180 @@ export default function TechnicianDashboard() {
             ) : null}
 
             <View style={styles.panel}>
-              <SectionTitle label="Recommended for you" value="By match %" />
-              {topMatchOffers.length === 0 ? (
-                <View style={styles.emptyRecent}>
-                  <Text style={styles.emptyRecentTitle}>No offers available</Text>
-                  <Text style={styles.emptyRecentText}>
-                    Published offers matching your profile will appear here.
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.matchList}>
-                  {topMatchOffers.map(({ offer, score }) => (
-                    <TouchableOpacity
-                      key={offer.id}
-                      style={styles.matchRow}
-                      onPress={() => router.push(`/technician/offers/${offer.id}` as any)}
-                      activeOpacity={0.75}
-                    >
-                      <View style={styles.matchRowInfo}>
-                        <Text style={styles.matchRowTitle} numberOfLines={1}>{offer.title}</Text>
-                        <Text style={styles.matchRowMeta} numberOfLines={1}>
-                          {offer.locationCity}, {offer.locationCountry}
+              {matchesLoading ? (
+                <>
+                  <SectionTitle label="Finding your best opportunity" />
+                  <View style={styles.matchesLoadingCard}>
+                    <ActivityIndicator size="small" color={ui.accentStrong} />
+                    <Text style={styles.matchesLoadingText}>Comparing published offers with your profile...</Text>
+                  </View>
+                </>
+              ) : unreadChats > 0 ? (
+                <>
+                  <SectionTitle
+                    label="Your next action"
+                    value={`${unreadChats} updated chat${unreadChats !== 1 ? 's' : ''}`}
+                  />
+                  <View style={styles.messageActionCard}>
+                    <View style={styles.messageActionTop}>
+                      <View style={styles.messageActionIcon}>
+                        <MessageCircle size={20} color={ui.blue} strokeWidth={2} />
+                      </View>
+                      <View style={styles.messageActionCopy}>
+                        <Text style={styles.messageActionTitle}>Reply to your latest message</Text>
+                        <Text style={styles.messageActionText}>
+                          You have new messages in {unreadChats} active hiring conversation{unreadChats !== 1 ? 's' : ''}.
+                          {' '}Continue the conversation before exploring new offers.
                         </Text>
                       </View>
-                      <View style={styles.matchRowRight}>
-                        <MatchBadge score={score.total} notEligible={score.blockers.length > 0} />
-                        <Text style={styles.matchRowArrow}>{'>'}</Text>
-                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.messageActionPrimary}
+                      onPress={() => router.push('/technician/chats' as any)}
+                      activeOpacity={0.78}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open chats"
+                    >
+                      <Text style={styles.messageActionPrimaryText}>Open chats</Text>
                     </TouchableOpacity>
-                  ))}
+                  </View>
+                </>
+              ) : matchesLoadFailed ? (
+                <>
+                  <SectionTitle label="Opportunities unavailable" />
+                  <View style={styles.matchesLoadingCard}>
+                    <XCircle size={20} color={ui.red} strokeWidth={2} />
+                    <Text style={styles.matchesLoadingText}>
+                      We could not compare your profile with published offers right now.
+                    </Text>
+                  </View>
                   <TouchableOpacity
                     style={styles.matchViewAll}
                     onPress={() => router.push('/technician/offers' as any)}
                     activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="Browse all offers"
                   >
-                    <Text style={styles.matchViewAllText}>View all offers →</Text>
+                    <Text style={styles.matchViewAllText}>Browse all offers →</Text>
                   </TouchableOpacity>
-                </View>
+                </>
+              ) : showOpportunity && bestEligibleMatch ? (
+                <>
+                  <SectionTitle
+                    label={bestEligibleMatch.score.total >= 60 ? 'Your next opportunity' : 'Potential opportunity'}
+                    value={bestEligibleMatch.score.total >= 60 ? 'Best match' : 'Worth exploring'}
+                  />
+                  <TouchableOpacity
+                    style={styles.featuredOpportunity}
+                    onPress={() => router.push(`/technician/offers/${bestEligibleMatch.offer.id}` as any)}
+                    activeOpacity={0.78}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View offer ${bestEligibleMatch.offer.title}`}
+                  >
+                    <View style={styles.featuredOpportunityTop}>
+                      <View style={styles.featuredOpportunityCopy}>
+                        <View style={styles.opportunityLabelRow}>
+                          <View style={styles.opportunityIcon}>
+                            <BriefcaseBusiness size={16} color={ui.accentStrong} strokeWidth={2} />
+                          </View>
+                          <Text style={styles.opportunityLabel}>
+                            {getMatchDisplayLabel(bestEligibleMatch.offer, bestEligibleMatch.score)}
+                          </Text>
+                        </View>
+                        <Text style={styles.featuredOpportunityTitle} numberOfLines={2}>
+                          {bestEligibleMatch.offer.title}
+                        </Text>
+                        <Text style={styles.featuredOpportunityMeta} numberOfLines={2}>
+                          {[bestEligibleMatch.offer.locationCity, bestEligibleMatch.offer.locationCountry]
+                            .filter(Boolean)
+                            .join(', ')}
+                          {' · '}
+                          {getContractTypeLabel(bestEligibleMatch.offer.contractType)}
+                        </Text>
+                      </View>
+                      <MatchBadge score={bestEligibleMatch.score.total} context="match" />
+                    </View>
+
+                    <View style={styles.opportunityReasons}>
+                      {getOpportunityReasons(bestEligibleMatch).map((reason) => (
+                        <View key={reason} style={styles.opportunityReasonRow}>
+                          <CheckCircle size={15} color={ui.green} strokeWidth={2.2} />
+                          <Text style={styles.opportunityReasonText}>{reason}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {bestEligibleMatch.score.total < 60 ? (
+                      <View style={styles.opportunityCaution}>
+                        <Clock size={15} color={ui.amber} strokeWidth={2.2} />
+                        <Text style={styles.opportunityCautionText}>
+                          Check before applying: {getOpportunityCaution(bestEligibleMatch)}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    <View style={styles.opportunityFooter}>
+                      <Text style={styles.opportunityFooterText}>View offer</Text>
+                      <Text style={styles.opportunityFooterArrow}>→</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.matchViewAll}
+                    onPress={() => router.push('/technician/offers' as any)}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel="Browse all offers"
+                  >
+                    <Text style={styles.matchViewAllText}>Browse all offers →</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <SectionTitle label="Improve your matches" value="Profile actions" />
+                  <View style={styles.improveMatchesCard}>
+                    <View style={styles.improveMatchesTop}>
+                      <View style={styles.improveMatchesIcon}>
+                        <IdCard size={20} color={ui.accentStrong} strokeWidth={2} />
+                      </View>
+                      <View style={styles.improveMatchesCopy}>
+                        <Text style={styles.improveMatchesTitle}>No strong opportunities yet</Text>
+                        <Text style={styles.improveMatchesText}>
+                          Update the details that most influence your matches with published offers.
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.improvementHints}>
+                      {getProfileImprovementHints(bestEligibleMatch).map((hint) => (
+                        <View key={hint} style={styles.improvementHintRow}>
+                          <View style={styles.improvementHintDot} />
+                          <Text style={styles.improvementHintText}>{hint}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <View style={[styles.improveMatchesActions, isNarrow && styles.improveMatchesActionsNarrow]}>
+                      <TouchableOpacity
+                        style={[styles.improveMatchesPrimary, isNarrow && styles.improveMatchesActionNarrow]}
+                        onPress={() => router.push('/technician/profile' as any)}
+                        activeOpacity={0.78}
+                        accessibilityRole="button"
+                        accessibilityLabel="Complete profile"
+                      >
+                        <Text style={styles.improveMatchesPrimaryText}>Complete profile</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.improveMatchesSecondary, isNarrow && styles.improveMatchesActionNarrow]}
+                        onPress={() => router.push('/technician/offers' as any)}
+                        activeOpacity={0.75}
+                        accessibilityRole="button"
+                        accessibilityLabel="Browse all offers"
+                      >
+                        <Text style={styles.improveMatchesSecondaryText}>Browse all offers →</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </>
               )}
             </View>
           </View>
@@ -1052,75 +1271,295 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: ui.textMuted,
   },
-  emptyRecent: {
+  messageActionCard: {
     borderRadius: 18,
     backgroundColor: ui.surfaceSoft,
     borderWidth: 1,
     borderColor: ui.borderSoft,
     padding: spacing.md,
   },
-  emptyRecentTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: ui.text,
-  },
-  matchList: {
-    gap: 4,
-  },
-  matchRow: {
+  messageActionTop: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: ui.borderSoft,
-    backgroundColor: ui.surfaceSoft,
-    gap: spacing.sm,
+    alignItems: 'flex-start',
+    gap: 12,
   },
-  matchRowInfo: {
+  messageActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: ui.blueSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  messageActionCopy: {
     flex: 1,
     minWidth: 0,
   },
-  matchRowTitle: {
-    fontSize: 13,
-    lineHeight: 18,
+  messageActionTitle: {
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '700',
     color: ui.text,
   },
-  matchRowMeta: {
-    marginTop: 2,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '500',
-    color: ui.textMuted,
+  messageActionText: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: ui.textSoft,
   },
-  matchRowRight: {
+  messageActionPrimary: {
+    minHeight: 44,
+    marginTop: spacing.md,
+    borderRadius: 14,
+    backgroundColor: ui.blue,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageActionPrimaryText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  matchesLoadingCard: {
+    minHeight: 112,
+    borderRadius: 18,
+    backgroundColor: ui.surfaceSoft,
+    borderWidth: 1,
+    borderColor: ui.borderSoft,
+    padding: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    flexShrink: 0,
+    justifyContent: 'center',
+    gap: spacing.sm,
   },
-  matchRowArrow: {
+  matchesLoadingText: {
+    flexShrink: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: ui.textSoft,
+  },
+  featuredOpportunity: {
+    borderRadius: 18,
+    backgroundColor: ui.surfaceSoft,
+    borderWidth: 1,
+    borderColor: ui.borderSoft,
+    padding: spacing.md,
+  },
+  featuredOpportunityTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  featuredOpportunityCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  opportunityLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  opportunityIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 10,
+    backgroundColor: ui.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  opportunityLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    color: ui.accentStrong,
+  },
+  featuredOpportunityTitle: {
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '700',
+    color: ui.text,
+  },
+  featuredOpportunityMeta: {
+    marginTop: 5,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: ui.textSoft,
+  },
+  opportunityReasons: {
+    gap: 7,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: ui.borderSoft,
+  },
+  opportunityReasonRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  opportunityReasonText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: ui.textSoft,
+  },
+  opportunityCaution: {
+    marginTop: spacing.md,
+    borderRadius: 12,
+    backgroundColor: ui.amberSoft,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  opportunityCautionText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: ui.amber,
+  },
+  opportunityFooter: {
+    minHeight: 44,
+    marginTop: spacing.md,
+    borderRadius: 14,
+    backgroundColor: ui.accentStrong,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  opportunityFooterText: {
     fontSize: 13,
     fontWeight: '700',
-    color: ui.textMuted,
+    color: colors.white,
+  },
+  opportunityFooterArrow: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.white,
   },
   matchViewAll: {
     alignItems: 'center',
-    paddingVertical: 8,
+    justifyContent: 'center',
+    minHeight: 44,
+    marginTop: spacing.xs,
   },
   matchViewAllText: {
     fontSize: 13,
     fontWeight: '700',
-    color: ui.accent,
+    color: ui.accentStrong,
   },
-  emptyRecentText: {
+  improveMatchesCard: {
+    borderRadius: 18,
+    backgroundColor: ui.surfaceSoft,
+    borderWidth: 1,
+    borderColor: ui.borderSoft,
+    padding: spacing.md,
+  },
+  improveMatchesTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  improveMatchesIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: ui.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  improveMatchesCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  improveMatchesTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: ui.text,
+  },
+  improveMatchesText: {
     fontSize: 12,
     lineHeight: 17,
     color: ui.textSoft,
     fontWeight: '600',
     marginTop: 4,
+  },
+  improvementHints: {
+    gap: 8,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: ui.borderSoft,
+  },
+  improvementHintRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  improvementHintDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: ui.accentStrong,
+    marginTop: 5,
+  },
+  improvementHintText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: ui.textSoft,
+  },
+  improveMatchesActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  improveMatchesActionsNarrow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  improveMatchesActionNarrow: {
+    width: '100%',
+  },
+  improveMatchesPrimary: {
+    minHeight: 44,
+    borderRadius: 14,
+    backgroundColor: ui.accentStrong,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  improveMatchesPrimaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  improveMatchesSecondary: {
+    minHeight: 44,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  improveMatchesSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: ui.accentStrong,
   },
   iconWrapper: {
     position: 'relative',

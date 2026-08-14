@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   StyleSheet,
@@ -25,7 +26,13 @@ import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { useAuth } from '../../src/auth/AuthContext';
 import { useCompanySession, useSession } from '../../src/state/SessionContext';
 import { supabase } from '../../src/lib/supabase';
-import { canManageCompanyMembers } from '../../src/utils/companyPermissionsV2';
+import {
+  canManageCompanyMembers,
+  canManageOffers,
+  canReviewApplications,
+  canSendChatMessages,
+  canSendDirectOffers,
+} from '../../src/utils/companyPermissionsV2';
 import { activityRepository } from '../../src/repositories/v2/activityRepository';
 import {
   CompanyBadge,
@@ -53,6 +60,25 @@ type Metric = {
   value: number;
   detail: string;
   icon: DashboardIconKind;
+  tone: string;
+  softTone: string;
+};
+
+type PublishedOfferSummary = {
+  id: string;
+  title: string;
+  contractType: string;
+};
+
+type HiringAction = {
+  icon: DashboardIconKind;
+  title: string;
+  description: string;
+  status: string;
+  primaryLabel: string;
+  primaryPath: string;
+  secondaryLabel?: string;
+  secondaryPath?: string;
   tone: string;
   softTone: string;
 };
@@ -113,6 +139,10 @@ export default function CompanyDashboard() {
   const isWide = width >= 900;
   const isNarrow = width < 390;
   const canViewTeam = canManageCompanyMembers(companyMemberRole);
+  const canManageJobOffers = canManageOffers(companyMemberRole);
+  const canReviewCandidates = canReviewApplications(companyMemberRole);
+  const canMessageCandidates = canSendChatMessages(companyMemberRole);
+  const canContactCandidates = canSendDirectOffers(companyMemberRole);
 
   const [supabaseCompany, setSupabaseCompany] = useState<SupabaseCompany | null>(null);
   const [memberDisplayName, setMemberDisplayName] = useState<string>('');
@@ -120,8 +150,10 @@ export default function CompanyDashboard() {
   const [chatCount, setChatCount] = useState(0);
   const [pendingDirectOffers, setPendingDirectOffers] = useState(0);
   const [publishedOffers, setPublishedOffers] = useState(0);
-  const [publishedOffersList, setPublishedOffersList] = useState<{ id: string; title: string; contractType: string }[]>([]);
+  const [publishedOffersList, setPublishedOffersList] = useState<PublishedOfferSummary[]>([]);
   const [teamMembers, setTeamMembers] = useState(0);
+  const [dashboardDataLoading, setDashboardDataLoading] = useState(true);
+  const [activityLoading, setActivityLoading] = useState(true);
 
   // Unread activity badges for NavCards
   const [unreadApplications, setUnreadApplications] = useState(0);
@@ -141,7 +173,11 @@ export default function CompanyDashboard() {
   }, [authLoading, profile]);
 
   useEffect(() => {
-    if (!companyId) return;
+    if (!companyId) {
+      setDashboardDataLoading(false);
+      return;
+    }
+    setDashboardDataLoading(true);
 
     supabase
       .from('companies')
@@ -192,12 +228,19 @@ export default function CompanyDashboard() {
           contractType: o.contract_type,
         })),
       );
+    }).catch(() => {
+      setPublishedOffersList([]);
+    }).finally(() => {
+      setDashboardDataLoading(false);
     });
   }, [companyId]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!companyId) return;
+      if (!companyId) {
+        setActivityLoading(false);
+        return;
+      }
       Promise.all([
         activityRepository.getUnreadCount('company', companyId, ['application_received']),
         activityRepository.getUnreadCount('company', companyId, ['direct_offer_accepted', 'direct_offer_rejected']),
@@ -206,6 +249,12 @@ export default function CompanyDashboard() {
         setUnreadApplications(apps);
         setUnreadDirectOffers(directOffers);
         setUnreadChats(chats);
+      }).catch(() => {
+        setUnreadApplications(0);
+        setUnreadDirectOffers(0);
+        setUnreadChats(0);
+      }).finally(() => {
+        setActivityLoading(false);
       });
     }, [companyId]),
   );
@@ -253,6 +302,79 @@ export default function CompanyDashboard() {
       softTone: companyUi.blueSoft,
     },
   ];
+
+  const focusOffer = publishedOffersList[0] ?? null;
+  const nextHiringAction: HiringAction = unreadChats > 0
+    ? {
+        icon: 'chats',
+        title: canMessageCandidates ? 'Reply to a candidate' : 'View the latest candidate message',
+        description: `${unreadChats} hiring conversation${unreadChats !== 1 ? 's have' : ' has'} new messages waiting.`,
+        status: `${unreadChats} updated chat${unreadChats !== 1 ? 's' : ''}`,
+        primaryLabel: 'Open chats',
+        primaryPath: '/company/chats',
+        tone: companyUi.blue,
+        softTone: companyUi.blueSoft,
+      }
+    : unreadDirectOffers > 0
+      ? {
+          icon: 'directOffers',
+          title: 'Review technician responses',
+          description: unreadDirectOffers === 1
+            ? 'One sent offer has a new technician response to review.'
+            : `${unreadDirectOffers} sent offers have new technician responses to review.`,
+          status: `${unreadDirectOffers} new`,
+          primaryLabel: 'Review responses',
+          primaryPath: '/company/direct-offers',
+          tone: companyUi.amber,
+          softTone: companyUi.amberSoft,
+        }
+      : pendingApplications > 0
+        ? {
+            icon: 'applications',
+            title: canReviewCandidates ? 'Review pending applications' : 'View pending applications',
+            description: `${pendingApplications} application${pendingApplications !== 1 ? 's are' : ' is'} waiting for review. Start with the newest candidates.`,
+            status: `${pendingApplications} pending`,
+            primaryLabel: canReviewCandidates ? 'Review applications' : 'View applications',
+            primaryPath: '/company/applications',
+            tone: companyUi.amber,
+            softTone: companyUi.amberSoft,
+          }
+        : focusOffer
+          ? {
+              icon: 'search',
+              title: `${canContactCandidates ? 'Find' : 'Explore'} candidates for “${focusOffer.title}”`,
+              description: `This ${focusOffer.contractType.replace(/_/g, ' ')} role is published and ready to be matched with qualified technicians.`,
+              status: `${publishedOffersList.length} active offer${publishedOffersList.length !== 1 ? 's' : ''}`,
+              primaryLabel: 'Search matching technicians',
+              primaryPath: `/company/search?offerId=${focusOffer.id}`,
+              secondaryLabel: 'View offer',
+              secondaryPath: `/company/offers/${focusOffer.id}`,
+              tone: companyUi.accent,
+              softTone: companyUi.accentSoft,
+            }
+          : publishedOffers > 0
+            ? {
+                icon: 'offers',
+                title: 'Prepare an offer for candidate search',
+                description: 'Your published offers are not currently visible to technicians. Review their visibility before searching.',
+                status: 'Needs attention',
+                primaryLabel: 'View job offers',
+                primaryPath: '/company/offers',
+                tone: companyUi.amber,
+                softTone: companyUi.amberSoft,
+              }
+            : {
+                icon: 'offers',
+                title: canManageJobOffers ? 'Publish your first job offer' : 'No active job offers',
+                description: canManageJobOffers
+                  ? 'Create a role to receive applications and start matching with qualified technicians.'
+                  : 'An admin or recruiter needs to publish an offer before the team can start finding candidates.',
+                status: canManageJobOffers ? 'Get started' : 'No active roles',
+                primaryLabel: canManageJobOffers ? 'Create an offer' : 'View job offers',
+                primaryPath: canManageJobOffers ? '/company/offers/new' : '/company/offers',
+                tone: companyUi.accent,
+                softTone: companyUi.accentSoft,
+              };
 
   // Always full-width on mobile — 2-column grid truncates card titles on small screens
   const cardWidthStyle = styles.actionFull;
@@ -328,35 +450,55 @@ export default function CompanyDashboard() {
               />
             ) : null}
 
-            <CompanyCard style={styles.directOfferPanel}>
-              <SectionTitle label="Send a direct offer" value={`${publishedOffersList.length} available`} />
-              <Text style={styles.directOfferHelper}>
-                Select an offer below and go to Search to send it directly to a technician.
-              </Text>
-              {publishedOffersList.length === 0 ? (
-                <View style={styles.directOfferEmpty}>
-                  <Text style={styles.directOfferEmptyTitle}>No published offers yet</Text>
-                  <TouchableOpacity onPress={() => router.push('/company/offers/new' as any)}>
-                    <Text style={styles.directOfferCreateLink}>Create an offer →</Text>
-                  </TouchableOpacity>
-                </View>
+            <CompanyCard>
+              {dashboardDataLoading || activityLoading ? (
+                <>
+                  <SectionTitle label="Finding your next hiring action" />
+                  <View style={styles.nextActionLoading}>
+                    <ActivityIndicator size="small" color={companyUi.accent} />
+                    <Text style={styles.nextActionLoadingText}>Checking offers and candidate activity...</Text>
+                  </View>
+                </>
               ) : (
-                <View style={styles.directOfferList}>
-                  {publishedOffersList.map((offer) => (
-                    <TouchableOpacity
-                      key={offer.id}
-                      style={styles.directOfferRow}
-                      onPress={() => router.push(`/company/search?offerId=${offer.id}` as any)}
-                      activeOpacity={0.75}
-                    >
-                      <View style={styles.directOfferRowInfo}>
-                        <Text style={styles.directOfferRowTitle} numberOfLines={1}>{offer.title}</Text>
-                        <Text style={styles.directOfferRowMeta}>{offer.contractType}</Text>
+                <>
+                  <SectionTitle label="Your next hiring action" value={nextHiringAction.status} />
+                  <View style={styles.nextActionCard}>
+                    <View style={styles.nextActionTop}>
+                      <IconBox
+                        icon={DASHBOARD_ICONS[nextHiringAction.icon]}
+                        color={nextHiringAction.tone}
+                        backgroundColor={nextHiringAction.softTone}
+                      />
+                      <View style={styles.nextActionCopy}>
+                        <Text style={styles.nextActionTitle}>{nextHiringAction.title}</Text>
+                        <Text style={styles.nextActionDescription}>{nextHiringAction.description}</Text>
                       </View>
-                      <Text style={styles.directOfferRowArrow}>Send offer →</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                    </View>
+
+                    <View style={[styles.nextActionButtons, isNarrow && styles.nextActionButtonsNarrow]}>
+                      <TouchableOpacity
+                        style={[styles.nextActionPrimary, isNarrow && styles.nextActionButtonNarrow]}
+                        onPress={() => router.push(nextHiringAction.primaryPath as any)}
+                        activeOpacity={0.78}
+                        accessibilityRole="button"
+                        accessibilityLabel={nextHiringAction.primaryLabel}
+                      >
+                        <Text style={styles.nextActionPrimaryText}>{nextHiringAction.primaryLabel}</Text>
+                      </TouchableOpacity>
+                      {nextHiringAction.secondaryLabel && nextHiringAction.secondaryPath ? (
+                        <TouchableOpacity
+                          style={[styles.nextActionSecondary, isNarrow && styles.nextActionButtonNarrow]}
+                          onPress={() => router.push(nextHiringAction.secondaryPath as any)}
+                          activeOpacity={0.75}
+                          accessibilityRole="button"
+                          accessibilityLabel={nextHiringAction.secondaryLabel}
+                        >
+                          <Text style={styles.nextActionSecondaryText}>{nextHiringAction.secondaryLabel}</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                </>
               )}
             </CompanyCard>
           </View>
@@ -856,13 +998,96 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: companyUi.textMuted,
   },
-  directOfferPanel: { gap: spacing.sm },
-  directOfferHelper: {
-    marginTop: -6,
+  nextActionLoading: {
+    minHeight: 112,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+    backgroundColor: companyUi.surfaceSoft,
+    padding: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  nextActionLoadingText: {
+    flexShrink: 1,
     fontSize: 12,
     lineHeight: 17,
+    fontWeight: '600',
+    color: companyUi.textSoft,
+  },
+  nextActionCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: companyUi.borderSoft,
+    backgroundColor: companyUi.surfaceSoft,
+    padding: spacing.md,
+  },
+  nextActionTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  nextActionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  nextActionTitle: {
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '700',
+    color: companyUi.text,
+  },
+  nextActionDescription: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
     fontWeight: '500',
     color: companyUi.textSoft,
+  },
+  nextActionButtons: {
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: companyUi.borderSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  nextActionButtonsNarrow: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  nextActionButtonNarrow: {
+    width: '100%',
+  },
+  nextActionPrimary: {
+    minHeight: 44,
+    borderRadius: 14,
+    backgroundColor: companyUi.accent,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nextActionPrimaryText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  nextActionSecondary: {
+    minHeight: 44,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nextActionSecondaryText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: companyUi.accent,
   },
   directOfferEmpty: {
     borderRadius: 16,
@@ -884,51 +1109,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '500',
     color: companyUi.textSoft,
-  },
-  directOfferCreateLink: {
-    marginTop: 6,
-    fontSize: 13,
-    fontWeight: '700',
-    color: companyUi.accent,
-  },
-  directOfferList: {
-    gap: 2,
-  },
-  directOfferRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: companyUi.borderSoft,
-    backgroundColor: companyUi.surfaceSoft,
-    gap: spacing.sm,
-  },
-  directOfferRowInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  directOfferRowTitle: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-    color: companyUi.text,
-  },
-  directOfferRowMeta: {
-    marginTop: 2,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '500',
-    color: companyUi.textMuted,
-    textTransform: 'capitalize',
-  },
-  directOfferRowArrow: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: companyUi.accent,
-    flexShrink: 0,
   },
   iconWrapper: {
     position: 'relative',

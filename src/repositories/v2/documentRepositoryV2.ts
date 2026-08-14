@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase';
 import { Document } from '../../types/document';
 import { DocumentStatus } from '../../types/enums';
 import { mapDocumentRow, throwIfError, throwIfNoRows } from './supabaseMappers';
+import { removeDocumentFromStorage } from '../../lib/documentStorage';
 
 export const documentRepositoryV2 = {
   async getAll(): Promise<Document[]> {
@@ -75,10 +76,17 @@ export const documentRepositoryV2 = {
   },
 
   async remove(id: string): Promise<boolean> {
-    // `return true` incondicional era el caso más claro de éxito falso: la
-    // política docs_delete_own sólo deja borrar los documentos propios, así
-    // que cualquier otra combinación devolvía 0 filas, cero error, y la UI
-    // decía "eliminado" mientras el fichero seguía ahí.
+    const document = await this.getById(id);
+    if (!document) {
+      throw new Error('Could not delete this document — it may no longer exist, or you may not have permission.');
+    }
+
+    // Remove the sensitive object first. If the row deletion then fails, the
+    // database retains an auditable reference to a missing object. Deleting
+    // the row first could instead leave an undiscoverable file in Storage.
+    const storageError = await removeDocumentFromStorage(document.storagePath);
+    if (storageError) throw new Error(`Could not delete the stored document: ${storageError}`);
+
     const { data, error } = await supabase.from('documents').delete().eq('id', id).select('id');
     throwIfError(error);
     throwIfNoRows(data, 'Could not delete this document — it may no longer exist, or you may not have permission.');

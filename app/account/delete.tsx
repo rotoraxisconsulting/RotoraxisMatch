@@ -91,7 +91,7 @@ export default function DeleteAccountScreen() {
         <View style={styles.doneWrap}>
           <Text style={styles.doneIcon}>✓</Text>
           <Text style={styles.doneTitle}>Account deleted</Text>
-          <Text style={styles.doneSub}>Your data has been removed. Redirecting…</Text>
+          <Text style={styles.doneSub}>Your account, direct identifiers and uploaded files have been removed. Redirecting…</Text>
         </View>
       </SafeAreaView>
     );
@@ -119,23 +119,25 @@ export default function DeleteAccountScreen() {
           </Text>
         </View>
 
-        {/* What will be deleted */}
+        {/* What happens to the account data */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>What will be deleted</Text>
+          <Text style={styles.cardTitle}>What happens to your data</Text>
           {isTechnician ? (
             <>
-              <BulletItem text="Your profile and all personal information" />
+              <BulletItem text="Your direct profile identifiers and personal contact information" />
               <BulletItem text="All uploaded documents (licenses, medicals, IDs) — files removed from storage" />
               <BulletItem text="Cover notes on applications" />
               <BulletItem text="Chat messages you sent (replaced with [Message deleted])" />
               <BulletItem text="Your authentication credentials" />
+              <BulletItem text="A limited professional and marketplace record remains linked by an internal account identifier, as described in the Privacy Policy" />
             </>
           ) : (
             <>
               <BulletItem text="Your company membership and profile information" />
               <BulletItem text="Chat messages you sent (replaced with [Message deleted])" />
               <BulletItem text="Your authentication credentials" />
-              <BulletItem text="Note: the company account and its data remain if other members exist" />
+              <BulletItem text="A limited deleted-account record retains the internal account identifier" />
+              <BulletItem text="The company profile, offers and marketplace history can remain for other members and platform integrity" />
             </>
           )}
         </View>
@@ -154,8 +156,8 @@ export default function DeleteAccountScreen() {
           <Text style={styles.cardTitle}>Before you go</Text>
           <Text style={styles.surveyIntro}>
             Why are you leaving? This is optional — you can delete your account without answering.
-            Your answer is stored on its own and is not linked to your account, so we will not know
-            it was you.
+            The stored row has no account ID, but your role, the day and any details you write could
+            still make the answer indirectly identifiable. Please do not include personal details.
           </Text>
           {DELETION_REASON_CODES.map((code) => (
             <ReasonOption

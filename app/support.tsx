@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Linking,
+  Alert,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,7 +22,9 @@ export default function SupportScreen() {
   const isWide = width >= 768;
 
   function openEmail(email: string, subject: string) {
-    Linking.openURL(`mailto:${email}?subject=${encodeURIComponent(subject)}`);
+    void Linking.openURL(`mailto:${email}?subject=${encodeURIComponent(subject)}`).catch(() => {
+      Alert.alert('Email unavailable', `Please write to ${email}.`);
+    });
   }
 
   return (
@@ -59,9 +62,9 @@ export default function SupportScreen() {
         <SupportCard
           icon="🗑"
           title="Delete my account"
-          description="You can delete your account directly from the app. We will erase all your personal data."
+          description="Delete your account, direct identifiers and uploaded documents. The Privacy Policy explains the limited marketplace records that can remain."
           action="Go to delete account"
-          onPress={() => router.push('/account/delete' as any)}
+          onPress={() => router.push('/delete-account' as any)}
         />
 
         <View style={styles.legalLinks}>

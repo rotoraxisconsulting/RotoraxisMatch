@@ -31,6 +31,7 @@ import { documentRepositoryV2 } from '../../src/repositories/v2/documentReposito
 import {
   validateDocumentFile,
   uploadDocumentToStorage,
+  removeDocumentFromStorage,
 } from '../../src/lib/documentStorage';
 import { colors, spacing } from '../../src/theme';
 import type { DocumentStatus, DocumentType, TechnicianDocument } from '../../src/types';
@@ -166,6 +167,34 @@ export default function TechnicianDocumentsScreen() {
     setUploading(true);
     setUploadError(null);
 
+    // A medical file must never leave the device unless its append-only
+    // consent record is already present. Recording it after the upload allowed a
+    // database failure to leave health data in Storage without the intended
+    // audit evidence. If a later file upload fails, the consent record simply
+    // records the affirmative action the user already took in this screen.
+    if (uploadType === 'medical') {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setUploadError('Your session could not be verified. No medical document was uploaded.');
+        setUploading(false);
+        return;
+      }
+
+      const { error: consentError } = await supabase.from('user_consents').upsert(
+        {
+          user_id: user.id,
+          consent_type: 'medical_document',
+          consent_version: CONSENT_VERSION,
+        },
+        { onConflict: 'user_id,consent_type,consent_version', ignoreDuplicates: true },
+      );
+      if (consentError) {
+        setUploadError('Could not record your medical-data consent. No document was uploaded.');
+        setUploading(false);
+        return;
+      }
+    }
+
     const { storagePath, error: storageError } = await uploadDocumentToStorage(
       pickedFile.uri,
       pickedFile.mimeType,
@@ -189,42 +218,29 @@ export default function TechnicianDocumentsScreen() {
         status: 'pending',
         uploadedAt: new Date().toISOString(),
       });
-
-      // Record medical consent. ignoreDuplicates: true — user_consents has
-      // no UPDATE policy (deliberate: it's an immutable audit trail, see
-      // migration 015), so a second medical upload under the same
-      // consent_version must skip the conflicting row instead of taking
-      // the default upsert's ON CONFLICT DO UPDATE path, which RLS would
-      // reject. Logged rather than thrown: the document row above already
-      // saved successfully, and this is a secondary audit write — failing
-      // it should not make the upload look like it failed.
-      if (uploadType === 'medical') {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { error: consentError } = await supabase.from('user_consents').upsert(
-            {
-              user_id: user.id,
-              consent_type: 'medical_document',
-              consent_version: CONSENT_VERSION,
-            },
-            { onConflict: 'user_id,consent_type,consent_version', ignoreDuplicates: true },
-          );
-          if (consentError) console.error('Failed to record medical consent:', consentError);
-        }
-      }
-
-      setUploadOpen(false);
-      setUploadType(null);
-      setPickedFile(null);
-      setMedicalConsentAccepted(false);
-      await refresh();
     } catch (err) {
-      setUploadError(
-        err instanceof Error ? err.message : 'Failed to save document record.',
-      );
-    } finally {
+      const saveError = err instanceof Error ? err.message : 'Failed to save document record.';
+      const cleanupError = await removeDocumentFromStorage(storagePath);
+      setUploadError(cleanupError
+        ? `${saveError} The uploaded file could not be rolled back; please contact support.`
+        : saveError);
       setUploading(false);
+      return;
     }
+
+    // From this point the file and its database row both exist. A refresh
+    // failure must never trigger Storage rollback or it would leave a valid
+    // row pointing at a missing private object.
+    setUploadOpen(false);
+    setUploadType(null);
+    setPickedFile(null);
+    setMedicalConsentAccepted(false);
+    try {
+      await refresh();
+    } catch (refreshError) {
+      console.error('Document uploaded, but the document list could not refresh:', refreshError);
+    }
+    setUploading(false);
   }
 
   function handleCancelUpload() {
@@ -325,6 +341,9 @@ export default function TechnicianDocumentsScreen() {
                   onPress={() => setMedicalConsentAccepted((v) => !v)}
                   activeOpacity={0.75}
                   disabled={uploading}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: medicalConsentAccepted, disabled: uploading }}
+                  accessibilityLabel="Consent to process this medical document for verification"
                 >
                   <View style={[styles.checkbox, medicalConsentAccepted && styles.checkboxChecked]}>
                     {medicalConsentAccepted ? <Text style={styles.checkmark}>✓</Text> : null}
