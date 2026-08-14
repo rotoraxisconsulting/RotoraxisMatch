@@ -3667,3 +3667,117 @@ y sumas 100 / 100 / 100 / 75).
 
 `tsc --noEmit` **0 errores** · `test:matching` **172/172** (168 previos + 6
 nuevos − 2 borrados; los dos reescritos no cambian el recuento).
+
+---
+
+## Corrección puntual — la categoría L (2026-08-14)
+
+No es una fase. Es una corrección de una regla mal escrita desde la Fase 3b,
+que además obligó a separar dos funciones que estaban fusionadas a propósito.
+Ni el scorer ni las Fases 8/9 se han tocado.
+
+### El error
+
+La categoría L cubre veleros, motoveleros, globos y dirigibles. No hay
+rotorcraft en ella. `getCompatibleProductType()` la agrupaba con B2/B2L/C
+devolviendo `undefined` ("cubre ambos productos"), que es cierto para esas tres
+y falso para la L. Dos consecuencias visibles:
+
+- El selector de habilitaciones del perfil no filtraba nada bajo una L: se
+  podía colgar un A320neo de una licencia L. Ése es el caso que motivó esto.
+- El formulario de oferta ofrecía la L en ofertas de HELICÓPTEROS.
+
+En el catálogo hay 3 dirigibles de gas (Zeppelin LZ N07, Skyship, Aeros) que sí
+son aeronaves de categoría L. Se quedan donde estaban.
+
+### Lo que se aprendió: eran dos preguntas, no una regla con dos usos
+
+`isLicenseCompatibleWithProductType()` se apoyaba en `getCompatibleProductType()`
+a propósito, con un comentario que decía **"one rule, two uses"** y advertía de
+que dos definiciones separadas podrían derivar. El comentario protegía de un
+riesgo real, pero diagnosticaba mal el parentesco: no eran dos usos de una
+regla, eran **dos preguntas distintas** que se responden igual para A/B1/B2/C.
+Por eso nadie las había distinguido en tres fases.
+
+| pregunta | función | la L |
+|---|---|---|
+| ¿Qué aeronaves puede colgar el técnico de esta licencia? | `getLicenseRatingProductType()` | `'Gas Airship'` |
+| ¿Puede una oferta de este producto pedir esta licencia? | `getOfferProductTypeRestriction()` | ofertas de **aviones** |
+
+La primera es una propiedad de la licencia: lo que la norma autoriza a firmar.
+La segunda es una decisión de producto sobre qué chips ofrece un formulario, y
+vive en un universo de sólo dos valores (`OfferProductType`, sin `Gas Airship`).
+
+Si se hubieran dejado fusionadas, la L habría devuelto `'Gas Airship'` también
+en el lado oferta y, como las ofertas excluyen ese producto, habría desaparecido
+**también de las ofertas de aviones**. No es lo que queremos.
+
+**Por qué la L sigue en ofertas de aviones**: una empresa con flota de ligeros
+puede publicar una oferta que pida L y describir la aeronave en el texto. La
+rama de sólo licencia ya soporta ofertas sin habilitaciones, y desde la Fase 9
+un candidato perfecto ahí llega a 100 — no hay ningún recorte que castigue esa
+forma de publicar.
+
+⚠ **No volver a fusionarlas.** Queda escrito en la cabecera de
+`licenseCategoryProductType.ts`: si mañana las dos tablas vuelven a coincidir
+fila por fila, eso es una coincidencia sobre el catálogo de ese día, no una
+regla. Siguen contestando a preguntas diferentes y la siguiente categoría rara
+las volverá a separar.
+
+### El tercer sitio: `canHold()` y el cast que mentía
+
+`getCompatibleAircraftClass()` (Fase 4, andamiaje sin cablear) reusaba la misma
+función con un `as AircraftClass` y un comentario que afirmaba que *ninguna
+categoría Part-66 mapea a dirigibles*. Con la L mapeando a `'Gas Airship'` eso
+pasa a ser falso, y el cast habría etiquetado ese valor como un tipo de dos
+miembros que no lo contiene — una mentira al compilador que revienta el día que
+alguien cablee esto.
+
+Se corrigió pese a ser andamiaje, precisamente por serlo: nadie lo ejecuta
+todavía, y para cuando alguien lo cablee la contradicción ya no tendría autor.
+`AircraftClass` pasa a derivarse de `AircraftTypeRatingCatalog['productType']`
+en vez de reescribir la unión a mano — mismo criterio que `OfferProductType`,
+que parte del mismo sitio y le resta `'Gas Airship'`. Aquí no se le resta. El
+cast desaparece. `canHold('L', aeroplano)` pasa a `false`, que es lo mismo que
+dicen el selector y el lado técnico.
+
+### Efectos revisados
+
+- **`isUnusualCombination()`** lee la tabla del lado técnico (la correcta: la
+  pregunta ahí es qué puede colgar el técnico), así que empieza a marcar
+  cualquier habilitación bajo L que no sea dirigible. **Verificado en vivo
+  contra rotoaxismatch-dev el 2026-08-14**: `technician_habilitations` tiene 7
+  filas — A2 ×2, B1.3 ×1, B2 ×4 — y **ninguna con `license_code = 'L'`**. No
+  toca ni un dato existente.
+- Las dos filas de A2 con helicópteros (perfil `6146de18…`: Bell 407 — RR250 y
+  Bell 412 — PT6) ya las marcaba el aviso antes de este cambio. Son datos de
+  prueba y sirven justamente para comprobar que el aviso funciona. Intactas.
+- Comentarios corregidos: los dos bloques de cabecera que agrupaban
+  "B2/B2L/C/L cubren ambos productos", y el aviso de que la lista de
+  helicópteros incluye la L a propósito *porque excluirla sería inventar una
+  restricción que la norma no pone*. Para la L eso deja de ser cierto: **la
+  norma sí la excluye**. Para B2/B2L/C el aviso sigue en pie tal cual.
+- `supabase/migrations/047_offer_product_type.sql:9` conserva la redacción
+  vieja ("B2/B2L/C/L cubren ambos productos"). **No se edita**: es una
+  migración ya aplicada y describe con exactitud lo que la 047 decidió en su
+  día. Esta sección es el sitio donde consta la corrección.
+
+### Tests
+
+172 → **180**. Ocho nuevos, y tres existentes de los que sale la L:
+
+| test | qué le pasa |
+|---|---|
+| `Category product type — B2/B2L/C/L cover both` | pierde la L del bucle; la L pasa a tener caso propio (`-> 'Gas Airship'`, y explícitamente ni aviones ni helicópteros) |
+| `isUnusualCombination — never flags B2/B2L/C/L` | pierde la L; caso propio: marca avión y helicóptero bajo L, no marca dirigible |
+| `canHold — B2/B2L/C/L hold any class` | pierde la L; dos casos propios: sólo dirigibles (con cualquier propulsión), y la regla "never guess" sobre una scope sin clase declarada |
+
+Los cinco restantes cubren el lado oferta, que hasta ahora no tenía tests
+propios porque no tenía tabla propia: las categorías con producto encajan sólo
+en el suyo, B2/B2L/C encajan en los dos, la L encaja en aviones y **no** en
+helicópteros, y uno que fija la RAZÓN — si alguien vuelve a derivar el lado
+oferta del técnico, la L se cae de las ofertas de aviones y ese test lo detecta.
+
+`tsc --noEmit` **0 errores** · `test:matching` **180/180**. Ningún cuarto test
+se movió: el diff de `scripts/testMatching.ts` sólo borra líneas de esos tres
+bloques y del import renombrado.

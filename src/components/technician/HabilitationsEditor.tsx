@@ -6,7 +6,7 @@ import { AircraftTypeRatingPicker } from '../AircraftTypeRatingPicker';
 import { DateField } from '../DateField';
 import type { DateFieldPalette } from '../DateField.types';
 import { AircraftRatingIndex, getAircraftTypeRatingLabel } from '../../constants/aircraftTypeRatings';
-import { getCompatibleProductType, isUnusualCombination } from '../../utils/licenseCategoryProductType';
+import { getLicenseRatingProductType, isUnusualCombination } from '../../utils/licenseCategoryProductType';
 import { AircraftTypeRatingCatalog, LicenseCode } from '../../types/catalog';
 
 export interface HabilitationRow {
@@ -53,7 +53,7 @@ interface Props {
 // same pattern — search-and-add via AircraftTypeRatingPicker, chips only
 // for the closed set of license categories, catalog displayName for every
 // label, categoryHint pre-filter with a "Show all" escape hatch (never a
-// hard block — see AircraftTypeRatingPicker/getCompatibleProductType).
+// hard block — see AircraftTypeRatingPicker/getLicenseRatingProductType).
 //
 // Two distinct, deliberately different behaviors for the same
 // license<->productType mismatch (confirmed with the user 2026-07-22):
@@ -63,10 +63,12 @@ interface Props {
 //     real one (e.g. a dual-rated technician).
 //   - EXISTING row: never hidden, edited, or auto-removed — just an
 //     "Unusual combination for <license>" badge alongside "Declared" /
-//     "Inactive catalog entry", using the SAME getCompatibleProductType()
+//     "Inactive catalog entry", using the SAME getLicenseRatingProductType()
 //     mapping (isUnusualCombination(), licenseCategoryProductType.ts) so
-//     there is exactly one definition of "compatible", never two that
-//     could drift apart.
+//     las dos rutas de esta pantalla contestan a la misma pregunta con la
+//     misma tabla. Ojo: "la misma" es la del lado TÉCNICO. La tabla del
+//     lado oferta (getOfferProductTypeRestriction) es otra a propósito y no
+//     pinta nada aquí — ver la cabecera de licenseCategoryProductType.ts.
 //
 // Vigencia fields (Fase 3: issued/expires DateFields + Current/Not current
 // toggle) are unchanged from before this redesign — same fields, same
@@ -89,7 +91,7 @@ export function HabilitationsEditor({
 
   const categoryHint = useMemo(() => {
     if (!newHabLicense) return undefined;
-    const productType = getCompatibleProductType(newHabLicense);
+    const productType = getLicenseRatingProductType(newHabLicense);
     return productType ? { productType, licenseCode: newHabLicense } : undefined;
   }, [newHabLicense]);
 

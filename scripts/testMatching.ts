@@ -30,7 +30,11 @@ import { createAircraftTypeRatingsCache } from '../src/repositories/v2/aircraftT
 import { planLicenseRemoval } from '../src/utils/licenseUpdatePlan';
 import { getFamilies, getByProductType, searchRatings, resolveAircraftCategoryForFamilyKeys } from '../src/constants/aircraftTypeRatingViews';
 import { getAircraftFamilyKey } from '../src/constants/aircraftTypeRatings';
-import { getCompatibleProductType, isUnusualCombination } from '../src/utils/licenseCategoryProductType';
+import {
+  getLicenseRatingProductType,
+  isLicenseCompatibleWithProductType,
+  isUnusualCombination,
+} from '../src/utils/licenseCategoryProductType';
 import { isValidDateOrder } from '../src/utils/validityDates';
 import {
   isActiveOfferRelationStatus,
@@ -1114,23 +1118,75 @@ async function main() {
   });
 
   // ── License category -> productType pre-filter (Fase 3b.4) ───────────
+  // Lado TÉCNICO: qué aeronaves puede colgar el técnico de cada licencia.
+  // El lado oferta es otra tabla y se prueba más abajo.
 
   await test('Category product type — A1/A2/B1.1/B1.2/B3 map to Aeroplane', () => {
     for (const code of ['A1', 'A2', 'B1.1', 'B1.2', 'B3'] as const) {
-      assert.equal(getCompatibleProductType(code), 'Aeroplane', `expected ${code} -> Aeroplane`);
+      assert.equal(getLicenseRatingProductType(code), 'Aeroplane', `expected ${code} -> Aeroplane`);
     }
   });
 
   await test('Category product type — A3/A4/B1.3/B1.4 map to Helicopter', () => {
     for (const code of ['A3', 'A4', 'B1.3', 'B1.4'] as const) {
-      assert.equal(getCompatibleProductType(code), 'Helicopter', `expected ${code} -> Helicopter`);
+      assert.equal(getLicenseRatingProductType(code), 'Helicopter', `expected ${code} -> Helicopter`);
     }
   });
 
-  await test('Category product type — B2/B2L/C/L cover both, never pre-filtered', () => {
-    for (const code of ['B2', 'B2L', 'C', 'L'] as const) {
-      assert.equal(getCompatibleProductType(code), undefined, `expected ${code} -> no pre-filter`);
+  await test('Category product type — B2/B2L/C cover both, never pre-filtered', () => {
+    for (const code of ['B2', 'B2L', 'C'] as const) {
+      assert.equal(getLicenseRatingProductType(code), undefined, `expected ${code} -> no pre-filter`);
     }
+  });
+
+  // Corrección 2026-08-14: la L salió del grupo "cubren ambos". Cubre
+  // veleros, motoveleros, globos y dirigibles — nada de rotorcraft — y los
+  // únicos con filas en el catálogo son los 3 dirigibles de gas. Antes
+  // devolvía undefined y se podía colgar un A320neo de una L.
+  await test('Category product type — L maps to Gas Airship only, never to aeroplanes or helicopters', () => {
+    assert.equal(getLicenseRatingProductType('L'), 'Gas Airship');
+    assert.notEqual(getLicenseRatingProductType('L'), 'Aeroplane');
+    assert.notEqual(getLicenseRatingProductType('L'), 'Helicopter');
+  });
+
+  // ── isLicenseCompatibleWithProductType (lado OFERTA, migración 047) ───
+  // Segunda pregunta, tabla propia: qué licencias puede pedir una oferta de
+  // cada producto. Coincide con la de arriba en A/B1, y diverge en la L.
+
+  await test('Offer-side licence filter — a category with its own product only fits that product', () => {
+    for (const code of ['A1', 'A2', 'B1.1', 'B1.2', 'B3'] as const) {
+      assert.equal(isLicenseCompatibleWithProductType(code, 'Aeroplane'), true, `${code} + Aeroplane`);
+      assert.equal(isLicenseCompatibleWithProductType(code, 'Helicopter'), false, `${code} + Helicopter`);
+    }
+    for (const code of ['A3', 'A4', 'B1.3', 'B1.4'] as const) {
+      assert.equal(isLicenseCompatibleWithProductType(code, 'Helicopter'), true, `${code} + Helicopter`);
+      assert.equal(isLicenseCompatibleWithProductType(code, 'Aeroplane'), false, `${code} + Aeroplane`);
+    }
+  });
+
+  await test('Offer-side licence filter — B2/B2L/C can be asked for in either product', () => {
+    for (const code of ['B2', 'B2L', 'C'] as const) {
+      assert.equal(isLicenseCompatibleWithProductType(code, 'Aeroplane'), true, `${code} + Aeroplane`);
+      assert.equal(isLicenseCompatibleWithProductType(code, 'Helicopter'), true, `${code} + Helicopter`);
+    }
+  });
+
+  // El caso que obligó a separar las dos tablas. En el lado técnico la L es
+  // 'Gas Airship'; aquí sigue apareciendo en ofertas de aviones (una empresa
+  // con flota de ligeros puede pedir L y describir la aeronave en el texto:
+  // la rama de sólo licencia soporta ofertas sin habilitaciones) y desaparece
+  // de las de helicópteros, donde la norma sí la excluye.
+  await test('Offer-side licence filter — L stays askable in aeroplane offers and disappears from helicopter ones', () => {
+    assert.equal(isLicenseCompatibleWithProductType('L', 'Aeroplane'), true);
+    assert.equal(isLicenseCompatibleWithProductType('L', 'Helicopter'), false);
+  });
+
+  await test('Offer-side licence filter — is NOT derived from the technician-side table (the L proves they are two questions)', () => {
+    // Si alguien vuelve a fusionarlas, la L se cae de las ofertas de aviones
+    // (su producto propio, 'Gas Airship', no es un producto de oferta) y este
+    // test lo detecta. No es redundante con el de arriba: fija la RAZÓN.
+    assert.equal(getLicenseRatingProductType('L'), 'Gas Airship');
+    assert.equal(isLicenseCompatibleWithProductType('L', 'Aeroplane'), true);
   });
 
   // ── isUnusualCombination (Fase 3b screen 2) ───────────────────────────
@@ -1148,11 +1204,21 @@ async function main() {
     assert.equal(isUnusualCombination('B1.3', 'Helicopter'), false);
   });
 
-  await test('isUnusualCombination — never flags B2/B2L/C/L, which cover both product types', () => {
-    for (const code of ['B2', 'B2L', 'C', 'L'] as const) {
+  await test('isUnusualCombination — never flags B2/B2L/C, which cover both product types', () => {
+    for (const code of ['B2', 'B2L', 'C'] as const) {
       assert.equal(isUnusualCombination(code, 'Aeroplane'), false);
       assert.equal(isUnusualCombination(code, 'Helicopter'), false);
     }
+  });
+
+  // La L salió de ese grupo con la corrección del 2026-08-14. Verificado en
+  // rotoaxismatch-dev ese mismo día: technician_habilitations no tiene ni una
+  // fila con license_code = 'L', así que empezar a marcarlas no toca ningún
+  // dato existente.
+  await test('isUnusualCombination — flags anything but an airship declared under an L', () => {
+    assert.equal(isUnusualCombination('L', 'Aeroplane'), true);
+    assert.equal(isUnusualCombination('L', 'Helicopter'), true);
+    assert.equal(isUnusualCombination('L', 'Gas Airship'), false);
   });
 
   await test('isUnusualCombination — never guesses when the rating\'s productType is unpopulated', () => {
@@ -1652,7 +1718,7 @@ async function main() {
     assert.equal(canHold('B3', wrongPropulsion), false);
   });
 
-  await test('canHold — B2/B2L/C/L hold any class and any propulsion, never pre-filtered', () => {
+  await test('canHold — B2/B2L/C hold any class and any propulsion, never pre-filtered', () => {
     const helicopterPiston: HabilitationScope = {
       kind: 'exact_rating', aircraftTypeRatingId: 'fx-r44', aircraftClass: 'Helicopter', propulsion: 'piston',
     };
@@ -1660,11 +1726,42 @@ async function main() {
       kind: 'exact_rating', aircraftTypeRatingId: 'fx-a320', aircraftClass: 'Aeroplane', propulsion: 'turbine',
     };
     const unknownBoth: HabilitationScope = { kind: 'exact_rating', aircraftTypeRatingId: 'fx-unknown' };
-    for (const license of ['B2', 'B2L', 'C', 'L'] as const) {
+    for (const license of ['B2', 'B2L', 'C'] as const) {
       assert.equal(canHold(license, helicopterPiston), true, `${license} + helicopter/piston`);
       assert.equal(canHold(license, aeroplaneTurbine), true, `${license} + aeroplane/turbine`);
       assert.equal(canHold(license, unknownBoth), true, `${license} + unknown/unknown`);
     }
+  });
+
+  // La L salió de ese grupo el 2026-08-14: es airship-only, no "cubre todo".
+  // canHold() reusa la tabla del lado técnico, así que dice lo mismo que el
+  // pre-filtro del selector de habilitaciones — que era el motivo de reusarla.
+  // Sigue sin restricción de propulsión (la categoría no está acotada por ella).
+  await test('canHold — L holds airships only, never aeroplanes or helicopters', () => {
+    const airshipPiston: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-lz-n07', aircraftClass: 'Gas Airship', propulsion: 'piston',
+    };
+    const airshipTurbine: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-skyship', aircraftClass: 'Gas Airship', propulsion: 'turbine',
+    };
+    const aeroplaneTurbine: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-a320', aircraftClass: 'Aeroplane', propulsion: 'turbine',
+    };
+    const helicopterPiston: HabilitationScope = {
+      kind: 'exact_rating', aircraftTypeRatingId: 'fx-r44', aircraftClass: 'Helicopter', propulsion: 'piston',
+    };
+    assert.equal(canHold('L', airshipPiston), true);
+    assert.equal(canHold('L', airshipTurbine), true);
+    assert.equal(canHold('L', aeroplaneTurbine), false);
+    assert.equal(canHold('L', helicopterPiston), false);
+  });
+
+  await test('canHold — L never guesses a class it cannot confirm (unpopulated scope)', () => {
+    // Misma regla "never guess" que las demás categorías con producto propio:
+    // una scope sin aircraftClass no se asume compatible. Para B2/B2L/C sí lo
+    // era, porque allí la licencia no impone nada sobre esa dimensión.
+    const unknownBoth: HabilitationScope = { kind: 'exact_rating', aircraftTypeRatingId: 'fx-unknown' };
+    assert.equal(canHold('L', unknownBoth), false);
   });
 
   await test('canHold — exact_rating always demonstrates its own qualification, regardless of EASA group (never consults ALLOWED_KINDS_BY_GROUP)', () => {

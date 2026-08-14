@@ -8,7 +8,18 @@
 // what either side can express today. See canHold()
 // (src/utils/habilitationScope.ts) for the function this scaffolds.
 
-export type AircraftClass = 'Aeroplane' | 'Helicopter';
+import { AircraftTypeRatingCatalog } from './catalog';
+
+// Derivado del catálogo en vez de reescrito, para que las dos listas no
+// puedan separarse — mismo criterio que OfferProductType (src/types/offer.ts),
+// que parte del mismo sitio y le resta 'Gas Airship'.
+//
+// Aquí NO se le resta: la categoría L autoriza dirigibles y nada más
+// (getLicenseRatingProductType), así que una scope de licencia L tiene que
+// poder decir 'Gas Airship'. Antes esta unión eran dos valores y
+// getCompatibleAircraftClass() casteaba para encajar; el cast le mentía al
+// compilador desde el momento en que la L dejó de ser "cubre ambos".
+export type AircraftClass = NonNullable<AircraftTypeRatingCatalog['productType']>;
 export type PropulsionType = 'turbine' | 'piston';
 
 // Matches the 5 distinct values actually populated in
@@ -19,7 +30,7 @@ export type EasaGroup = '1' | '2a' | '2b' | '2c' | '3';
 
 interface HabilitationScopeFields {
   // undefined = unknown/unpopulated on this dimension — same convention
-  // AircraftTypeRatingCatalog.productType and getCompatibleProductType()
+  // AircraftTypeRatingCatalog.productType and getLicenseRatingProductType()
   // already use (src/utils/licenseCategoryProductType.ts): never guessed
   // into a class, treated by canHold() as "can't confirm" rather than
   // silently "matches everything".

@@ -7,7 +7,7 @@ import { catalogRepository } from '../repositories/v2/catalogRepository';
 import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
 
 // Fase 3b.4 — pre-filters the picker to a productType facet once the
-// caller knows a compatible one (e.g. from getCompatibleProductType(),
+// caller knows a compatible one (e.g. from getLicenseRatingProductType(),
 // keyed off whichever license category the surrounding form has selected).
 // Help, not a cage: always shown with a discrete hint and a "Show all"
 // escape hatch — never a hard block on picking outside the facet.

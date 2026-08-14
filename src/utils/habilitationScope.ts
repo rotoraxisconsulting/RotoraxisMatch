@@ -1,23 +1,32 @@
 import { LicenseCode } from '../types/catalog';
 import { AircraftClass, EasaGroup, HabilitationScope, PropulsionType } from '../types/habilitationScope';
-import { getCompatibleProductType } from './licenseCategoryProductType';
+import { getLicenseRatingProductType } from './licenseCategoryProductType';
 
 // Fase 4 (docs/MISSION_PART66.md) — pure scaffolding. canHold() and
 // everything below is NOT wired to any form, matching path, or UI yet —
 // on purpose. No data migration, no production call sites.
 
-// Generalizes getCompatibleProductType() (Fase 3b) as canHold()'s
+// Generalizes getLicenseRatingProductType() (Fase 3b) as canHold()'s
 // aircraft-class dimension — imported, never re-implemented, so there is
 // exactly one place that knows which license categories are
 // class-restricted (never a second definition that could drift from it).
+//
+// Es la tabla del LADO TÉCNICO la que se reusa aquí, y esa es la correcta:
+// canHold() pregunta qué privilegios tiene el técnico, no qué ofertas
+// pueden pedir su licencia (getOfferProductTypeRestriction, la otra tabla
+// desde la corrección de la L — ver la cabecera de
+// licenseCategoryProductType.ts).
+//
+// Sin cast: AircraftClass se deriva del mismo productType del catálogo y
+// por tanto incluye 'Gas Airship'. Hasta el 2026-08-14 aquí había un
+// `as AircraftClass` con un comentario que afirmaba que ninguna categoría
+// Part-66 mapea a dirigibles. La L sí lo hace — por eso los 3 dirigibles
+// están en el catálogo — así que el cast habría etiquetado 'Gas Airship'
+// como un tipo que no lo contenía. Se corrigió aunque esto siga siendo
+// andamiaje sin cablear, precisamente por serlo: nadie lo ejecuta todavía,
+// y para cuando alguien lo cablee la contradicción ya no tendría autor.
 function getCompatibleAircraftClass(licenseCode: LicenseCode): AircraftClass | undefined {
-  // getCompatibleProductType()'s return type includes 'Gas Airship' for the
-  // rating catalog's sake (AircraftTypeRatingCatalog.productType), but its
-  // switch statement only ever returns 'Aeroplane'/'Helicopter'/undefined —
-  // no Part-66 license category maps to airships. AircraftClass
-  // deliberately excludes it; this narrows rather than widening
-  // AircraftClass to match a value no license can actually produce.
-  return getCompatibleProductType(licenseCode) as AircraftClass | undefined;
+  return getLicenseRatingProductType(licenseCode);
 }
 
 // New dimension (turbine/piston) — nothing before Fase 4 needed it, so
@@ -110,7 +119,7 @@ export function canHold(licenseCode: LicenseCode, scope: HabilitationScope): boo
   return ALLOWED_KINDS_BY_GROUP[scope.easaGroup].includes(scope.kind);
 }
 
-// Exported for direct unit testing alongside getCompatibleProductType()
+// Exported for direct unit testing alongside getLicenseRatingProductType()
 // (see scripts/testMatching.ts) — not intended as a second public API
 // surface for callers; canHold() is the entry point Fase 4 scaffolds.
 export { getCompatibleAircraftClass, getCompatiblePropulsion };

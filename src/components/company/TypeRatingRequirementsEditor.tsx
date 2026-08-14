@@ -48,8 +48,9 @@ interface Props {
 //
 // Migración 047 — el filtro se toma del producto de la OFERTA, no de la
 // licencia de cada fila como hasta ahora. La versión anterior derivaba el
-// facet de `getCompatibleProductType(newLicense)`, y B2/B2L/C/L cubren ambos
-// productos: con B2 seleccionada no se filtraba NADA. Por ese agujero
+// facet de `getCompatibleProductType(newLicense)` (hoy
+// `getLicenseRatingProductType`, y entonces B2/B2L/C/L devolvían todas
+// undefined): con B2 seleccionada no se filtraba NADA. Por ese agujero
 // entraron ofertas tituladas "Helicópteros" con requisitos B1.1/B1.2. Ahora
 // el producto lo declara la empresa una sola vez y acota las dos listas.
 export function TypeRatingRequirementsEditor({
