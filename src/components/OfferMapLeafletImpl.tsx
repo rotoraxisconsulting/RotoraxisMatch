@@ -1,29 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import {
-  CircleMarker,
   MapContainer,
-  Popup,
+  Marker,
   TileLayer,
-  Tooltip,
   useMap,
 } from 'react-leaflet';
+import { divIcon } from 'leaflet';
+import type { LeafletEvent, Marker as LeafletMarker } from 'leaflet';
 import type { OfferMapProps } from './OfferMap.native';
 import {
   groupOfferMapItems,
+  OfferMapDetailSheet,
   OfferMapFilterSheet,
   OfferMapHeader,
   OfferMapLegend,
   OfferMapMarkerGroup,
   OfferMapStatusOverlay,
-  offerMapApplicationLabel,
-  offerMapContractLabel,
-  offerMapLabelColor,
+  offerMapMarkerAccessibilityLabel,
   offerMapMarkerColor,
-  offerMapProductLabel,
 } from './offer-map/OfferMapControls';
-import { activeOfferMapFilterCount, OfferMapItem } from '../types/offerMap';
+import { activeOfferMapFilterCount } from '../types/offerMap';
 import { techUi } from './technician/TechnicianUI';
+import { buildOfferMapMarkerSvg, offerMapMarkerShape } from '../utils/offerMapMarkerIcon';
 
 function useLeafletCss() {
   useEffect(() => {
@@ -51,20 +50,21 @@ function useLeafletCss() {
         .leaflet-popup-content { margin: 14px; min-width: 232px; max-width: 286px; }
         .leaflet-popup-tip-container { display: none; }
         .leaflet-popup-close-button { top: 8px; right: 8px; font-size: 20px; color: #527088; }
-        .offer-map-count {
-          background: #0A1520;
-          border: 2px solid #FFFFFF;
-          border-radius: 12px;
-          color: #FFFFFF;
-          box-shadow: none;
-          font-size: 10px;
-          font-weight: 800;
-          line-height: 18px;
-          min-width: 18px;
-          padding: 0 4px;
-          text-align: center;
+        .offer-map-marker-icon {
+          background: transparent;
+          border: 0;
+          cursor: pointer;
         }
-        .offer-map-count:before { display: none; }
+        .offer-map-marker-icon svg {
+          display: block;
+          filter: drop-shadow(0 2px 3px rgba(15, 23, 42, 0.24));
+        }
+        .offer-map-marker-icon.is-selected .offer-marker-selection { opacity: 1; }
+        .offer-map-marker-icon:focus-visible {
+          outline: 3px solid #0891B2;
+          outline-offset: 1px;
+          border-radius: 24px;
+        }
       `;
       document.head.appendChild(style);
     }
@@ -88,87 +88,6 @@ function OfferMapAutoFit({ groups }: { groups: OfferMapMarkerGroup[] }) {
   return null;
 }
 
-function PopupChip({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{
-      display: 'inline-block',
-      marginRight: 4,
-      marginBottom: 4,
-      padding: '3px 7px',
-      borderRadius: 10,
-      backgroundColor: techUi.surfaceSoft,
-      color,
-      fontSize: 10,
-      fontWeight: 700,
-    }}>
-      {label}
-    </span>
-  );
-}
-
-function OfferPopupCard({
-  offer,
-  divided,
-  onViewOffer,
-}: {
-  offer: OfferMapItem;
-  divided: boolean;
-  onViewOffer: (offerId: string) => void;
-}) {
-  const markerColor = offerMapMarkerColor(offer);
-  const labelColor = offerMapLabelColor(offer);
-  const applicationLabel = offerMapApplicationLabel(offer.applicationStatus);
-
-  return (
-    <div style={{
-      borderTop: divided ? `1px solid ${techUi.borderSoft}` : undefined,
-      paddingTop: divided ? 12 : 0,
-      marginTop: divided ? 12 : 0,
-    }}>
-      <div style={{ paddingRight: 18, fontSize: 14, lineHeight: '18px', fontWeight: 800, color: techUi.text }}>
-        {offer.title}
-      </div>
-      <div style={{ marginTop: 2, fontSize: 11, lineHeight: '15px', fontWeight: 600, color: techUi.textSoft }}>
-        {offer.companyName}
-      </div>
-      <div style={{ marginTop: 7, fontSize: 11, lineHeight: '15px', color: techUi.textMuted }}>
-        {offer.location}
-        {offer.locationPrecision === 'country' ? ' · Country-level location' : ''}
-      </div>
-      <div style={{ marginTop: 7 }}>
-        <PopupChip label={`${offer.score}% match`} color={labelColor} />
-        <PopupChip
-          label={offer.blockers.length > 0 ? 'Not eligible' : offer.matchLabel}
-          color={offer.blockers.length > 0 ? techUi.red : labelColor}
-        />
-        {applicationLabel ? <PopupChip label={applicationLabel} color={techUi.green} /> : null}
-      </div>
-      <div style={{ marginTop: 2, fontSize: 10, lineHeight: '14px', color: techUi.textMuted }}>
-        {offerMapContractLabel(offer.contractType)} · {offerMapProductLabel(offer.productType)}
-      </div>
-      <button
-        type="button"
-        aria-label={`View offer ${offer.title}`}
-        onClick={() => onViewOffer(offer.id)}
-        style={{
-          width: '100%',
-          minHeight: 44,
-          marginTop: 10,
-          border: 0,
-          borderRadius: 12,
-          backgroundColor: techUi.accent,
-          color: '#FFFFFF',
-          cursor: 'pointer',
-          fontSize: 12,
-          fontWeight: 800,
-        }}
-      >
-        View offer
-      </button>
-    </div>
-  );
-}
-
 export default function OfferMapLeafletImpl({
   offers,
   filters,
@@ -183,7 +102,11 @@ export default function OfferMapLeafletImpl({
 }: OfferMapProps) {
   useLeafletCss();
   const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const groups = useMemo(() => groupOfferMapItems(offers), [offers]);
+  const selectedGroup = selectedGroupKey
+    ? groups.find((group) => group.key === selectedGroupKey) ?? null
+    : null;
   const filterCount = activeOfferMapFilterCount(filters);
   const emptyBecauseFilters = !loading && !error && offers.length === 0 && totalCount > 0 && filterCount > 0;
   const emptyBecauseLocations = !loading && !error && offers.length === 0 && totalCount > 0 && unmappedCount === totalCount;
@@ -206,44 +129,42 @@ export default function OfferMapLeafletImpl({
           {groups.map((group) => {
             const representative = group.offers[0];
             const color = offerMapMarkerColor(representative);
-            const approximate = group.locationPrecision === 'country';
+            const grouped = group.offers.length > 1;
+            const accessibilityLabel = offerMapMarkerAccessibilityLabel(group);
+            const icon = divIcon({
+              className: `offer-map-marker-icon${selectedGroupKey === group.key ? ' is-selected' : ''}`,
+              html: buildOfferMapMarkerSvg({
+                shape: grouped ? 'cluster' : offerMapMarkerShape(representative.contractType),
+                color,
+                count: group.offers.length,
+              }),
+              iconSize: [48, 48],
+              iconAnchor: [24, 24],
+              popupAnchor: [0, -18],
+            });
+
+            function applyAccessibility(event: LeafletEvent) {
+              const element = (event.target as LeafletMarker).getElement();
+              element?.setAttribute('aria-label', accessibilityLabel);
+              element?.setAttribute('role', 'button');
+            }
 
             return (
-              <CircleMarker
+              <Marker
                 key={group.key}
-                center={[group.latitude, group.longitude]}
-                radius={group.offers.length > 1 ? 13 : 10}
-                pathOptions={{
-                  color: approximate ? color : '#FFFFFF',
-                  fillColor: color,
-                  fillOpacity: approximate ? 0.34 : 0.92,
-                  weight: approximate ? 3 : 2.5,
-                  dashArray: approximate ? '5 4' : undefined,
+                position={[group.latitude, group.longitude]}
+                icon={icon}
+                keyboard
+                riseOnHover
+                title={accessibilityLabel}
+                eventHandlers={{
+                  add: applyAccessibility,
+                  click: (event) => {
+                    applyAccessibility(event);
+                    setSelectedGroupKey(group.key);
+                  },
                 }}
-              >
-                {group.offers.length > 1 ? (
-                  <Tooltip permanent direction="center" className="offer-map-count">
-                    {group.offers.length}
-                  </Tooltip>
-                ) : null}
-                <Popup maxWidth={310} closeButton>
-                  <div style={{ maxHeight: 320, overflowY: 'auto', paddingRight: 2 }}>
-                    {group.offers.length > 1 ? (
-                      <div style={{ marginBottom: 10, fontSize: 11, fontWeight: 800, color: techUi.textMuted }}>
-                        {group.offers.length} offers at this location
-                      </div>
-                    ) : null}
-                    {group.offers.map((offer, index) => (
-                      <OfferPopupCard
-                        key={offer.id}
-                        offer={offer}
-                        divided={index > 0}
-                        onViewOffer={onViewOffer}
-                      />
-                    ))}
-                  </div>
-                </Popup>
-              </CircleMarker>
+              />
             );
           })}
         </MapContainer>
@@ -310,6 +231,12 @@ export default function OfferMapLeafletImpl({
         onChange={onFiltersChange}
         onClose={() => setFilterOpen(false)}
       />
+
+      <OfferMapDetailSheet
+        group={selectedGroup}
+        onClose={() => setSelectedGroupKey(null)}
+        onViewOffer={onViewOffer}
+      />
     </View>
   );
 }
@@ -318,7 +245,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, position: 'relative', backgroundColor: techUi.page },
   mapFrame: { flex: 1 },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 999,
     alignItems: 'center',
     justifyContent: 'center',

@@ -1,7 +1,6 @@
-import React from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useEffect, useState } from 'react';
 import {
-  Modal,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -12,12 +11,12 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  ChevronDown,
+  ChevronUp,
   MapPin,
   RotateCcw,
   SlidersHorizontal,
-  X,
 } from 'lucide-react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../theme';
 import { CONTRACT_TYPES } from '../../constants/contractTypes';
 import { OFFER_PRODUCT_TYPES } from '../../constants/offerProductTypes';
@@ -31,6 +30,7 @@ import {
 import { ContractTypeCode } from '../../types/catalog';
 import { OfferProductType } from '../../types/offer';
 import { techUi } from '../technician/TechnicianUI';
+import { MapBottomSheet } from '../map/MapBottomSheet';
 
 export const OFFER_MAP_MATCH_OPTIONS: readonly {
   value: OfferMapMatchBand;
@@ -76,6 +76,9 @@ export function offerMapApplicationLabel(value?: string): string | null {
   return null;
 }
 
+const OFFER_MAP_LEGEND_STORAGE_KEY = 'offer-map-legend-collapsed';
+const OFFER_MAP_COMPACT_LEGEND_BREAKPOINT = 768;
+
 export interface OfferMapMarkerGroup {
   key: string;
   latitude: number;
@@ -110,6 +113,16 @@ export function groupOfferMapItems(offers: OfferMapItem[]): OfferMapMarkerGroup[
       return eligibilityDifference || b.score - a.score;
     }),
   }));
+}
+
+export function offerMapMarkerAccessibilityLabel(group: OfferMapMarkerGroup): string {
+  const representative = group.offers[0];
+  if (!representative) return 'Offer map marker';
+  if (group.offers.length > 1) {
+    return `${group.offers.length} offers at ${representative.location}`;
+  }
+  const precision = group.locationPrecision === 'country' ? ', country-level location' : '';
+  return `${offerMapContractLabel(representative.contractType)} offer: ${representative.title}, ${representative.companyName}, ${representative.location}, ${representative.score}% match${precision}`;
 }
 
 export function OfferMapHeader({
@@ -176,9 +189,68 @@ export function OfferMapHeader({
 }
 
 export function OfferMapLegend() {
+  const { width } = useWindowDimensions();
+  const compact = width < OFFER_MAP_COMPACT_LEGEND_BREAKPOINT;
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(OFFER_MAP_LEGEND_STORAGE_KEY)
+      .then((value) => {
+        if (active) setCollapsed(value === 'true');
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  function updateCollapsed(next: boolean) {
+    setCollapsed(next);
+    AsyncStorage.setItem(OFFER_MAP_LEGEND_STORAGE_KEY, String(next)).catch(() => undefined);
+  }
+
+  if (compact && collapsed) {
+    return (
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Expand map legend"
+        accessibilityState={{ expanded: false }}
+        activeOpacity={0.78}
+        onPress={() => updateCollapsed(false)}
+        style={styles.legendCollapsed}
+      >
+        <Text style={styles.legendCollapsedText}>Legend</Text>
+        <ChevronUp color={techUi.textSoft} size={17} strokeWidth={2.3} />
+      </TouchableOpacity>
+    );
+  }
+
   return (
-    <View style={styles.legend} pointerEvents="none">
-      <Text style={styles.legendTitle}>Match score</Text>
+    <View style={styles.legend}>
+      <View style={styles.legendHeader}>
+        <Text style={styles.legendTitle}>Legend</Text>
+        {compact ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Collapse map legend"
+            accessibilityState={{ expanded: true }}
+            activeOpacity={0.72}
+            onPress={() => updateCollapsed(true)}
+            style={styles.legendToggle}
+          >
+            <ChevronDown color={techUi.textSoft} size={17} strokeWidth={2.3} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      <Text style={styles.legendSectionTitle}>Contract type</Text>
+      <View style={styles.legendGrid}>
+        <LegendContractItem shape="circle" label="Permanent" />
+        <LegendContractItem shape="square" label="Long-term" />
+        <LegendContractItem shape="diamond" label="Short-term" />
+        <LegendContractItem shape="cluster" label="Grouped" />
+      </View>
+
+      <Text style={[styles.legendSectionTitle, styles.legendMatchTitle]}>Match score</Text>
       <View style={styles.legendGrid}>
         {OFFER_MAP_MATCH_OPTIONS.map((option) => (
           <View key={option.value} style={styles.legendItem}>
@@ -191,10 +263,32 @@ export function OfferMapLegend() {
           <Text style={styles.legendText}>Not eligible</Text>
         </View>
       </View>
-      <View style={styles.precisionRow}>
-        <View style={styles.precisionDot} />
-        <Text style={styles.precisionText}>Dashed marker = country-level location</Text>
-      </View>
+    </View>
+  );
+}
+
+function LegendContractItem({
+  shape,
+  label,
+}: {
+  shape: 'circle' | 'square' | 'diamond' | 'cluster';
+  label: string;
+}) {
+  return (
+    <View style={styles.legendItem}>
+      {shape === 'cluster' ? (
+        <View style={styles.legendClusterShape}>
+          <Text style={styles.legendClusterText}>2</Text>
+        </View>
+      ) : (
+        <View style={[
+          styles.legendContractShape,
+          shape === 'circle' && styles.legendCircleShape,
+          shape === 'square' && styles.legendSquareShape,
+          shape === 'diamond' && styles.legendDiamondShape,
+        ]} />
+      )}
+      <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 }
@@ -212,7 +306,6 @@ export function OfferMapFilterSheet({
   onChange: (filters: OfferMapFilters) => void;
   onClose: () => void;
 }) {
-  const insets = useSafeAreaInsets();
   const filterCount = activeOfferMapFilterCount(filters);
 
   function toggle<T extends string>(key: ArrayFilterKey, value: T) {
@@ -224,93 +317,11 @@ export function OfferMapFilterSheet({
   }
 
   return (
-    <Modal
-      animationType="slide"
-      onRequestClose={onClose}
-      statusBarTranslucent
-      transparent
-      visible={visible}
-    >
-      <TouchableOpacity
-        accessibilityLabel="Close filters"
-        activeOpacity={1}
-        onPress={onClose}
-        style={styles.sheetOverlay}
-      />
-      <View style={styles.sheet}>
-        <View style={styles.sheetHandle} />
-        <View style={styles.sheetHeader}>
-          <View style={styles.sheetTitleBlock}>
-            <Text style={styles.sheetTitle}>Filter offers</Text>
-            <Text style={styles.sheetSubtitle}>Match any option within a section and every active section.</Text>
-          </View>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Close filters"
-            activeOpacity={0.75}
-            onPress={onClose}
-            style={styles.sheetClose}
-          >
-            <X color={techUi.text} size={20} strokeWidth={2.3} />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.sheetContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <FilterSection title="Contract type">
-            {CONTRACT_TYPES.map((option) => (
-              <FilterOption
-                key={option.code}
-                label={option.label}
-                selected={Boolean(filters.contractTypes?.includes(option.code))}
-                onPress={() => toggle<ContractTypeCode>('contractTypes', option.code)}
-              />
-            ))}
-          </FilterSection>
-
-          <FilterSection title="Aircraft">
-            {OFFER_PRODUCT_TYPES.map((option) => (
-              <FilterOption
-                key={option.code}
-                label={option.label}
-                selected={Boolean(filters.productTypes?.includes(option.code))}
-                onPress={() => toggle<OfferProductType>('productTypes', option.code)}
-              />
-            ))}
-          </FilterSection>
-
-          <FilterSection title="Match score">
-            {OFFER_MAP_MATCH_OPTIONS.map((option) => (
-              <FilterOption
-                key={option.value}
-                label={option.label}
-                selected={Boolean(filters.matchBands?.includes(option.value))}
-                onPress={() => toggle<OfferMapMatchBand>('matchBands', option.value)}
-                dotColor={option.color}
-              />
-            ))}
-          </FilterSection>
-
-          <TouchableOpacity
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: Boolean(filters.eligibleOnly) }}
-            activeOpacity={0.75}
-            onPress={() => onChange({ ...filters, eligibleOnly: !filters.eligibleOnly || undefined })}
-            style={[styles.eligibilityOption, filters.eligibleOnly && styles.filterOptionSelected]}
-          >
-            <View style={styles.eligibilityCopy}>
-              <Text style={styles.filterOptionText}>Eligible offers only</Text>
-              <Text style={styles.filterOptionHelper}>
-                Hide roles blocked by the minimum experience requirement.
-              </Text>
-            </View>
-            <SelectionBox selected={Boolean(filters.eligibleOnly)} />
-          </TouchableOpacity>
-        </ScrollView>
-
-        <View style={[styles.sheetFooter, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
+    <MapBottomSheet
+      closeLabel="Close filters"
+      contentContainerStyle={styles.sheetContent}
+      footer={(
+        <>
           <TouchableOpacity
             accessibilityRole="button"
             activeOpacity={0.75}
@@ -329,9 +340,63 @@ export function OfferMapFilterSheet({
           >
             <Text style={styles.doneButtonText}>Show offers</Text>
           </TouchableOpacity>
+        </>
+      )}
+      onClose={onClose}
+      subtitle="Match any option within a section and every active section."
+      title="Filter offers"
+      visible={visible}
+    >
+      <FilterSection title="Contract type">
+        {CONTRACT_TYPES.map((option) => (
+          <FilterOption
+            key={option.code}
+            label={option.label}
+            selected={Boolean(filters.contractTypes?.includes(option.code))}
+            onPress={() => toggle<ContractTypeCode>('contractTypes', option.code)}
+          />
+        ))}
+      </FilterSection>
+
+      <FilterSection title="Aircraft">
+        {OFFER_PRODUCT_TYPES.map((option) => (
+          <FilterOption
+            key={option.code}
+            label={option.label}
+            selected={Boolean(filters.productTypes?.includes(option.code))}
+            onPress={() => toggle<OfferProductType>('productTypes', option.code)}
+          />
+        ))}
+      </FilterSection>
+
+      <FilterSection title="Match score">
+        {OFFER_MAP_MATCH_OPTIONS.map((option) => (
+          <FilterOption
+            key={option.value}
+            label={option.label}
+            selected={Boolean(filters.matchBands?.includes(option.value))}
+            onPress={() => toggle<OfferMapMatchBand>('matchBands', option.value)}
+            dotColor={option.color}
+          />
+        ))}
+      </FilterSection>
+
+      <TouchableOpacity
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: Boolean(filters.eligibleOnly) }}
+        activeOpacity={0.75}
+        onPress={() => onChange({ ...filters, eligibleOnly: !filters.eligibleOnly || undefined })}
+        style={[styles.eligibilityOption, filters.eligibleOnly && styles.filterOptionSelected]}
+      >
+        <View style={styles.eligibilityCopy}>
+          <Text style={styles.filterOptionText}>Eligible offers only</Text>
+          <Text style={styles.filterOptionHelper}>
+            Hide roles blocked by the minimum experience requirement.
+          </Text>
         </View>
-      </View>
-    </Modal>
+        <SelectionBox selected={Boolean(filters.eligibleOnly)} />
+      </TouchableOpacity>
+    </MapBottomSheet>
   );
 }
 
@@ -376,6 +441,78 @@ function SelectionBox({ selected }: { selected: boolean }) {
   return (
     <View style={[styles.selectionBox, selected && styles.selectionBoxSelected]}>
       {selected ? <Check color={colors.white} size={15} strokeWidth={3} /> : null}
+    </View>
+  );
+}
+
+export function OfferMapDetailSheet({
+  group,
+  onClose,
+  onViewOffer,
+}: {
+  group: OfferMapMarkerGroup | null;
+  onClose: () => void;
+  onViewOffer: (offerId: string) => void;
+}) {
+  const representative = group?.offers[0];
+  const grouped = (group?.offers.length ?? 0) > 1;
+
+  return (
+    <MapBottomSheet
+      closeLabel="Close offer details"
+      contentContainerStyle={styles.detailSheetContent}
+      onClose={onClose}
+      subtitle={representative?.location}
+      title={grouped ? `${group?.offers.length} offers at this location` : 'Offer details'}
+      visible={group !== null}
+    >
+      {group?.offers.map((offer) => {
+        const labelColor = offerMapLabelColor(offer);
+        const applicationLabel = offerMapApplicationLabel(offer.applicationStatus);
+        return (
+          <View key={offer.id} style={styles.offerDetailCard}>
+            <Text style={styles.offerDetailTitle}>{offer.title}</Text>
+            <Text style={styles.offerDetailCompany}>{offer.companyName}</Text>
+            <Text style={styles.offerDetailLocation}>
+              {offer.location}
+              {offer.locationPrecision === 'country' ? ' · Country-level location' : ''}
+            </Text>
+
+            <View style={styles.offerDetailChips}>
+              <MapDetailChip label={`${offer.score}% match`} color={labelColor} />
+              <MapDetailChip
+                label={offer.blockers.length > 0 ? 'Not eligible' : offer.matchLabel}
+                color={offer.blockers.length > 0 ? techUi.red : labelColor}
+              />
+              {applicationLabel ? <MapDetailChip label={applicationLabel} color={techUi.green} /> : null}
+            </View>
+
+            <Text style={styles.offerDetailMeta}>
+              {offerMapContractLabel(offer.contractType)} · {offerMapProductLabel(offer.productType)}
+            </Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`View offer ${offer.title}`}
+              activeOpacity={0.78}
+              onPress={() => {
+                onClose();
+                onViewOffer(offer.id);
+              }}
+              style={styles.offerDetailButton}
+            >
+              <Text style={styles.offerDetailButtonText}>View offer</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      })}
+    </MapBottomSheet>
+  );
+}
+
+function MapDetailChip({ label, color }: { label: string; color: string }) {
+  return (
+    <View style={styles.mapDetailChip}>
+      <Text style={[styles.mapDetailChipText, { color }]}>{label}</Text>
     </View>
   );
 }
@@ -484,7 +621,7 @@ const styles = StyleSheet.create({
     left: 12,
     bottom: 18,
     zIndex: 1001,
-    width: 194,
+    width: 228,
     padding: 11,
     borderRadius: 15,
     borderWidth: 1,
@@ -496,71 +633,71 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     elevation: 6,
   },
-  legendTitle: { marginBottom: 7, fontSize: 11, fontWeight: '800', color: techUi.text },
+  legendCollapsed: {
+    position: 'absolute',
+    left: 12,
+    bottom: 18,
+    zIndex: 1001,
+    minWidth: 112,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: techUi.border,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    elevation: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  legendCollapsedText: { fontSize: 12, fontWeight: '800', color: techUi.text },
+  legendHeader: {
+    minHeight: 36,
+    marginTop: -5,
+    marginRight: -5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  legendToggle: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  legendTitle: { fontSize: 12, fontWeight: '800', color: techUi.text },
+  legendSectionTitle: { marginBottom: 7, fontSize: 10, fontWeight: '800', color: techUi.textMuted },
+  legendMatchTitle: {
+    marginTop: 9,
+    paddingTop: 9,
+    borderTopWidth: 1,
+    borderTopColor: techUi.borderSoft,
+  },
   legendGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 6 },
   legendItem: { width: '50%', flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: { width: 9, height: 9, borderRadius: 5 },
   legendBlocked: { backgroundColor: techUi.red },
   legendText: { fontSize: 10, lineHeight: 13, fontWeight: '700', color: techUi.textSoft },
-  precisionRow: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: techUi.borderSoft,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  precisionDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: techUi.textMuted,
-  },
-  precisionText: { flex: 1, fontSize: 9, lineHeight: 12, fontWeight: '600', color: techUi.textMuted },
-  sheetOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(10,21,32,0.46)' },
-  sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    maxHeight: '86%',
-    maxWidth: 620,
-    alignSelf: 'center',
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    backgroundColor: techUi.surface,
-    paddingTop: 8,
-    overflow: 'hidden',
-  },
-  sheetHandle: {
-    width: 42,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: 'center',
-    backgroundColor: techUi.border,
-    marginBottom: 6,
-  },
-  sheetHeader: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  sheetTitleBlock: { flex: 1, minWidth: 0 },
-  sheetTitle: { fontSize: 20, lineHeight: 25, fontWeight: '800', color: techUi.text },
-  sheetSubtitle: { marginTop: 2, fontSize: 12, lineHeight: 16, fontWeight: '500', color: techUi.textMuted },
-  sheetClose: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: techUi.surfaceSoft,
+  legendContractShape: { width: 11, height: 11, backgroundColor: techUi.textSoft, flexShrink: 0 },
+  legendCircleShape: { borderRadius: 6 },
+  legendSquareShape: { borderRadius: 2 },
+  legendDiamondShape: { transform: [{ rotate: '45deg' }], borderRadius: 1 },
+  legendClusterShape: {
+    width: 15,
+    height: 15,
+    borderRadius: 8,
+    backgroundColor: techUi.navy,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
+  legendClusterText: { color: colors.white, fontSize: 8, lineHeight: 10, fontWeight: '800' },
   sheetContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md, gap: spacing.lg },
   filterSection: { gap: spacing.sm },
   filterSectionTitle: { fontSize: 12, lineHeight: 16, fontWeight: '800', color: techUi.textSoft },
@@ -609,16 +746,37 @@ const styles = StyleSheet.create({
   },
   eligibilityCopy: { flex: 1, minWidth: 0 },
   filterOptionHelper: { marginTop: 2, fontSize: 11, lineHeight: 15, fontWeight: '500', color: techUi.textMuted },
-  sheetFooter: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: techUi.borderSoft,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    backgroundColor: techUi.surface,
+  detailSheetContent: { gap: spacing.sm },
+  offerDetailCard: {
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: techUi.borderSoft,
+    backgroundColor: techUi.surfaceSoft,
   },
+  offerDetailTitle: { paddingRight: 8, fontSize: 15, lineHeight: 20, fontWeight: '800', color: techUi.text },
+  offerDetailCompany: { marginTop: 3, fontSize: 12, lineHeight: 16, fontWeight: '700', color: techUi.textSoft },
+  offerDetailLocation: { marginTop: 8, fontSize: 12, lineHeight: 17, fontWeight: '500', color: techUi.textMuted },
+  offerDetailChips: { marginTop: 9, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  mapDetailChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 11,
+    backgroundColor: techUi.surface,
+    borderWidth: 1,
+    borderColor: techUi.borderSoft,
+  },
+  mapDetailChipText: { fontSize: 11, lineHeight: 14, fontWeight: '800' },
+  offerDetailMeta: { marginTop: 7, fontSize: 11, lineHeight: 15, fontWeight: '600', color: techUi.textMuted },
+  offerDetailButton: {
+    minHeight: 48,
+    marginTop: 12,
+    borderRadius: 14,
+    backgroundColor: techUi.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  offerDetailButtonText: { color: colors.white, fontSize: 13, fontWeight: '800' },
   resetButton: {
     minHeight: 48,
     paddingHorizontal: spacing.md,
@@ -642,7 +800,7 @@ const styles = StyleSheet.create({
   },
   doneButtonText: { color: colors.white, fontSize: 13, fontWeight: '800' },
   statusOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 1000,
     alignItems: 'center',
     justifyContent: 'center',

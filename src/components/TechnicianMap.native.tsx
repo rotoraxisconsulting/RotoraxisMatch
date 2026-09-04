@@ -1,46 +1,26 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
-  ActivityIndicator,
-  Platform,
-  Alert,
-} from 'react-native';
-import { WebView } from 'react-native-webview';
-import { CheckCircle, Clock, RotateCcw, Send, X } from 'lucide-react-native';
-import { SafeTechnicianView } from '../types';
-import { TechnicianHabilitation } from '../types/technician';
-import { MapFilters, MapFilterValue } from '../types/filters';
-import { MapOfferMatchOption } from '../types/mapOffers';
-import { TechnicianTypeCode } from '../types/catalog';
-import { colors, spacing } from '../theme';
-import { LICENSE_CATEGORIES } from '../constants/licenses';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import type { SafeTechnicianView } from '../types';
+import type { TechnicianHabilitation } from '../types/technician';
+import type { MapFilters, MapFilterValue } from '../types/filters';
+import type { MapOfferMatchOption } from '../types/mapOffers';
+import type { TechnicianTypeCode } from '../types/catalog';
 import { useAircraftTypeRatingsCatalog } from '../state/useAircraftTypeRatingsCatalog';
 import { buildAircraftRatingIndex } from '../constants/aircraftTypeRatings';
+import { technicianTypeLabel } from '../constants/technicianTypes';
 import { resolveTypeRatingLabels } from '../utils/v2CompatAdapters';
 import { groupTechnicianMapMarkers } from '../utils/technicianMapMarkers';
-import { CollapsibleAircraftFilter } from './CollapsibleAircraftFilter';
+import { TechnicianMapHeader, TechnicianMapLegend } from './technician-map/TechnicianMapControls';
 import {
-  TECHNICIAN_MAP_AVAILABILITY,
-  TechnicianMapHeader,
-  TechnicianMapLegend,
-} from './technician-map/TechnicianMapControls';
-import { techUi } from './technician/TechnicianUI';
-import { notify, confirmAction } from '../utils/platformAlert';
-import { technicianTypeLabel } from '../constants/technicianTypes';
-
-// ─── types ────────────────────────────────────────────────────────────────────
+  activeTechnicianMapFilterCount,
+  TechnicianMapDetailSheet,
+  TechnicianMapFilterSheet,
+  TechnicianOfferSelectionSheet,
+} from './technician-map/TechnicianMapSheets';
 
 export interface TechnicianMapProps {
   technicians: SafeTechnicianView[];
-  // Raw habilitations per technician id, keyed the same way as
-  // technicians — used to resolve "Type ratings" catalog displayName
-  // labels for pins/popups instead of the flattened
-  // technician.aircraftTypes family/legacy-code strings.
   habilitationsById: Record<string, TechnicianHabilitation[]>;
   technicianTypesById: Record<string, TechnicianTypeCode[]>;
   filters: MapFilters;
@@ -53,41 +33,16 @@ export interface TechnicianMapProps {
   onViewProfile?: (technicianId: string) => void;
 }
 
-// ─── Leaflet HTML ────────────────────────────────────────────────────────────
-// Uses jsdelivr CDN (HTTPS). All JS wrapped in try/catch.
-// Posts status messages: leaflet-script-start | leaflet-loaded | map-created | markers-added
-// Full html/body/#map sizing so the map fills the WebView.
-
 const LEAFLET_HTML = `<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
-        crossorigin=""/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <style>
-    html, body, #map {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-    }
+    html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
     #map { position: absolute; inset: 0; background: #F8FAFC; }
-    .leaflet-popup-content-wrapper {
-      border-radius: 12px !important;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.15) !important;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      padding: 0 !important;
-    }
-    .leaflet-top.leaflet-left {
-      top: 92px !important;
-      left: 12px !important;
-    }
-
-    .leaflet-popup-content { margin: 14px 16px !important; min-width: 200px; max-width: 300px; }
-    .leaflet-popup-tip-container { display: none; }
-    .leaflet-popup-close-button { top: 8px !important; right: 8px !important; font-size: 18px !important; color: #94A3B8 !important; }
+    .leaflet-top.leaflet-left { top: 92px !important; left: 12px !important; }
     .leaflet-control-attribution { font-size: 8px !important; }
     .technician-marker-count.leaflet-tooltip {
       background: transparent;
@@ -105,534 +60,136 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 <body>
   <div id="map"></div>
   <script>
-    function post(msg) {
-      try { window.ReactNativeWebView.postMessage(msg); } catch(e) {}
+    function post(message) {
+      try { window.ReactNativeWebView.postMessage(message); } catch (error) {}
     }
 
     var map = null;
     var markersLayer = null;
+    var markersByGroupKey = {};
+    var selectedGroupKey = null;
     var pendingPayload = null;
     var isMapReady = false;
 
-    post("html-started");
-
     var AVAIL = {
-      open_to_offers: { hex: '#10B981', bg: 'rgba(16,185,129,0.12)', br: 'rgba(16,185,129,0.3)' },
-      unavailable:    { hex: '#94A3B8', bg: 'rgba(148,163,184,0.12)',br: 'rgba(148,163,184,0.3)' },
-    };
-    var VERIF = {
-      verified:   { hex: '#10B981', bg: 'rgba(16,185,129,0.12)',  br: 'rgba(16,185,129,0.3)' },
-      pending:    { hex: '#F59E0B', bg: 'rgba(245,158,11,0.12)',  br: 'rgba(245,158,11,0.3)' },
-      rejected:   { hex: '#EF4444', bg: 'rgba(239,68,68,0.12)',   br: 'rgba(239,68,68,0.3)'  },
+      open_to_offers: '#10B981',
+      unavailable: '#94A3B8',
     };
 
-    function availLabel(s) {
-      return s === 'open_to_offers' ? 'Open to offers' : 'Unavailable';
-    }
-    function escHtml(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-    function escAttr(s) {
-      return escHtml(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-    }
-    function chip(text, c) {
-      return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:'+c.bg+';color:'+c.hex+';border:1px solid '+c.br+';margin:0 3px 3px 0;">'+escHtml(text)+'</span>';
-    }
-    function buildPopup(m) {
-      var ac = AVAIL[m.availability] || AVAIL.unavailable;
-      var vc = VERIF[m.verificationStatus] || VERIF.pending;
-      var trades = (m.tradeLabels || []).map(function(label) {
-        return '<span style="display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#E0F2FE;color:#075985;border:1px solid #7DD3FC;margin:0 3px 3px 0;">'+escHtml(label)+'</span>';
-      }).join('');
-      var licenses = (m.licenseCategories || []).map(function(l) {
-        return '<span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(10,22,40,0.07);color:#1E3A5F;border:1px solid rgba(10,22,40,0.15);margin:0 3px 3px 0;">'+escHtml(l)+'</span>';
-      }).join('');
-      var tr = m.typeRatings || [];
-      var typeRatings = tr.slice(0,4).map(escHtml).join(' &bull; ') + (tr.length>4 ? ' +' + (tr.length-4) : '');
-      var sendButton = '<button type="button" data-tech-id="'+escAttr(m.id)+'" onclick="post(\\'map-select-technician:\\' + this.getAttribute(\\'data-tech-id\\'))" style="width:100%;min-height:44px;margin-top:10px;border:0;border-radius:11px;background:#0A1628;color:#FFFFFF;font-size:12px;font-weight:700;">Send direct offer</button>';
-      var profileButton = m.profileUnlocked
-        ? '<button type="button" data-tech-id="'+escAttr(m.id)+'" onclick="post(\\'map-view-profile:\\' + this.getAttribute(\\'data-tech-id\\'))" style="width:100%;min-height:44px;margin-top:8px;border:1px solid #0369A1;border-radius:11px;background:#FFFFFF;color:#0369A1;font-size:12px;font-weight:700;">View profile</button>'
-        : '';
-      return '<div>' +
-        '<div style="font-weight:700;font-size:15px;color:#1A2332;margin-bottom:2px;">'+escHtml(m.displayName || m.anonymousCode)+'</div>' +
-        '<div style="font-size:12px;color:#475569;margin-bottom:8px;">'+escHtml(m.city)+', '+escHtml(m.country)+(m.baseAirport?' &bull; '+escHtml(m.baseAirport):'')+' &bull; '+escHtml(String(m.yearsExperience))+' yrs exp</div>' +
-        (trades ? '<div style="margin-bottom:7px;">'+trades+'</div>' : '<div style="font-size:11px;color:#64748B;margin-bottom:8px;">Trade not specified</div>') +
-        '<div style="margin-bottom:8px;">'+chip(availLabel(m.availability),ac)+chip(m.verificationStatus,vc)+'</div>' +
-        (licenses ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Licenses</div><div style="margin-bottom:8px;">'+licenses+'</div>' : '') +
-        (typeRatings ? '<div style="font-size:10px;font-weight:700;color:#94A3B8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Type ratings</div><div style="font-size:12px;color:#475569;margin-bottom:6px;">'+typeRatings+'</div>' : '') +
-        profileButton + sendButton +
-      '</div>';
+    function updateSelectedMarker(groupKey) {
+      selectedGroupKey = groupKey || null;
+      Object.keys(markersByGroupKey).forEach(function(key) {
+        var marker = markersByGroupKey[key];
+        marker.setStyle({
+          color: key === selectedGroupKey ? '#2563EB' : marker.__baseColor,
+          weight: key === selectedGroupKey ? 5 : marker.__baseWeight,
+        });
+      });
     }
 
-    function buildGroupPopup(group) {
-      var members = Array.isArray(group.technicians) ? group.technicians : [];
-      if (members.length === 1) return buildPopup(members[0]);
+    window.setSelectedTechnicianGroup = updateSelectedMarker;
 
-      var cards = members.map(function(m, index) {
-        var divider = index === 0 ? '' : 'border-top:1px solid #E2E8F0;padding-top:12px;margin-top:12px;';
-        return '<div style="'+divider+'">'+buildPopup(m)+'</div>';
-      }).join('');
-
-      return '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">' +
-        '<div style="color:#1A2332;font-size:16px;font-weight:800;margin-bottom:8px;">'+members.length+' technicians at this map point</div>' +
-        '<div style="max-height:320px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:3px;">'+cards+'</div>' +
-      '</div>';
-    }
-
-    function renderMarkers(arr) {
+    function renderMarkers(groups) {
       try {
         markersLayer.clearLayers();
+        markersByGroupKey = {};
         var bounds = [];
         var added = 0;
-        arr.forEach(function(group) {
-          var lat = Number(group.latitude);
-          var lng = Number(group.longitude);
+
+        groups.forEach(function(group) {
+          var latitude = Number(group.latitude);
+          var longitude = Number(group.longitude);
           var members = Array.isArray(group.technicians) ? group.technicians : [];
-          if (members.length === 0 || isNaN(lat) || isNaN(lng) || !isFinite(lat) || !isFinite(lng)) {
-            post("invalid-marker-group:" + (group.key || "unknown"));
-            return;
-          }
+          if (!members.length || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
           var isGroup = members.length > 1;
           var isApproximate = group.locationPrecision !== 'city';
-          var ac = AVAIL[members[0].availability] || AVAIL.unavailable;
-          var circle = L.circleMarker([lat, lng], {
+          var baseColor = isApproximate && !isGroup ? '#0A1628' : '#FFFFFF';
+          var baseWeight = isApproximate ? 3 : 2.5;
+          var marker = L.circleMarker([latitude, longitude], {
             radius: isGroup ? 22 : (isApproximate ? 12 : 10),
-            fillColor: isGroup ? '#0A1628' : ac.hex,
-            color: isApproximate && !isGroup ? '#0A1628' : '#ffffff',
+            fillColor: isGroup ? '#0A1628' : (AVAIL[members[0].availability] || AVAIL.unavailable),
+            color: baseColor,
             fillOpacity: isGroup ? 0.92 : (isApproximate ? 0.34 : 0.9),
-            weight: isApproximate ? 3 : 2.5,
+            weight: baseWeight,
             dashArray: isApproximate ? '4 3' : null,
           });
+          marker.__baseColor = baseColor;
+          marker.__baseWeight = baseWeight;
+          marker.on('click', function() {
+            updateSelectedMarker(group.key);
+            post('map-select-group:' + group.key);
+          });
           if (isGroup) {
-            circle.bindTooltip(String(members.length), {
+            marker.bindTooltip(String(members.length), {
               permanent: true,
               direction: 'center',
               className: 'technician-marker-count',
               opacity: 1,
             });
           } else if (isApproximate) {
-            circle.bindTooltip('Approximate country location', { direction: 'top' });
+            marker.bindTooltip('Approximate country location', { direction: 'top' });
           }
-          circle.bindPopup(buildGroupPopup(group), { maxWidth: isGroup ? 320 : 260, closeButton: true });
-          circle.addTo(markersLayer);
-          bounds.push([lat, lng]);
+          marker.addTo(markersLayer);
+          markersByGroupKey[group.key] = marker;
+          bounds.push([latitude, longitude]);
           added++;
         });
 
-        if (bounds.length === 1) {
-          map.setView(bounds[0], 5);
-        } else if (bounds.length > 1) {
-          map.fitBounds(bounds, { padding: [54, 54], maxZoom: 7 });
-        }
-
-        post("markers-added:" + added);
-      } catch(e) {
-        post("update-markers-error:" + (e.message || "render-error"));
-      }
-    }
-
-    function initMap() {
-      try {
-        post("leaflet-loaded");
-
-        map = L.map('map', { zoomControl: true }).setView([48.5, 8.0], 3);
-        post("map-created");
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
-          maxZoom: 18,
-        }).addTo(map);
-
-        markersLayer = L.layerGroup().addTo(map);
-        post("marker-layer-created");
-
-        isMapReady = true;
-        post("map-ready");
-
-        if (pendingPayload !== null) {
-          var p = pendingPayload;
-          pendingPayload = null;
-          try {
-            var arr = JSON.parse(p);
-            if (Array.isArray(arr)) {
-              post("update-markers-parsed:" + arr.length);
-              renderMarkers(arr);
-            }
-          } catch(e) {
-            post("update-markers-error:" + (e.message || "flush-error"));
-          }
-        }
-      } catch(e) {
-        post("map-init-error:" + (e.message || "init-error"));
+        updateSelectedMarker(selectedGroupKey);
+        if (bounds.length === 1) map.setView(bounds[0], 5);
+        if (bounds.length > 1) map.fitBounds(bounds, { padding: [54, 54], maxZoom: 7 });
+        post('markers-added:' + added);
+      } catch (error) {
+        post('update-markers-error:' + (error.message || 'render error'));
       }
     }
 
     window.updateMarkers = function(payload) {
-      post("update-markers-received");
       try {
         if (!isMapReady || !markersLayer) {
           pendingPayload = payload;
           return;
         }
-        var arr = JSON.parse(payload);
-        if (!Array.isArray(arr)) {
-          post("update-markers-error:not-an-array");
-          return;
-        }
-        post("update-markers-parsed:" + arr.length);
-        renderMarkers(arr);
-      } catch(e) {
-        post("update-markers-error:" + (e.message || "parse-error"));
+        var groups = JSON.parse(payload);
+        if (!Array.isArray(groups)) throw new Error('Marker payload is not an array');
+        renderMarkers(groups);
+      } catch (error) {
+        post('update-markers-error:' + (error.message || 'parse error'));
       }
     };
 
-    post("leaflet-loading");
+    function initMap() {
+      try {
+        map = L.map('map', { zoomControl: true }).setView([48.5, 8.0], 3);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+          maxZoom: 18,
+        }).addTo(map);
+        markersLayer = L.layerGroup().addTo(map);
+        isMapReady = true;
+        post('map-ready');
+        if (pendingPayload !== null) {
+          var payload = pendingPayload;
+          pendingPayload = null;
+          window.updateMarkers(payload);
+        }
+      } catch (error) {
+        post('map-init-error:' + (error.message || 'initialization error'));
+      }
+    }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
-          crossorigin=""
-          onload="initMap()"
-          onerror="post('leaflet-load-error')"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+    onload="initMap()"
+    onerror="post('leaflet-load-error')"
+  ></script>
 </body>
 </html>`;
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-type MultiFilterKey =
-  | 'licenseCategories'
-  | 'aircraftFamilyKeys'
-  | 'verificationStatuses'
-  | 'availabilityStatuses';
-
-// aircraftFamilyKeys has no legacy single-value fallback — the old
-// singular filters.aircraftType held a legacy code/label, not a family
-// key, and is unused since Fase 3b screen 4 (2026-07-22).
-const LEGACY_FILTER_KEYS: Partial<Record<MultiFilterKey, keyof MapFilters>> = {
-  licenseCategories: 'licenseCategory',
-  verificationStatuses: 'verificationStatus',
-  availabilityStatuses: 'availabilityStatus',
-};
-
-function selectedFilterValues(filters: MapFilters, key: MultiFilterKey): string[] {
-  const value = filters[key];
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string') return [value];
-  const legacyKey = LEGACY_FILTER_KEYS[key];
-  const legacyValue = legacyKey ? filters[legacyKey] : undefined;
-  return typeof legacyValue === 'string' ? [legacyValue] : [];
-}
-
-function activeFilterCount(f: MapFilters): number {
-  return (
-    selectedFilterValues(f, 'licenseCategories').length +
-    selectedFilterValues(f, 'aircraftFamilyKeys').length +
-    selectedFilterValues(f, 'verificationStatuses').length +
-    selectedFilterValues(f, 'availabilityStatuses').length
-  );
-}
-
-function hasMapCoordinates(t: SafeTechnicianView): boolean {
-  return Number.isFinite(Number(t.latitude)) && Number.isFinite(Number(t.longitude));
-}
-
-// ─── filter chip ─────────────────────────────────────────────────────────────
-
-function FilterChip({
-  label,
-  selected,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      style={[styles.filterChip, selected && styles.filterChipActive]}
-      onPress={onPress}
-      activeOpacity={0.75}
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: selected }}
-    >
-      <Text style={[styles.filterChipText, selected && styles.filterChipTextActive]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
-// ─── filter sheet ─────────────────────────────────────────────────────────────
-
-const VERIFICATION_OPTIONS = [
-  { value: 'verified', label: 'Verified' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'rejected', label: 'Rejected' },
-] as const;
-
-// Dos estados desde 2026-07-29 — ver la nota gemela en
-// TechnicianMapLeafletImpl.tsx. Las dos implementaciones del mapa ofrecen las
-// mismas opciones por construcción.
-const AVAILABILITY_OPTIONS = TECHNICIAN_MAP_AVAILABILITY.map(({ value, label }) => ({ value, label }));
-
-interface FilterSheetProps {
-  visible: boolean;
-  filters: MapFilters;
-  onFilterChange: (key: keyof MapFilters, value: MapFilterValue) => void;
-  onClose: () => void;
-}
-
-function FilterSheet({ visible, filters, onFilterChange, onClose }: FilterSheetProps) {
-  const selectedLicenses = selectedFilterValues(filters, 'licenseCategories');
-  const selectedAircraft = selectedFilterValues(filters, 'aircraftFamilyKeys');
-  const selectedVerification = selectedFilterValues(filters, 'verificationStatuses');
-  const selectedAvailability = selectedFilterValues(filters, 'availabilityStatuses');
-
-  function setMultiFilter(key: MultiFilterKey, values: string[]) {
-    onFilterChange(key, values.length > 0 ? values : undefined);
-  }
-
-  function toggle(key: MultiFilterKey, value: string) {
-    const selected = selectedFilterValues(filters, key);
-    const next = selected.includes(value)
-      ? selected.filter((item) => item !== value)
-      : [...selected, value];
-    setMultiFilter(key, next);
-  }
-  function clearAll() {
-    onFilterChange('licenseCategories', undefined);
-    onFilterChange('aircraftFamilyKeys', undefined);
-    onFilterChange('verificationStatuses', undefined);
-    onFilterChange('availabilityStatuses', undefined);
-    onFilterChange('licenseCategory', undefined);
-    onFilterChange('verificationStatus', undefined);
-    onFilterChange('availabilityStatus', undefined);
-  }
-  const hasFilters = activeFilterCount(filters) > 0;
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      <TouchableOpacity
-        accessibilityLabel="Close filters"
-        style={styles.sheetOverlay}
-        activeOpacity={1}
-        onPress={onClose}
-      />
-      <View style={styles.sheet}>
-        <View style={styles.sheetHandle} />
-        <View style={styles.sheetHeader}>
-          <View style={styles.sheetTitleBlock}>
-            <Text style={styles.sheetTitle}>Filter technicians</Text>
-            <Text style={styles.sheetSubtitle}>
-              Match any option within a section and every active section.
-            </Text>
-          </View>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Close filters"
-            activeOpacity={0.75}
-            onPress={onClose}
-            style={styles.sheetClose}
-          >
-            <X color={techUi.text} size={20} strokeWidth={2.3} />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
-          <Text style={styles.sheetSectionLabel}>License Category</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.chipRow}>
-              {LICENSE_CATEGORIES.map((l) => (
-                <FilterChip
-                  key={l.code}
-                  label={l.code}
-                  selected={selectedLicenses.includes(l.code)}
-                  onPress={() => toggle('licenseCategories', l.code)}
-                />
-              ))}
-            </View>
-          </ScrollView>
-
-          <Text style={[styles.sheetSectionLabel, styles.sectionGap]}>Verification Status</Text>
-          <View style={styles.chipRow}>
-            {VERIFICATION_OPTIONS.map((v) => (
-              <FilterChip
-                key={v.value}
-                label={v.label}
-                selected={selectedVerification.includes(v.value)}
-                onPress={() => toggle('verificationStatuses', v.value)}
-              />
-            ))}
-          </View>
-
-          <Text style={[styles.sheetSectionLabel, styles.sectionGap]}>Availability</Text>
-          <View style={styles.chipRow}>
-            {AVAILABILITY_OPTIONS.map((a) => (
-              <FilterChip
-                key={a.value}
-                label={a.label}
-                selected={selectedAvailability.includes(a.value)}
-                onPress={() => toggle('availabilityStatuses', a.value)}
-              />
-            ))}
-          </View>
-
-          <View style={styles.sectionGap}>
-            <CollapsibleAircraftFilter
-              selectedKeys={selectedAircraft}
-              onChange={(next) => setMultiFilter('aircraftFamilyKeys', next)}
-            />
-          </View>
-        </ScrollView>
-
-        <View style={styles.sheetFooter}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            activeOpacity={0.75}
-            disabled={!hasFilters}
-            onPress={clearAll}
-            style={[styles.resetButton, !hasFilters && styles.buttonDisabled]}
-          >
-            <RotateCcw color={techUi.textSoft} size={17} strokeWidth={2.2} />
-            <Text style={styles.resetButtonText}>Reset</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            accessibilityRole="button"
-            activeOpacity={0.75}
-            onPress={onClose}
-            style={styles.showButton}
-          >
-            <Text style={styles.showButtonText}>Show technicians</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-// ─── main component ───────────────────────────────────────────────────────────
-
-function offerScoreColor(score: number): string {
-  if (score >= 80) return colors.success;
-  if (score >= 60) return colors.blue;
-  if (score >= 40) return colors.warning;
-  return colors.textMuted;
-}
-
-function requestStatusLabel(status?: string): string {
-  if (status === 'pending') return 'Pending';
-  if (status === 'accepted') return 'Accepted';
-  if (status === 'rejected' || status === 'withdrawn') return 'Send again';
-  return 'Send';
-}
-
-function isRequestLocked(status?: string): boolean {
-  return status === 'pending' || status === 'accepted';
-}
-
-function OfferSelectionSheet({
-  visible,
-  technician,
-  options,
-  loading,
-  sendingOfferId,
-  onSend,
-  onClose,
-}: {
-  visible: boolean;
-  technician: SafeTechnicianView | null;
-  options: MapOfferMatchOption[];
-  loading: boolean;
-  sendingOfferId: string | null;
-  onSend: (offerId: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={onClose} />
-      <View style={styles.sheet}>
-        <View style={styles.sheetHandle} />
-        <View style={styles.sheetHeader}>
-          <View style={styles.offerSheetTitleWrap}>
-            <Text style={styles.sheetTitle}>Send direct offer</Text>
-            {technician ? <Text style={styles.offerSheetSub}>{technician.anonymousCode}</Text> : null}
-          </View>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-            <Text style={styles.closeBtnText}>Done</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView showsVerticalScrollIndicator={false} style={styles.sheetScroll}>
-          {loading ? (
-            <View style={styles.offerLoadingRow}>
-              <ActivityIndicator color={colors.navy} />
-              <Text style={styles.offerLoadingText}>Calculating offer matches...</Text>
-            </View>
-          ) : null}
-
-          {!loading && options.length === 0 ? (
-            <View style={styles.offerEmptyState}>
-              <Text style={styles.offerEmptyTitle}>No published offers</Text>
-              <Text style={styles.offerEmptyText}>Publish a job offer before sending direct offers from the map.</Text>
-            </View>
-          ) : null}
-
-          {!loading && options.map((option) => {
-            const locked = isRequestLocked(option.requestStatus);
-            const sending = sendingOfferId === option.offerId;
-            const accent = offerScoreColor(option.score);
-
-            return (
-              <View key={option.offerId} style={styles.offerOption}>
-                <View style={styles.offerOptionTop}>
-                  <View style={styles.offerOptionText}>
-                    <Text style={styles.offerOptionTitle} numberOfLines={2}>{option.title}</Text>
-                    <Text style={styles.offerOptionMeta} numberOfLines={1}>
-                      {option.location} - {option.contractType.replace(/_/g, ' ')}
-                    </Text>
-                  </View>
-                  <View style={[styles.offerScoreBadge, { borderColor: accent }]}>
-                    <Text style={[styles.offerScoreValue, { color: accent }]}>{option.score}%</Text>
-                    <Text style={styles.offerScoreLabel}>match</Text>
-                  </View>
-                </View>
-
-                <View style={styles.offerOptionBottom}>
-                  <Text style={styles.offerMatchLabel}>{option.label}</Text>
-                  <TouchableOpacity
-                    style={[
-                      styles.offerSendButton,
-                      (locked || sending) && styles.offerSendButtonLocked,
-                    ]}
-                    onPress={() => onSend(option.offerId)}
-                    activeOpacity={0.75}
-                    disabled={locked || sending}
-                  >
-                    {sending ? (
-                      <ActivityIndicator color={colors.white} size="small" />
-                    ) : locked ? (
-                      option.requestStatus === 'accepted'
-                        ? <CheckCircle color={colors.white} size={14} strokeWidth={2.2} />
-                        : <Clock color={colors.white} size={14} strokeWidth={2.2} />
-                    ) : (
-                      <Send color={colors.white} size={14} strokeWidth={2.2} />
-                    )}
-                    <Text style={styles.offerSendButtonText}>
-                      {option.requestStatus ? requestStatusLabel(option.requestStatus) : 'Send'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </Modal>
-  );
+function hasMapCoordinates(technician: SafeTechnicianView): boolean {
+  return Number.isFinite(Number(technician.latitude)) && Number.isFinite(Number(technician.longitude));
 }
 
 export function TechnicianMap({
@@ -651,608 +208,163 @@ export function TechnicianMap({
   const webViewRef = useRef<WebView>(null);
   const [mapReady, setMapReady] = useState(false);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [selectedOfferTechId, setSelectedOfferTechId] = useState<string | null>(null);
   const [sendingOfferId, setSendingOfferId] = useState<string | null>(null);
-
-  // Step 3: debug state visible in the RN layer
-  const [, setWebViewStatus] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
-  const [, setLastMessage] = useState<string>('—');
-  const [, setWebViewError] = useState<string | null>(null);
-
+  const [sendError, setSendError] = useState<string | null>(null);
   const { ratings } = useAircraftTypeRatingsCatalog();
   const ratingIndex = useMemo(() => buildAircraftRatingIndex(ratings), [ratings]);
 
+  const mappedTechnicians = useMemo(() => technicians.filter(hasMapCoordinates), [technicians]);
+  const markerGroups = useMemo(() => groupTechnicianMapMarkers(mappedTechnicians), [mappedTechnicians]);
   const markerPayload = useMemo(
-    () =>
-      groupTechnicianMapMarkers(technicians.filter(hasMapCoordinates)).map((group) => ({
-        key: group.key,
-        latitude: group.latitude,
-        longitude: group.longitude,
-        locationPrecision: group.locationPrecision,
-        technicians: group.technicians.map((t) => ({
-          id: t.id,
-          anonymousCode: t.anonymousCode,
-          displayName: t.fullName,
-          profileUnlocked: Boolean(t.fullName),
-          locationPrecision: t.locationPrecision,
-          baseAirport: t.baseAirport,
-          city: t.city,
-          country: t.country,
-          licenseCategories: t.licenseCategories,
-          typeRatings: resolveTypeRatingLabels(habilitationsById[t.id] ?? [], ratingIndex),
-          tradeLabels: (technicianTypesById[t.id] ?? []).map(technicianTypeLabel),
-          // `specialties` se quito del payload el 2026-07-29: el campo no tiene
-          // almacenamiento (siempre []) y la plantilla HTML inyectada nunca lo
-          // leyo. Ver app/technician/profile.tsx.
-          verificationStatus: t.verificationStatus,
-          yearsExperience: t.yearsExperience,
-          availability: t.availability.status,
-          matchingScore: t.matchingScore,
-        })),
+    () => markerGroups.map((group) => ({
+      key: group.key,
+      latitude: group.latitude,
+      longitude: group.longitude,
+      locationPrecision: group.locationPrecision,
+      technicians: group.technicians.map((technician) => ({
+        id: technician.id,
+        availability: technician.availability.status,
       })),
-    [technicians, habilitationsById, technicianTypesById, ratingIndex],
+    })),
+    [markerGroups],
   );
-
-  useEffect(() => {
-    if (!mapReady || !webViewRef.current) return;
-    const payload = JSON.stringify(markerPayload);
-    webViewRef.current.injectJavaScript(
-      `window.updateMarkers(${JSON.stringify(payload)});true;`,
-    );
-  }, [markerPayload, mapReady]);
-
-  const filterCount = activeFilterCount(filters);
-
+  const selectedGroup = selectedGroupKey
+    ? markerGroups.find((group) => group.key === selectedGroupKey) ?? null
+    : null;
   const selectedOfferTechnician = selectedOfferTechId
     ? technicians.find((technician) => technician.id === selectedOfferTechId) ?? null
     : null;
-  const selectedOfferOptions = selectedOfferTechId ? offerMatchesByTechnician[selectedOfferTechId] ?? [] : [];
+  const selectedOfferOptions = selectedOfferTechId
+    ? offerMatchesByTechnician[selectedOfferTechId] ?? []
+    : [];
+  const tradeLabelsById = useMemo(
+    () => Object.fromEntries(
+      technicians.map((technician) => [
+        technician.id,
+        (technicianTypesById[technician.id] ?? []).map(technicianTypeLabel),
+      ]),
+    ),
+    [technicians, technicianTypesById],
+  );
+  const typeRatingLabelsById = useMemo(
+    () => Object.fromEntries(
+      technicians.map((technician) => [
+        technician.id,
+        resolveTypeRatingLabels(habilitationsById[technician.id] ?? [], ratingIndex),
+      ]),
+    ),
+    [technicians, habilitationsById, ratingIndex],
+  );
+
+  useEffect(() => {
+    if (!mapReady) return;
+    webViewRef.current?.injectJavaScript(
+      `window.updateMarkers(${JSON.stringify(JSON.stringify(markerPayload))});true;`,
+    );
+  }, [mapReady, markerPayload]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    webViewRef.current?.injectJavaScript(
+      `window.setSelectedTechnicianGroup(${JSON.stringify(selectedGroupKey)});true;`,
+    );
+  }, [mapReady, selectedGroupKey]);
+
+  useEffect(() => {
+    if (selectedGroupKey && !selectedGroup) setSelectedGroupKey(null);
+  }, [selectedGroup, selectedGroupKey]);
 
   async function handleSendOffer(offerId: string) {
     if (!selectedOfferTechId || !onSendOffer) return;
+    setSendError(null);
     setSendingOfferId(offerId);
     try {
       await onSendOffer(selectedOfferTechId, offerId);
     } catch (error: any) {
-      notify('Could not send offer', error?.message ?? 'An error occurred while sending this direct offer.');
+      setSendError(error?.message ?? 'An error occurred while sending this direct offer.');
     } finally {
       setSendingOfferId(null);
     }
   }
 
+  function handleMessage(event: WebViewMessageEvent) {
+    const message = event.nativeEvent.data;
+    if (message === 'map-ready') {
+      setMapReady(true);
+      return;
+    }
+    if (message.startsWith('map-select-group:')) {
+      setSelectedGroupKey(message.slice('map-select-group:'.length));
+    }
+  }
+
   return (
     <View style={styles.container}>
-
-      {/* WebView container — explicit height so it is never zero */}
       <View style={styles.webViewContainer}>
         <WebView
           ref={webViewRef}
-          // Step 9: required props
           originWhitelist={['*']}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
+          javaScriptEnabled
+          domStorageEnabled
           mixedContentMode="always"
           setSupportMultipleWindows={false}
           source={{ html: LEAFLET_HTML }}
           style={styles.webView}
-          // Step 4: all WebView event callbacks
-          onLoadStart={() => setWebViewStatus('loading')}
-          onLoadEnd={() => {
-            setWebViewStatus('loaded');
-            // Do NOT set mapReady here — wait for "map-ready" postMessage
-            // (Leaflet script still needs to load from CDN after onLoadEnd fires)
-          }}
-          onError={(e) => {
-            setWebViewStatus('error');
-            setWebViewError(e.nativeEvent.description ?? 'unknown error');
-          }}
-          onHttpError={(e) => {
-            setWebViewError(`HTTP ${e.nativeEvent.statusCode} ${e.nativeEvent.url}`);
-          }}
-          // Step 4+5: receive postMessage from HTML
-          onMessage={(e) => {
-            const msg = e.nativeEvent.data;
-            setLastMessage(msg);
-            if (typeof msg === 'string' && msg.startsWith('map-select-technician:')) {
-              setSelectedOfferTechId(msg.replace('map-select-technician:', ''));
-              return;
-            }
-            if (typeof msg === 'string' && msg.startsWith('map-view-profile:')) {
-              onViewProfile?.(msg.replace('map-view-profile:', ''));
-              return;
-            }
-            // Leaflet: consider map ready once initMap completes
-            if (msg === 'map-ready') {
-              setMapReady(true);
-            }
-          }}
+          onLoadStart={() => setMapReady(false)}
+          onMessage={handleMessage}
         />
       </View>
 
       <TechnicianMapHeader
         visibleCount={technicians.length}
-        filterCount={filterCount}
+        filterCount={activeTechnicianMapFilterCount(filters)}
         loading={loading}
         onBack={onBack}
         onOpenFilters={() => setFilterSheetOpen(true)}
       />
 
-      {!loading && markerPayload.length > 0 ? <TechnicianMapLegend /> : null}
+      {!loading && markerGroups.length > 0 ? <TechnicianMapLegend /> : null}
 
-      {/* Filter sheet */}
-      <FilterSheet
+      <TechnicianMapFilterSheet
         visible={filterSheetOpen}
         filters={filters}
         onFilterChange={onFilterChange}
         onClose={() => setFilterSheetOpen(false)}
       />
 
-      <OfferSelectionSheet
-        visible={selectedOfferTechId !== null}
+      <TechnicianMapDetailSheet
+        group={selectedGroup}
+        tradeLabelsById={tradeLabelsById}
+        typeRatingLabelsById={typeRatingLabelsById}
+        onClose={() => setSelectedGroupKey(null)}
+        onViewProfile={onViewProfile}
+        onStartDirectOffer={(technicianId) => {
+          setSelectedGroupKey(null);
+          setSendError(null);
+          setSelectedOfferTechId(technicianId);
+        }}
+      />
+
+      <TechnicianOfferSelectionSheet
         technician={selectedOfferTechnician}
         options={selectedOfferOptions}
         loading={loadingOfferMatches}
         sendingOfferId={sendingOfferId}
+        error={sendError}
         onSend={handleSendOffer}
-        onClose={() => setSelectedOfferTechId(null)}
+        onClose={() => {
+          setSelectedOfferTechId(null);
+          setSendError(null);
+        }}
       />
     </View>
   );
 }
 
-// ─── styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
-
-  // Step 2: explicit container dimensions so WebView is never zero-height
-  webViewContainer: {
-    flex: 1,
-    width: '100%',
-    minHeight: 450,
-  },
-  webView: {
-    flex: 1,
-    width: '100%',
-  },
-
-  topOverlay: {
-    position: 'absolute',
-    top: spacing.xl +48,
-    right: spacing.md,
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    justifyContent: 'flex-start',
-    gap: spacing.sm,
-    zIndex: 10,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.10)',
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  filterBtn: {
-    minHeight: 44,
-    minWidth: 122,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.10)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  filterBtnText: {
-    color: colors.navy,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  filterBadge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    paddingHorizontal: 7,
-    backgroundColor: colors.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterBadgeText: {
-    color: colors.white,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '700',
-  },
-  countPill: {
-    minHeight: 44,
-    minWidth: 82,
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    paddingHorizontal: 13,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.10)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.16,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  countNumber: {
-    color: colors.navy,
-    fontSize: 15,
-    lineHeight: 18,
-    fontWeight: '800',
-  },
-  countLabel: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    lineHeight: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-
-  activeFiltersOverlay: {
-    position: 'absolute',
-    top: 68,
-    left: 0,
-    right: 0,
-    zIndex: 9,
-  },
-  activeFiltersRow: {
-    paddingHorizontal: spacing.md,
-    gap: 6,
-  },
-  activeChip: {
-    backgroundColor: colors.blue,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  activeChipText: {
-    color: colors.white,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  legend: {
-    position: 'absolute',
-    bottom: spacing.xl,
-    right: spacing.md,
-    backgroundColor: 'rgba(10,22,40,0.85)',
-    borderRadius: 10,
-    padding: spacing.sm,
-    gap: 4,
-    zIndex: 8,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  legendText: {
-    color: colors.white,
-    fontSize: 11,
-    fontWeight: '500',
-  },
-
-  sheetOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(10,21,32,0.46)',
-  },
-  sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    maxHeight: '86%',
-    maxWidth: 620,
-    alignSelf: 'center',
-    backgroundColor: techUi.surface,
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    paddingTop: 8,
-    overflow: 'hidden',
-  },
-  sheetHandle: {
-    width: 42,
-    height: 4,
-    backgroundColor: techUi.border,
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 6,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  sheetTitleBlock: { flex: 1, minWidth: 0 },
-  sheetTitle: {
-    fontSize: 20,
-    lineHeight: 25,
-    fontWeight: '800',
-    color: techUi.text,
-  },
-  sheetSubtitle: {
-    marginTop: 2,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
-    color: techUi.textMuted,
-  },
-  sheetClose: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: techUi.surfaceSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sheetHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  offerSheetTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-  },
-  offerSheetSub: {
-    marginTop: 2,
-    color: colors.textSecondary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  clearAllBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: colors.borderLight,
-    borderRadius: 8,
-  },
-  clearAllText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  closeBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: colors.blue,
-    borderRadius: 8,
-  },
-  closeBtnText: {
-    fontSize: 13,
-    color: colors.white,
-    fontWeight: '600',
-  },
-  sheetScroll: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.lg,
-  },
-  sheetFooter: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: Platform.OS === 'ios' ? 34 : spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: techUi.borderSoft,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    backgroundColor: techUi.surface,
-  },
-  resetButton: {
-    minWidth: 112,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: techUi.border,
-    backgroundColor: techUi.surfaceSoft,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-  },
-  resetButtonText: { color: techUi.textSoft, fontSize: 13, fontWeight: '800' },
-  showButton: {
-    flex: 1,
-    minHeight: 48,
-    borderRadius: 14,
-    backgroundColor: techUi.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  showButtonText: { color: colors.white, fontSize: 13, fontWeight: '800' },
-  buttonDisabled: { opacity: 0.42 },
-  offerLoadingRow: {
-    minHeight: 96,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  offerLoadingText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  offerEmptyState: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    backgroundColor: colors.background,
-    padding: spacing.lg,
-    gap: 6,
-  },
-  offerEmptyTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  offerEmptyText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
-  },
-  offerOption: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    padding: 12,
-    marginBottom: spacing.sm,
-    gap: spacing.sm,
-  },
-  offerOptionTop: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    alignItems: 'flex-start',
-  },
-  offerOptionText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  offerOptionTitle: {
-    color: colors.text,
-    fontSize: 14,
-    lineHeight: 18,
-    fontWeight: '800',
-  },
-  offerOptionMeta: {
-    marginTop: 3,
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  offerScoreBadge: {
-    minWidth: 58,
-    borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  offerScoreValue: {
-    fontSize: 15,
-    lineHeight: 18,
-    fontWeight: '900',
-  },
-  offerScoreLabel: {
-    color: colors.textMuted,
-    fontSize: 9,
-    lineHeight: 11,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  offerOptionBottom: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  offerMatchLabel: {
-    flex: 1,
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
-  offerSendButton: {
-    minHeight: 36,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    backgroundColor: colors.navy,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  offerSendButtonLocked: {
-    backgroundColor: colors.textMuted,
-  },
-  offerSendButtonText: {
-    color: colors.white,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  sheetHelper: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
-  sheetSectionLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: techUi.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: spacing.sm,
-  },
-  sectionGap: {
-    marginTop: spacing.lg,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingBottom: 4,
-  },
-  chipGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    paddingBottom: spacing.xl,
-  },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: techUi.borderSoft,
-    backgroundColor: techUi.surfaceSoft,
-  },
-  filterChipActive: {
-    backgroundColor: techUi.accentSoft,
-    borderColor: techUi.accent,
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: techUi.textSoft,
-  },
-  filterChipTextActive: {
-    color: techUi.accent,
-    fontWeight: '800',
-  },
+  webViewContainer: { flex: 1, width: '100%', minHeight: 450 },
+  webView: { flex: 1, width: '100%' },
 });

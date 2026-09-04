@@ -49,14 +49,12 @@ function selectedValues(values?: string[], legacyValue?: string): string[] {
 function scoreMapMatch(technician: SafeTechnicianView, filters: {
   licenses: string[];
   aircraft: string[];
-  verification: string[];
   availability: string[];
 }): number {
   let score = 0;
   if (filters.licenses.length > 0) score += 30;
   if (filters.aircraft.length > 0) score += 30;
   if (filters.availability.length > 0) score += 15;
-  if (filters.verification.length > 0) score += 15;
   if (technician.verificationStatus === 'verified') score += 10;
   return score;
 }
@@ -85,7 +83,6 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
     const selected = {
       licenses: selectedValues(filters.licenseCategories, filters.licenseCategory),
       aircraft: selectedValues(filters.aircraftFamilyKeys, undefined),
-      verification: selectedValues(filters.verificationStatuses, filters.verificationStatus),
       availability: selectedValues(filters.availabilityStatuses, filters.availabilityStatus),
     };
 
@@ -99,7 +96,6 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
       technicianRepositoryV2.search({
         licenseCodes: selected.licenses.length ? selected.licenses : undefined,
         aircraftFamilyKeys: selected.aircraft.length ? selected.aircraft : undefined,
-        verificationStatuses: selected.verification.length ? selected.verification : undefined,
         availabilityStatuses: selected.availability.length ? (selected.availability as AvailabilityStatus[]) : undefined,
       }),
       offerRequestRepository.getForCompany(companyId),
@@ -174,11 +170,9 @@ export function useMapTechnicians(filters: MapFilters): UseMapTechniciansReturn 
     setLoading(false);
   }, [
     filters.licenseCategory,
-    filters.verificationStatus,
     filters.availabilityStatus,
     filters.licenseCategories,
     filters.aircraftFamilyKeys,
-    filters.verificationStatuses,
     filters.availabilityStatuses,
     companyId,
     // El catálogo llega asíncrono: sin esta dependencia, los técnicos

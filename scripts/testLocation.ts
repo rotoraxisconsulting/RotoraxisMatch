@@ -32,6 +32,7 @@ import {
   resolveMapPin,
 } from '../src/utils/locationBridge';
 import { groupTechnicianMapMarkers } from '../src/utils/technicianMapMarkers';
+import { buildOfferMapMarkerSvg, offerMapMarkerShape } from '../src/utils/offerMapMarkerIcon';
 import { buildOfferMapMarkerUpdateScript } from '../src/utils/offerMapWebViewBridge';
 import { matchesTechnicianSearchIdentity } from '../src/utils/technicianSearchFilterMatch';
 import { LOCATION_CITY_INDEX, resolveLocationSnapshot } from '../src/constants/locationCities';
@@ -679,36 +680,54 @@ async function main() {
     const inlineScript = inlineScripts[0][1];
     assert.doesNotThrow(() => new Function(inlineScript));
 
+    const messages: string[] = [];
+    let markerClickHandler: (() => void) | null = null;
+    const mapStub = { setView: () => mapStub, fitBounds: () => undefined };
+    const layerStub = { addTo: () => layerStub, clearLayers: () => undefined };
+    const markerStub = {
+      setStyle: () => markerStub,
+      on: (event: string, handler: () => void) => {
+        if (event === 'click') markerClickHandler = handler;
+        return markerStub;
+      },
+      bindTooltip: () => markerStub,
+      addTo: () => markerStub,
+    };
+    const leafletStub = {
+      map: () => mapStub,
+      tileLayer: () => ({ addTo: () => undefined }),
+      layerGroup: () => layerStub,
+      circleMarker: () => markerStub,
+    };
+    const windowStub: Record<string, any> = {
+      ReactNativeWebView: { postMessage: (message: string) => messages.push(message) },
+    };
     const runtime = new Function(
       'window',
-      `${inlineScript}\nreturn { AVAIL, buildGroupPopup };`,
-    )({ ReactNativeWebView: { postMessage: () => undefined } }) as {
-      AVAIL: Record<string, { hex: string }>;
-      buildGroupPopup: (group: unknown) => string;
+      'L',
+      `${inlineScript}\nreturn { AVAIL, initMap };`,
+    )(windowStub, leafletStub) as {
+      AVAIL: Record<string, string>;
+      initMap: () => void;
     };
     assert.deepEqual(Object.keys(runtime.AVAIL).sort(), ['open_to_offers', 'unavailable']);
-    assert.equal(runtime.AVAIL.open_to_offers.hex, '#10B981');
-    const popup = runtime.buildGroupPopup({
+    assert.equal(runtime.AVAIL.open_to_offers, '#10B981');
+    runtime.initMap();
+    windowStub.updateMarkers(JSON.stringify([{
+      key: '40.00000:-4.00000',
+      latitude: 40,
+      longitude: -4,
       locationPrecision: 'country',
-      technicians: ['TECH-001', 'TECH-002', 'TECH-003'].map((anonymousCode, index) => ({
-        id: `tech-${index + 1}`,
-        anonymousCode,
-        city: 'Madrid',
-        country: 'Spain',
-        yearsExperience: index + 2,
+      technicians: ['tech-1', 'tech-2', 'tech-3'].map((id) => ({
+        id,
         availability: 'open_to_offers',
-        verificationStatus: 'verified',
-        tradeLabels: index === 0 ? ['Sheet Metal Worker', 'Avionics Technician'] : ['Mechanic'],
-        licenseCategories: [],
-        typeRatings: [],
-        profileUnlocked: false,
       })),
-    });
-    assert.match(popup, /3 technicians at this map point/);
-    for (const code of ['TECH-001', 'TECH-002', 'TECH-003']) assert.match(popup, new RegExp(code));
-    assert.match(popup, /Sheet Metal Worker/);
-    assert.match(popup, /Avionics Technician/);
-    assert.doesNotMatch(popup, /country centroid/);
+    }]));
+    assert.ok(markerClickHandler, 'El marcador no registró la selección');
+    (markerClickHandler as () => void)();
+    assert.ok(messages.includes('map-select-group:40.00000:-4.00000'));
+    assert.doesNotMatch(source, /\.bindPopup\(/);
+    assert.match(source, /TechnicianMapDetailSheet/);
   });
 
   await test('Mapa de ofertas nativo — el payload acepta apóstrofes, comillas y saltos de línea', () => {
@@ -730,11 +749,43 @@ async function main() {
     assert.ok(!script.includes('encodeURIComponent'));
   });
 
-  await test('Mapa de ofertas nativo — HTML, errores tempranos y botones son ejecutables', () => {
+  await test('Offer map - contract shapes and neutral groups use stable SVG geometry', () => {
+    assert.equal(offerMapMarkerShape('permanent'), 'circle');
+    assert.equal(offerMapMarkerShape('long_term'), 'square');
+    assert.equal(offerMapMarkerShape('short_term'), 'diamond');
+
+    const circle = buildOfferMapMarkerSvg({ shape: 'circle', color: '#10B981' });
+    const square = buildOfferMapMarkerSvg({ shape: 'square', color: '#2563EB' });
+    const diamond = buildOfferMapMarkerSvg({ shape: 'diamond', color: '#F59E0B' });
+    const cluster = buildOfferMapMarkerSvg({ shape: 'cluster', color: '#EF4444', count: 104 });
+
+    assert.match(circle, /<circle cx="24" cy="24" r="12"/);
+    assert.match(square, /<rect x="12" y="12" width="24" height="24"/);
+    assert.match(diamond, /<path d="M24 9\.5 38\.5 24 24 38\.5 9\.5 24Z"/);
+    assert.match(cluster, /fill="#0A1520"/);
+    assert.match(cluster, />99\+<\/text>/);
+    assert.doesNotMatch(cluster, /#EF4444/);
+    for (const svg of [circle, square, diamond, cluster]) {
+      assert.match(svg, /width="48" height="48" viewBox="0 0 48 48"/);
+      assert.match(svg, /offer-marker-selection/);
+    }
+  });
+
+  await test('Mapa de ofertas nativo — HTML, errores tempranos y selección de hoja son ejecutables', () => {
     const source = readFileSync(
       join(process.cwd(), 'src/components/OfferMap.native.tsx'),
       'utf8',
     );
+    const webSource = readFileSync(
+      join(process.cwd(), 'src/components/OfferMapLeafletImpl.tsx'),
+      'utf8',
+    );
+    assert.doesNotMatch(source, /circleMarker|dashArray/);
+    assert.doesNotMatch(webSource, /CircleMarker|dashArray/);
+    assert.match(source, /L\.divIcon/);
+    assert.match(webSource, /buildOfferMapMarkerSvg/);
+    assert.match(source, /OfferMapDetailSheet/);
+    assert.match(webSource, /OfferMapDetailSheet/);
     const template = source.match(/const LEAFLET_HTML = `([\s\S]*?)`;\r?\n/);
     assert.ok(template, 'No encuentro LEAFLET_HTML');
     const html = new Function(`return \`${template[1]}\`;`)() as string;
@@ -743,15 +794,9 @@ async function main() {
     for (const script of inlineScripts) assert.doesNotThrow(() => new Function(script[1]));
 
     const messages: string[] = [];
-    const renderedPopups: string[] = [];
-    let clickHandler: ((event: { target: unknown }) => void) | null = null;
+    let markerClickHandler: (() => void) | null = null;
     const windowStub: Record<string, any> = {
       ReactNativeWebView: { postMessage: (message: string) => messages.push(message) },
-    };
-    const documentStub = {
-      addEventListener: (type: string, handler: (event: { target: unknown }) => void) => {
-        if (type === 'click') clickHandler = handler;
-      },
     };
     const mapStub = {
       setView: () => mapStub,
@@ -761,18 +806,28 @@ async function main() {
       addTo: () => markerLayerStub,
       clearLayers: () => undefined,
     };
+    const markerIcons: Array<{ html?: string }> = [];
+    const markerAttributes: Record<string, string> = {};
+    const markerElement = {
+      classList: { add: () => undefined, remove: () => undefined },
+      setAttribute: (name: string, value: string) => { markerAttributes[name] = value; },
+    };
     const leafletStub = {
       map: () => mapStub,
       tileLayer: () => ({ addTo: () => undefined }),
       layerGroup: () => markerLayerStub,
-      circleMarker: () => {
+      divIcon: (options: { html?: string }) => {
+        markerIcons.push(options);
+        return options;
+      },
+      marker: () => {
         const marker = {
-          bindPopup: (popup: string) => {
-            renderedPopups.push(popup);
+          on: (event: string, handler: () => void) => {
+            if (event === 'click') markerClickHandler = handler;
             return marker;
           },
-          bindTooltip: () => marker,
           addTo: () => marker,
+          getElement: () => markerElement,
         };
         return marker;
       },
@@ -781,38 +836,11 @@ async function main() {
     new Function('window', inlineScripts[0][1])(windowStub);
     const runtime = new Function(
       'window',
-      'document',
       'L',
-      `${inlineScripts[1][1]}\nreturn { buildOfferCard, initMap };`,
-    )(windowStub, documentStub, leafletStub) as {
-      buildOfferCard: (offer: unknown, divider: boolean) => string;
+      `${inlineScripts[1][1]}\nreturn { initMap };`,
+    )(windowStub, leafletStub) as {
       initMap: () => void;
     };
-
-    const card = runtime.buildOfferCard({
-      id: "offer-o'brien",
-      title: "O'Brien <A320>",
-      companyName: 'D"Angelo',
-      location: "L'Aquila & coast",
-      score: 88,
-      matchLabel: 'Strong',
-      labelColor: '#0891B2',
-      blocked: false,
-      contractLabel: 'Contract',
-      productLabel: 'Aircraft',
-      approximate: false,
-    }, false);
-    assert.ok(!card.includes('onclick='), 'El botón no debe contener JavaScript inline');
-    assert.match(card, /O&#39;Brien &lt;A320&gt;/);
-    assert.match(card, /data-offer-id="offer-o&#39;brien"/);
-
-    assert.ok(clickHandler, 'No se registró la delegación de click');
-    const fakeButton = {
-      getAttribute: (name: string) => name === 'data-offer-id' ? "offer-o'brien" : null,
-      parentNode: documentStub,
-    };
-    (clickHandler as (event: { target: unknown }) => void)({ target: fakeButton });
-    assert.ok(messages.includes("offer-map-view:offer-o'brien"));
 
     windowStub.onerror('Unexpected identifier offer');
     assert.ok(messages.some((message) => message.includes('offer-map-error:JavaScript error:')));
@@ -824,6 +852,8 @@ async function main() {
       latitude: 40,
       longitude: -4,
       locationPrecision: 'country',
+      accessibilityLabel: 'Permanent offer in L Aquila, country-level location',
+      markerSvg: buildOfferMapMarkerSvg({ shape: 'circle', color: '#0891B2' }),
       offers: [{
         id: "offer-o'brien",
         title: "O'Brien <A320>",
@@ -839,8 +869,14 @@ async function main() {
         approximate: true,
       }],
     }]))(windowStub);
-    assert.equal(renderedPopups.length, 1);
-    assert.match(renderedPopups[0], /O&#39;Brien &lt;A320&gt;/);
+    assert.equal(markerIcons.length, 1);
+    assert.match(markerIcons[0].html ?? '', /<circle cx="24" cy="24" r="12"/);
+    assert.equal(markerAttributes.role, 'button');
+    assert.match(markerAttributes['aria-label'], /Permanent offer/);
+    assert.ok(markerClickHandler, 'El marcador no registró la selección');
+    (markerClickHandler as () => void)();
+    assert.ok(messages.includes('offer-map-select:40.00000:-4.00000:country'));
+    assert.doesNotMatch(source, /\.bindPopup\(/);
   });
 
   // ── Selector <-> fila ───────────────────────────────────────────────────

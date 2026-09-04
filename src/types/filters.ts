@@ -88,7 +88,6 @@ export interface MapFilters {
   // 2026-07-22) — same shape as TechnicianFilters.aircraftFamilyKeys above,
   // ApproximateFilterSection, and offerMatchExplain.ts's broad filter.
   aircraftFamilyKeys?: string[];
-  verificationStatuses?: string[];
   availabilityStatuses?: string[];
   /**
    * @deprecated Active singular fallback read by useMapTechnicians.ts and both
@@ -111,13 +110,6 @@ export interface MapFilters {
    * V1 map-filter contract after downstream callers have been audited.
    */
   aircraftType?: string;
-  /**
-   * @deprecated Active singular fallback read by useMapTechnicians.ts and both
-   * TechnicianMap implementations for older map state. New code should write
-   * verificationStatuses. Remove it after all map callers use the plural field
-   * and the fallback rendering paths are removed.
-   */
-  verificationStatus?: string;
   /**
    * @deprecated Active singular fallback read by useMapTechnicians.ts and both
    * TechnicianMap implementations for older map state. New code should write

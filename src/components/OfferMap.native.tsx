@@ -7,6 +7,7 @@ import {
 } from '../types/offerMap';
 import {
   groupOfferMapItems,
+  OfferMapDetailSheet,
   OfferMapFilterSheet,
   OfferMapHeader,
   OfferMapLegend,
@@ -14,11 +15,13 @@ import {
   offerMapApplicationLabel,
   offerMapContractLabel,
   offerMapLabelColor,
+  offerMapMarkerAccessibilityLabel,
   offerMapMarkerColor,
   offerMapProductLabel,
 } from './offer-map/OfferMapControls';
 import { techUi } from './technician/TechnicianUI';
 import { buildOfferMapMarkerUpdateScript } from '../utils/offerMapWebViewBridge';
+import { buildOfferMapMarkerSvg, offerMapMarkerShape } from '../utils/offerMapMarkerIcon';
 
 export interface OfferMapProps {
   offers: OfferMapItem[];
@@ -45,31 +48,21 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     html, body, #map { width: 100%; height: 100%; margin: 0; padding: 0; }
     #map { position: absolute; inset: 0; background: #E2EBF2; }
     .leaflet-top.leaflet-left { top: 96px !important; left: 12px !important; }
-    .leaflet-popup-content-wrapper {
-      border-radius: 16px !important;
-      padding: 0 !important;
-      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18) !important;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
-    .leaflet-popup-content { margin: 14px !important; min-width: 232px; max-width: 286px; }
-    .leaflet-popup-tip-container { display: none; }
-    .leaflet-popup-close-button { top: 8px !important; right: 8px !important; font-size: 20px !important; color: #527088 !important; }
     .leaflet-control-attribution { font-size: 8px !important; }
-    .offer-list { max-height: 320px; overflow-y: auto; padding-right: 2px; }
-    .offer-count-label {
-      background: #0A1520 !important;
-      border: 2px solid #FFFFFF !important;
-      border-radius: 12px !important;
-      color: #FFFFFF !important;
-      box-shadow: none !important;
-      font-size: 10px !important;
-      font-weight: 800 !important;
-      line-height: 18px !important;
-      min-width: 18px !important;
-      padding: 0 4px !important;
-      text-align: center !important;
+    .offer-map-marker-icon {
+      background: transparent !important;
+      border: 0 !important;
     }
-    .offer-count-label:before { display: none !important; }
+    .offer-map-marker-icon svg {
+      display: block;
+      filter: drop-shadow(0 2px 3px rgba(15, 23, 42, 0.24));
+    }
+    .offer-map-marker-icon.is-selected .offer-marker-selection { opacity: 1; }
+    .offer-map-marker-icon:focus-visible {
+      outline: 3px solid #0891B2;
+      outline-offset: 1px;
+      border-radius: 24px;
+    }
   </style>
 </head>
 <body>
@@ -100,90 +93,61 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         else window.ReactNativeWebView.postMessage(message);
       } catch (error) {}
     }
-    function escHtml(value) {
-      return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-    function escAttr(value) { return escHtml(value); }
-    function chip(label, color, background) {
-      return '<span style="display:inline-block;margin:0 4px 4px 0;padding:3px 7px;border-radius:10px;background:'+background+';color:'+color+';font-size:10px;font-weight:700;">'+escHtml(label)+'</span>';
-    }
-    function buildOfferCard(offer, showDivider) {
-      var application = offer.applicationLabel
-        ? chip(offer.applicationLabel, '#065F46', '#C6F0E1')
-        : '';
-      var eligibility = offer.blocked
-        ? chip('Not eligible', '#B91C1C', '#FECACA')
-        : chip(offer.matchLabel, offer.labelColor, '#EBF2F8');
-      return '<div style="'+(showDivider ? 'border-top:1px solid #CCDAE8;padding-top:12px;margin-top:12px;' : '')+'">' +
-        '<div style="padding-right:18px;font-size:14px;line-height:18px;font-weight:800;color:#0A1520;">'+escHtml(offer.title)+'</div>' +
-        '<div style="margin-top:2px;font-size:11px;line-height:15px;font-weight:600;color:#2B3D52;">'+escHtml(offer.companyName)+'</div>' +
-        '<div style="margin-top:7px;font-size:11px;line-height:15px;color:#527088;">'+escHtml(offer.location)+(offer.approximate ? ' &bull; Country-level location' : '')+'</div>' +
-        '<div style="margin-top:7px;">'+chip(offer.score+'% match', offer.labelColor, '#EBF2F8')+eligibility+application+'</div>' +
-        '<div style="margin-top:2px;font-size:10px;line-height:14px;color:#527088;">'+escHtml(offer.contractLabel)+' &bull; '+escHtml(offer.productLabel)+'</div>' +
-        '<button type="button" data-offer-id="'+escAttr(offer.id)+'" style="width:100%;min-height:44px;margin-top:10px;border:0;border-radius:12px;background:#0891B2;color:#FFFFFF;font-size:12px;font-weight:800;">View offer</button>' +
-      '</div>';
-    }
-    function buildPopup(group) {
-      var heading = group.offers.length > 1
-        ? '<div style="margin-bottom:10px;font-size:11px;font-weight:800;color:#527088;">'+group.offers.length+' offers at this location</div>'
-        : '';
-      return '<div class="offer-list">'+heading+group.offers.map(function(offer, index) {
-        return buildOfferCard(offer, index > 0);
-      }).join('')+'</div>';
-    }
-
-    document.addEventListener('click', function(event) {
-      var target = event.target;
-      while (target && target !== document) {
-        if (target.getAttribute) {
-          var offerId = target.getAttribute('data-offer-id');
-          if (offerId) {
-            post('offer-map-view:' + offerId);
-            return;
-          }
-        }
-        target = target.parentNode;
-      }
-    });
-
     var map = null;
     var markersLayer = null;
+    var markersByGroupKey = {};
+    var selectedGroupKey = null;
     var ready = false;
     var pendingPayload = null;
 
+    function updateSelectedMarker(groupKey) {
+      selectedGroupKey = groupKey || null;
+      Object.keys(markersByGroupKey).forEach(function(key) {
+        var element = markersByGroupKey[key].getElement();
+        if (!element) return;
+        if (key === selectedGroupKey) element.classList.add('is-selected');
+        else element.classList.remove('is-selected');
+      });
+    }
+
+    window.setSelectedOfferGroup = updateSelectedMarker;
+
     function renderGroups(groups) {
       markersLayer.clearLayers();
+      markersByGroupKey = {};
       var bounds = [];
       groups.forEach(function(group) {
         var latitude = Number(group.latitude);
         var longitude = Number(group.longitude);
         if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || !group.offers.length) return;
-        var representative = group.offers[0];
-        var approximate = group.locationPrecision === 'country';
-        var marker = L.circleMarker([latitude, longitude], {
-          radius: group.offers.length > 1 ? 13 : 10,
-          fillColor: representative.markerColor,
-          fillOpacity: approximate ? 0.34 : 0.92,
-          color: approximate ? representative.markerColor : '#FFFFFF',
-          weight: approximate ? 3 : 2.5,
-          dashArray: approximate ? '5 4' : null,
+        var icon = L.divIcon({
+          className: 'offer-map-marker-icon',
+          html: group.markerSvg,
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+          popupAnchor: [0, -18],
         });
-        marker.bindPopup(buildPopup(group), { maxWidth: 310, closeButton: true });
-        if (group.offers.length > 1) {
-          marker.bindTooltip(String(group.offers.length), {
-            permanent: true,
-            direction: 'center',
-            className: 'offer-count-label',
-          });
-        }
+        var marker = L.marker([latitude, longitude], {
+          icon: icon,
+          keyboard: true,
+          riseOnHover: true,
+          title: group.accessibilityLabel,
+        });
+        marker.on('click', function() {
+          updateSelectedMarker(group.key);
+          post('offer-map-select:' + group.key);
+        });
         marker.addTo(markersLayer);
+        markersByGroupKey[group.key] = marker;
+        var markerElement = marker.getElement();
+        if (markerElement) {
+          markerElement.setAttribute('aria-label', group.accessibilityLabel);
+          markerElement.setAttribute('role', 'button');
+        }
         bounds.push([latitude, longitude]);
       });
+
+      updateSelectedMarker(selectedGroupKey);
 
       if (bounds.length === 1) map.setView(bounds[0], 6);
       if (bounds.length > 1) map.fitBounds(bounds, { padding: [58, 58], maxZoom: 7 });
@@ -255,28 +219,41 @@ export function OfferMap({
 }: OfferMapProps) {
   const webViewRef = useRef<WebView>(null);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [mapKey, setMapKey] = useState(0);
   const groups = useMemo(() => groupOfferMapItems(offers), [offers]);
-  const payload = useMemo(() => groups.map((group) => ({
-    ...group,
-    offers: group.offers.map((offer) => ({
-      id: offer.id,
-      title: offer.title,
-      companyName: offer.companyName,
-      location: offer.location,
-      score: offer.score,
-      matchLabel: offer.matchLabel,
-      blocked: offer.blockers.length > 0,
-      markerColor: offerMapMarkerColor(offer),
-      labelColor: offerMapLabelColor(offer),
-      contractLabel: offerMapContractLabel(offer.contractType),
-      productLabel: offerMapProductLabel(offer.productType),
-      applicationLabel: offerMapApplicationLabel(offer.applicationStatus),
-      approximate: offer.locationPrecision === 'country',
-    })),
-  })), [groups]);
+  const selectedGroup = selectedGroupKey
+    ? groups.find((group) => group.key === selectedGroupKey) ?? null
+    : null;
+  const payload = useMemo(() => groups.map((group) => {
+    const representative = group.offers[0];
+    const grouped = group.offers.length > 1;
+    return {
+      ...group,
+      accessibilityLabel: offerMapMarkerAccessibilityLabel(group),
+      markerSvg: buildOfferMapMarkerSvg({
+        shape: grouped ? 'cluster' : offerMapMarkerShape(representative.contractType),
+        color: grouped ? techUi.navy : offerMapMarkerColor(representative),
+        count: group.offers.length,
+      }),
+      offers: group.offers.map((offer) => ({
+        id: offer.id,
+        title: offer.title,
+        companyName: offer.companyName,
+        location: offer.location,
+        score: offer.score,
+        matchLabel: offer.matchLabel,
+        blocked: offer.blockers.length > 0,
+        labelColor: offerMapLabelColor(offer),
+        contractLabel: offerMapContractLabel(offer.contractType),
+        productLabel: offerMapProductLabel(offer.productType),
+        applicationLabel: offerMapApplicationLabel(offer.applicationStatus),
+        approximate: offer.locationPrecision === 'country',
+      })),
+    };
+  }), [groups]);
   const markerUpdateScript = useMemo(
     () => buildOfferMapMarkerUpdateScript(payload),
     [payload],
@@ -286,6 +263,13 @@ export function OfferMap({
     if (!mapReady) return;
     webViewRef.current?.injectJavaScript(markerUpdateScript);
   }, [markerUpdateScript, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    webViewRef.current?.injectJavaScript(
+      `window.setSelectedOfferGroup(${JSON.stringify(selectedGroupKey)});true;`,
+    );
+  }, [mapReady, selectedGroupKey]);
 
   useEffect(() => {
     if (mapReady || mapError || error) return;
@@ -302,8 +286,8 @@ export function OfferMap({
       setMapError(null);
       return;
     }
-    if (message.startsWith('offer-map-view:')) {
-      onViewOffer(message.slice('offer-map-view:'.length));
+    if (message.startsWith('offer-map-select:')) {
+      setSelectedGroupKey(message.slice('offer-map-select:'.length));
       return;
     }
     if (message.startsWith('offer-map-error:')) {
@@ -420,6 +404,12 @@ export function OfferMap({
         onChange={onFiltersChange}
         onClose={() => setFilterOpen(false)}
       />
+
+      <OfferMapDetailSheet
+        group={selectedGroup}
+        onClose={() => setSelectedGroupKey(null)}
+        onViewOffer={onViewOffer}
+      />
     </View>
   );
 }
@@ -429,7 +419,7 @@ const styles = StyleSheet.create({
   webViewContainer: { flex: 1, width: '100%' },
   map: { flex: 1, width: '100%', backgroundColor: techUi.page },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 999,
     alignItems: 'center',
     justifyContent: 'center',
