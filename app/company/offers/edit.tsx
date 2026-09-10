@@ -39,11 +39,14 @@ import { CountryCityPicker } from '../../../src/components/CountryCityPicker';
 import { LocationValue } from '../../../src/types/location';
 import { locationValueFromPersisted } from '../../../src/utils/locationBridge';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
+import { OfferSalarySection } from '../../../src/components/company/OfferSalarySection';
+import { SalaryFormValue, salaryFormFromValue, salaryFormError, salaryFromForm } from '../../../src/utils/offerSalary';
 
 interface FormState {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  salary: SalaryFormValue;
   productType: OfferProductType;
   // Fase 7 F2c: un solo campo con pais + ciudad.
   location: LocationValue;
@@ -58,6 +61,7 @@ interface FormState {
 
 function computeErrors(form: FormState) {
   return {
+    salary: salaryFormError(form.salary),
     title: !form.title.trim() ? 'Title is required.'
       : form.title.trim().length < 3 ? 'Title must be at least 3 characters.'
       : undefined,
@@ -70,7 +74,7 @@ function computeErrors(form: FormState) {
     license: form.requiresCertification && !form.licenseCode ? 'Select the licence this role certifies under.' : undefined,
   };
 }
-type FormErrors = { title?: string; description?: string; location?: string; license?: string };
+type FormErrors = { title?: string; description?: string; location?: string; license?: string; salary?: string };
 
 export default function EditOfferScreen() {
   const router = useRouter();
@@ -93,6 +97,7 @@ export default function EditOfferScreen() {
           title: o.title,
           description: o.description,
           contractType: o.contractType,
+          salary: salaryFormFromValue(o.salary),
           productType: o.productType,
           // `locationCountry` es el NOMBRE guardado en la fila; sirve como
           // etiqueta hasta que el usuario reabra el selector, que lo
@@ -309,6 +314,7 @@ export default function EditOfferScreen() {
 
   function setField<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => prev ? { ...prev, [key]: value } : prev);
+    if (key === 'salary') setErrors((e) => ({ ...e, salary: undefined }));
     if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
     if (key === 'description') setErrors((e) => ({ ...e, description: undefined }));
     if (key === 'location') {
@@ -329,6 +335,7 @@ export default function EditOfferScreen() {
         title: form.title.trim(),
         description: form.description.trim(),
         contractType: form.contractType,
+        salary: salaryFromForm(form.salary),
         // Va en el update(), no en replaceRequirements(): el repositorio tiene
         // que retirar las filas de requisitos ANTES de mover esta columna
         // (orh_matches_offer lo impone), y hace justo eso cuando ve que
@@ -502,6 +509,8 @@ export default function EditOfferScreen() {
             </View>
           </FormField>
         </FormSection>
+
+        <OfferSalarySection value={form.salary} onChange={(value) => setField('salary', value)} error={errors.salary} />
 
         {/* Fase 7 F2c: el país es lo que puntúa; la ciudad sólo sitúa. */}
         <FormSection title="Location" subtitle="The country is what candidates are matched on. The city only helps them place the role." icon={MapPin}>

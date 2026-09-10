@@ -14,14 +14,14 @@ import {
   OfferMapStatusOverlay,
   offerMapApplicationLabel,
   offerMapContractLabel,
+  offerMapGroupMarkerIcon,
   offerMapLabelColor,
   offerMapMarkerAccessibilityLabel,
-  offerMapMarkerColor,
   offerMapProductLabel,
 } from './offer-map/OfferMapControls';
 import { techUi } from './technician/TechnicianUI';
 import { buildOfferMapMarkerUpdateScript } from '../utils/offerMapWebViewBridge';
-import { buildOfferMapMarkerSvg, offerMapMarkerShape } from '../utils/offerMapMarkerIcon';
+import { offerMapGroupTierInput, resolveOfferMapMarkerTiers } from '../utils/offerMapMarkerTier';
 
 export interface OfferMapProps {
   offers: OfferMapItem[];
@@ -37,6 +37,9 @@ export interface OfferMapProps {
 }
 
 const MAP_READY_TIMEOUT_MS = 12_000;
+
+/** Debe coincidir con el `setView` inicial del HTML de abajo. */
+const OFFER_MAP_INITIAL_ZOOM = 3;
 
 const LEAFLET_HTML = `<!DOCTYPE html>
 <html>
@@ -61,7 +64,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     .offer-map-marker-icon:focus-visible {
       outline: 3px solid #0891B2;
       outline-offset: 1px;
-      border-radius: 24px;
+      border-radius: 18px;
     }
   </style>
 </head>
@@ -103,6 +106,7 @@ const LEAFLET_HTML = `<!DOCTYPE html>
     function updateSelectedMarker(groupKey) {
       selectedGroupKey = groupKey || null;
       Object.keys(markersByGroupKey).forEach(function(key) {
+        markersByGroupKey[key].setZIndexOffset(key === selectedGroupKey ? 10000 : 0);
         var element = markersByGroupKey[key].getElement();
         if (!element) return;
         if (key === selectedGroupKey) element.classList.add('is-selected');
@@ -112,7 +116,14 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 
     window.setSelectedOfferGroup = updateSelectedMarker;
 
-    function renderGroups(groups) {
+    function postZoom() {
+      if (map) post('offer-map-zoom:' + map.getZoom());
+    }
+
+    // fit sólo viene a true cuando cambian las ofertas. Un repintado por
+    // cambio de nivel de marcador NO puede reencuadrar: le robaría el zoom
+    // al usuario justo después de que lo haya hecho a mano.
+    function renderGroups(groups, fit) {
       markersLayer.clearLayers();
       markersByGroupKey = {};
       var bounds = [];
@@ -123,9 +134,9 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         var icon = L.divIcon({
           className: 'offer-map-marker-icon',
           html: group.markerSvg,
-          iconSize: [48, 48],
-          iconAnchor: [24, 24],
-          popupAnchor: [0, -18],
+          iconSize: group.iconSize,
+          iconAnchor: group.iconAnchor,
+          popupAnchor: group.popupAnchor,
         });
         var marker = L.marker([latitude, longitude], {
           icon: icon,
@@ -149,15 +160,20 @@ const LEAFLET_HTML = `<!DOCTYPE html>
 
       updateSelectedMarker(selectedGroupKey);
 
-      if (bounds.length === 1) map.setView(bounds[0], 6);
-      if (bounds.length > 1) map.fitBounds(bounds, { padding: [58, 58], maxZoom: 7 });
+      if (fit) {
+        if (bounds.length === 1) map.setView(bounds[0], 6);
+        if (bounds.length > 1) map.fitBounds(bounds, { padding: [120, 100], maxZoom: 7 });
+        // Un encuadre que no cambia el zoom no dispara zoomend, así que el
+        // nivel se anuncia siempre y React Native nunca se queda desfasado.
+        postZoom();
+      }
       post('offer-map-markers:' + groups.length);
     }
 
-    function parseGroups(payload) {
-      var groups = JSON.parse(payload);
-      if (!Array.isArray(groups)) throw new Error('Offer marker payload is not an array');
-      return groups;
+    function parsePayload(payload) {
+      var parsed = JSON.parse(payload);
+      if (!parsed || !Array.isArray(parsed.groups)) throw new Error('Offer marker payload has no group list');
+      return parsed;
     }
 
     window.updateOfferMarkers = function(payload) {
@@ -167,7 +183,8 @@ const LEAFLET_HTML = `<!DOCTYPE html>
           pendingPayload = payload;
           return;
         }
-        renderGroups(parseGroups(payload));
+        var parsed = parsePayload(payload);
+        renderGroups(parsed.groups, parsed.fit);
       } catch (error) {
         post('offer-map-error:' + (error.message || 'marker error'));
       }
@@ -184,12 +201,15 @@ const LEAFLET_HTML = `<!DOCTYPE html>
         }).addTo(map);
         markersLayer = L.layerGroup().addTo(map);
         post('offer-map-marker-layer-created');
+        map.on('zoomend', postZoom);
         ready = true;
         post('offer-map-ready');
+        postZoom();
         if (pendingPayload !== null) {
           var payload = pendingPayload;
           pendingPayload = null;
-          renderGroups(parseGroups(payload));
+          var parsed = parsePayload(payload);
+          renderGroups(parsed.groups, parsed.fit);
         }
       } catch (error) {
         post('offer-map-error:' + (error.message || 'initialization error'));
@@ -223,46 +243,50 @@ export function OfferMap({
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [mapKey, setMapKey] = useState(0);
+  const [zoom, setZoom] = useState(OFFER_MAP_INITIAL_ZOOM);
   const groups = useMemo(() => groupOfferMapItems(offers), [offers]);
+  const tiers = useMemo(
+    () => resolveOfferMapMarkerTiers(groups.map(offerMapGroupTierInput), zoom),
+    [groups, zoom],
+  );
   const selectedGroup = selectedGroupKey
     ? groups.find((group) => group.key === selectedGroupKey) ?? null
     : null;
-  const payload = useMemo(() => groups.map((group) => {
-    const representative = group.offers[0];
-    const grouped = group.offers.length > 1;
-    return {
-      ...group,
-      accessibilityLabel: offerMapMarkerAccessibilityLabel(group),
-      markerSvg: buildOfferMapMarkerSvg({
-        shape: grouped ? 'cluster' : offerMapMarkerShape(representative.contractType),
-        color: grouped ? techUi.navy : offerMapMarkerColor(representative),
-        count: group.offers.length,
-      }),
-      offers: group.offers.map((offer) => ({
-        id: offer.id,
-        title: offer.title,
-        companyName: offer.companyName,
-        location: offer.location,
-        score: offer.score,
-        matchLabel: offer.matchLabel,
-        blocked: offer.blockers.length > 0,
-        labelColor: offerMapLabelColor(offer),
-        contractLabel: offerMapContractLabel(offer.contractType),
-        productLabel: offerMapProductLabel(offer.productType),
-        applicationLabel: offerMapApplicationLabel(offer.applicationStatus),
-        approximate: offer.locationPrecision === 'country',
-      })),
-    };
-  }), [groups]);
-  const markerUpdateScript = useMemo(
-    () => buildOfferMapMarkerUpdateScript(payload),
-    [payload],
+  const markerGroups = useMemo(() => groups.map((group) => ({
+    ...group,
+    accessibilityLabel: offerMapMarkerAccessibilityLabel(group),
+    ...offerMapGroupMarkerIcon(group, tiers.get(group.key) ?? 'label'),
+    offers: group.offers.map((offer) => ({
+      id: offer.id,
+      title: offer.title,
+      companyName: offer.companyName,
+      location: offer.location,
+      score: offer.score,
+      matchLabel: offer.matchLabel,
+      blocked: offer.blockers.length > 0,
+      labelColor: offerMapLabelColor(offer),
+      contractLabel: offerMapContractLabel(offer.contractType),
+      productLabel: offerMapProductLabel(offer.productType),
+      applicationLabel: offerMapApplicationLabel(offer.applicationStatus),
+      approximate: offer.locationPrecision === 'country',
+    })),
+  })), [groups, tiers]);
+
+  /** Reencuadrar sólo cuando cambian las ofertas, no cuando cambia el zoom. */
+  const fitKey = useMemo(
+    () => groups.map((group) => `${group.key}:${group.latitude},${group.longitude}`).join('|'),
+    [groups],
   );
+  const fittedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!mapReady) return;
-    webViewRef.current?.injectJavaScript(markerUpdateScript);
-  }, [markerUpdateScript, mapReady]);
+    const fit = fittedKeyRef.current !== fitKey;
+    fittedKeyRef.current = fitKey;
+    webViewRef.current?.injectJavaScript(
+      buildOfferMapMarkerUpdateScript({ groups: markerGroups, fit }),
+    );
+  }, [fitKey, markerGroups, mapReady]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -290,6 +314,11 @@ export function OfferMap({
       setSelectedGroupKey(message.slice('offer-map-select:'.length));
       return;
     }
+    if (message.startsWith('offer-map-zoom:')) {
+      const nextZoom = Number(message.slice('offer-map-zoom:'.length));
+      if (Number.isFinite(nextZoom)) setZoom(nextZoom);
+      return;
+    }
     if (message.startsWith('offer-map-error:')) {
       setMapReady(false);
       setMapError(message.slice('offer-map-error:'.length));
@@ -299,6 +328,8 @@ export function OfferMap({
   function retryMap() {
     setMapReady(false);
     setMapError(null);
+    fittedKeyRef.current = null;
+    setZoom(OFFER_MAP_INITIAL_ZOOM);
     setMapKey((value) => value + 1);
   }
 
@@ -322,6 +353,8 @@ export function OfferMap({
           onLoadStart={() => {
             setMapReady(false);
             setMapError(null);
+            // Un mapa recargado vuelve a nacer sin encuadrar.
+            fittedKeyRef.current = null;
           }}
           onMessage={handleMessage}
           onError={(event) => {

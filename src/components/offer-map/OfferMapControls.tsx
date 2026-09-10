@@ -25,12 +25,16 @@ import {
   getOfferMapMatchBand,
   OfferMapFilters,
   OfferMapItem,
+  OfferMapMarkerTier,
   OfferMapMatchBand,
 } from '../../types/offerMap';
+import { buildOfferMapMarkerIcon, type OfferMapMarkerIcon } from '../../utils/offerMapMarkerIcon';
+import { offerMapGroupIconOptions } from '../../utils/offerMapMarkerTier';
 import { ContractTypeCode } from '../../types/catalog';
 import { OfferProductType } from '../../types/offer';
 import { techUi } from '../technician/TechnicianUI';
 import { MapBottomSheet } from '../map/MapBottomSheet';
+import { formatOfferSalary } from '../../utils/offerSalary';
 
 export const OFFER_MAP_MATCH_OPTIONS: readonly {
   value: OfferMapMatchBand;
@@ -122,7 +126,21 @@ export function offerMapMarkerAccessibilityLabel(group: OfferMapMarkerGroup): st
     return `${group.offers.length} offers at ${representative.location}`;
   }
   const precision = group.locationPrecision === 'country' ? ', country-level location' : '';
-  return `${offerMapContractLabel(representative.contractType)} offer: ${representative.title}, ${representative.companyName}, ${representative.location}, ${representative.score}% match${precision}`;
+  const salary = formatOfferSalary(representative.salary) ?? 'Remuneration not specified';
+  return `${offerMapContractLabel(representative.contractType)} offer: ${representative.title}, ${representative.companyName}, ${representative.location}, ${salary}, ${representative.score}% match${precision}`;
+}
+
+/**
+ * Un solo sitio donde se decide el icono de un grupo, para que el mapa web y
+ * el WebView nativo no puedan divergir en forma, color ni nivel.
+ */
+export function offerMapGroupMarkerIcon(
+  group: OfferMapMarkerGroup,
+  tier: OfferMapMarkerTier,
+): OfferMapMarkerIcon {
+  const grouped = group.offers.length > 1;
+  const color = grouped ? techUi.navy : offerMapMarkerColor(group.offers[0]);
+  return buildOfferMapMarkerIcon(offerMapGroupIconOptions(group, tier, color));
 }
 
 export function OfferMapHeader({
@@ -243,6 +261,7 @@ export function OfferMapLegend() {
       </View>
 
       <Text style={styles.legendSectionTitle}>Contract type</Text>
+      <Text style={styles.legendText}>Single offers show gross pay when provided. Numbers indicate grouped offers.</Text>
       <View style={styles.legendGrid}>
         <LegendContractItem shape="circle" label="Permanent" />
         <LegendContractItem shape="square" label="Long-term" />
@@ -473,6 +492,9 @@ export function OfferMapDetailSheet({
           <View key={offer.id} style={styles.offerDetailCard}>
             <Text style={styles.offerDetailTitle}>{offer.title}</Text>
             <Text style={styles.offerDetailCompany}>{offer.companyName}</Text>
+            <Text style={offer.salary ? styles.offerDetailSalary : styles.offerDetailMeta}>
+              {formatOfferSalary(offer.salary) ?? 'Remuneration not specified'}
+            </Text>
             <Text style={styles.offerDetailLocation}>
               {offer.location}
               {offer.locationPrecision === 'country' ? ' · Country-level location' : ''}
@@ -756,6 +778,7 @@ const styles = StyleSheet.create({
   },
   offerDetailTitle: { paddingRight: 8, fontSize: 15, lineHeight: 20, fontWeight: '800', color: techUi.text },
   offerDetailCompany: { marginTop: 3, fontSize: 12, lineHeight: 16, fontWeight: '700', color: techUi.textSoft },
+  offerDetailSalary: { marginTop: 8, fontSize: 14, lineHeight: 20, fontWeight: '800', color: techUi.text },
   offerDetailLocation: { marginTop: 8, fontSize: 12, lineHeight: 17, fontWeight: '500', color: techUi.textMuted },
   offerDetailChips: { marginTop: 9, flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
   mapDetailChip: {

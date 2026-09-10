@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { colors, spacing } from '../../../src/theme';
+import { formatOfferSalary } from '../../../src/utils/offerSalary';
 import { getAircraftTypeRatingLabel } from '../../../src/constants/aircraftTypeRatings';
 import { getOfferProductTypeLabel } from '../../../src/constants/offerProductTypes';
 import { technicianTypeLabel } from '../../../src/constants/technicianTypes';
@@ -335,6 +336,7 @@ export default function OfferDetailScreen() {
             {offer.locationBaseAirport ? ` - ${offer.locationBaseAirport}` : ''}
           </Text>
           <Text style={styles.publishedDate}>Published {formatPublishedDate(offer.createdAt)}</Text>
+          <Text style={styles.companyLine}>{formatOfferSalary(offer.salary) ?? 'Remuneration not specified'}</Text>
           <Text style={styles.description}>{offer.description}</Text>
         </TechnicianCard>
 

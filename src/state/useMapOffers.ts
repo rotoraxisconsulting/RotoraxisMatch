@@ -86,6 +86,7 @@ export function useMapOffers(filters: OfferMapFilters): UseMapOffersReturn {
           title: offer.title,
           companyName: company?.name ?? 'Company',
           contractType: offer.contractType,
+          salary: offer.salary,
           productType: offer.productType,
           location: location || offer.locationCountryCode,
           latitude: pin.latitude,

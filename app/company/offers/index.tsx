@@ -33,6 +33,7 @@ import {
   companyUi,
 } from '../../../src/components/company/CompanyUI';
 import { offerRepository } from '../../../src/repositories/v2/offerRepository';
+import { formatOfferSalary } from '../../../src/utils/offerSalary';
 import { offerApplicationRepository } from '../../../src/repositories/v2/offerApplicationRepository';
 import { offerRequestRepository } from '../../../src/repositories/v2/offerRequestRepository';
 import { OfferWithRequirements } from '../../../src/types/offer';
@@ -243,6 +244,7 @@ export default function OffersListScreen() {
 
               <View style={styles.metaRow}>
                 <CompanyBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" small />
+                {offer.salary ? <CompanyBadge label={formatOfferSalary(offer.salary)!} tone="success" small /> : null}
                 {offer.minYearsExperience > 0 ? (
                   <CompanyBadge label={`${offer.minYearsExperience}+ yrs`} tone="muted" small />
                 ) : null}

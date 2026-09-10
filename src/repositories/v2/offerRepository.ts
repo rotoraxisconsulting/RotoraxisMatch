@@ -6,6 +6,8 @@ import { licensesSelectableForOfferType } from '../../constants/licenses';
 import { isLicensedTechnicianType, technicianTypeLabel } from '../../constants/technicianTypes';
 import { LocationValue, PersistedLocation } from '../../types/location';
 import { locationColumns, persistedLocationFromValue } from '../../utils/locationBridge';
+import { OfferSalary } from '../../types/offerSalary';
+import { salaryColumns } from '../../utils/offerSalary';
 import {
   loadOfferRequirements,
   mapOfferRow,
@@ -39,7 +41,7 @@ import {
 // verificado). En cuanto hubiera una oferta, el scorer estaría puntuando su
 // licencia como si no existiera.
 const OFFER_COLUMNS =
-  'id, company_id, title, description, contract_type, product_type, technician_type, requires_certification, license_code, requires_all_aircraft, location_country, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, min_years_experience, status, visible, expires_at, created_at, updated_at';
+  'id, company_id, title, description, contract_type, salary_amount, salary_currency, salary_period, product_type, technician_type, requires_certification, license_code, requires_all_aircraft, location_country, location_country_code, location_city_name, location_city_lat, location_city_lng, location_city_geoname_id, min_years_experience, status, visible, expires_at, created_at, updated_at';
 
 /**
  * La localización de una oferta, tal y como la produce el selector.
@@ -70,6 +72,7 @@ export function offerLocationFromValue(value: LocationValue): OfferLocationWrite
 
 function offerPatchToDb(patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Record<string, unknown> {
   return {
+    ...salaryColumns(patch.salary),
     ...(patch.companyId !== undefined ? { company_id: patch.companyId } : {}),
     ...(patch.title !== undefined ? { title: patch.title } : {}),
     ...(patch.description !== undefined ? { description: patch.description } : {}),
@@ -285,6 +288,8 @@ export const offerRepository = {
   },
 
   async update(id: string, patch: Partial<Omit<Offer, 'id' | 'createdAt'>>): Promise<Offer | null> {
+    // Validate before any mutation, including replacing aircraft requirements.
+    salaryColumns(patch.salary);
     const existing = await this.getById(id);
     if (!existing) return null;
 
@@ -351,6 +356,7 @@ export const offerRepository = {
     title: string;
     description: string;
     contractType: ContractTypeCode;
+    salary?: OfferSalary | null;
     productType: OfferProductType;
     technicianType: TechnicianTypeCode;
     requiresCertification: boolean;
@@ -372,6 +378,7 @@ export const offerRepository = {
         title: data.title,
         description: data.description,
         contract_type: data.contractType,
+        ...salaryColumns(data.salary ?? undefined),
         product_type: data.productType,
         technician_type: data.technicianType,
         requires_certification: data.requiresCertification,

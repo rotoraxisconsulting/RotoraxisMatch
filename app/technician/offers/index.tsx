@@ -12,6 +12,7 @@ import {
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import { MapPinned } from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
+import { formatOfferSalary } from '../../../src/utils/offerSalary';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { MatchBadge } from '../../../src/components/MatchBadge';
 import {
@@ -310,6 +311,7 @@ export default function BrowseOffersScreen() {
                 <View style={styles.metaRow}>
                   <TechnicianBadge label={getOfferProductTypeLabel(offer.productType)} tone="info" small />
                   <TechnicianBadge label={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} tone="muted" small />
+                  {offer.salary ? <TechnicianBadge label={formatOfferSalary(offer.salary)!} tone="success" small /> : null}
                   {offer.minYearsExperience > 0 && (
                     <TechnicianBadge label={`${offer.minYearsExperience}+ yrs exp`} tone="muted" small />
                   )}

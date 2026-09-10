@@ -37,11 +37,14 @@ import { OfferStatus } from '../../../src/types/enums';
 import { CountryCityPicker } from '../../../src/components/CountryCityPicker';
 import { EMPTY_LOCATION, LocationValue } from '../../../src/types/location';
 import { notify, confirmAction } from '../../../src/utils/platformAlert';
+import { OfferSalarySection } from '../../../src/components/company/OfferSalarySection';
+import { SalaryFormValue, salaryFormFromValue, salaryFormError, salaryFromForm } from '../../../src/utils/offerSalary';
 
 interface FormState {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  salary: SalaryFormValue;
   productType: OfferProductType;
   // Fase 7 F2c: un solo campo con pais + ciudad, en vez de cuatro sueltos
   // que habia que mantener coherentes a mano.
@@ -56,6 +59,7 @@ interface FormState {
 
 function computeErrors(form: FormState) {
   return {
+    salary: salaryFormError(form.salary),
     title: !form.title.trim() ? 'Title is required.'
       : form.title.trim().length < 3 ? 'Title must be at least 3 characters.'
       : undefined,
@@ -68,7 +72,7 @@ function computeErrors(form: FormState) {
     license: form.requiresCertification && !form.licenseCode ? 'Select the licence this role certifies under.' : undefined,
   };
 }
-type FormErrors = { title?: string; description?: string; location?: string; license?: string };
+type FormErrors = { title?: string; description?: string; location?: string; license?: string; salary?: string };
 
 export default function NewOfferScreen() {
   const router = useRouter();
@@ -81,6 +85,7 @@ export default function NewOfferScreen() {
     title: '',
     description: '',
     contractType: 'permanent',
+    salary: salaryFormFromValue(),
     // Arranca en aviones porque el selector siempre está visible y el campo es
     // NOT NULL: un "sin elegir" sería un tercer estado que la base no admite.
     productType: 'Aeroplane',
@@ -210,6 +215,7 @@ export default function NewOfferScreen() {
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
+    if (key === 'salary') setErrors((e) => ({ ...e, salary: undefined }));
     if (key === 'title') setErrors((e) => ({ ...e, title: undefined }));
     if (key === 'description') setErrors((e) => ({ ...e, description: undefined }));
     if (key === 'location') {
@@ -232,6 +238,7 @@ export default function NewOfferScreen() {
         title: form.title.trim(),
         description: form.description.trim(),
         contractType: form.contractType,
+        salary: salaryFromForm(form.salary),
         productType: form.productType,
         location: form.location,
         minYearsExperience: form.minYearsExperience,
@@ -375,6 +382,8 @@ export default function NewOfferScreen() {
             </View>
           </FormField>
         </FormSection>
+
+        <OfferSalarySection value={form.salary} onChange={(value) => set('salary', value)} error={errors.salary} />
 
         {/* Fase 7 F2c. El aeropuerto base desaparece del formulario: la
             localización de una oferta es el país (lo único que puntúa) y,

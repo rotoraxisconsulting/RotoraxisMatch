@@ -17,12 +17,12 @@ import {
   OfferMapLegend,
   OfferMapMarkerGroup,
   OfferMapStatusOverlay,
+  offerMapGroupMarkerIcon,
   offerMapMarkerAccessibilityLabel,
-  offerMapMarkerColor,
 } from './offer-map/OfferMapControls';
 import { activeOfferMapFilterCount } from '../types/offerMap';
 import { techUi } from './technician/TechnicianUI';
-import { buildOfferMapMarkerSvg, offerMapMarkerShape } from '../utils/offerMapMarkerIcon';
+import { offerMapGroupTierInput, resolveOfferMapMarkerTiers } from '../utils/offerMapMarkerTier';
 
 function useLeafletCss() {
   useEffect(() => {
@@ -63,7 +63,7 @@ function useLeafletCss() {
         .offer-map-marker-icon:focus-visible {
           outline: 3px solid #0891B2;
           outline-offset: 1px;
-          border-radius: 24px;
+          border-radius: 18px;
         }
       `;
       document.head.appendChild(style);
@@ -80,13 +80,31 @@ function OfferMapAutoFit({ groups }: { groups: OfferMapMarkerGroup[] }) {
   useEffect(() => {
     const bounds = groups.map((group) => [group.latitude, group.longitude] as [number, number]);
     if (bounds.length === 1) map.setView(bounds[0], 6);
-    if (bounds.length > 1) map.fitBounds(bounds, { padding: [58, 58], maxZoom: 7 });
+    if (bounds.length > 1) map.fitBounds(bounds, { padding: [120, 100], maxZoom: 7 });
   // coordinateKey captures coordinate changes without making the array identity a dependency.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coordinateKey, groups.length, map]);
 
   return null;
 }
+
+/** El zoom vive en el mapa; los niveles de marcador se deciden fuera. */
+function OfferMapZoomWatcher({ onZoom }: { onZoom: (zoom: number) => void }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const report = () => onZoom(map.getZoom());
+    report();
+    map.on('zoomend', report);
+    return () => {
+      map.off('zoomend', report);
+    };
+  }, [map, onZoom]);
+
+  return null;
+}
+
+const OFFER_MAP_INITIAL_ZOOM = 3;
 
 export default function OfferMapLeafletImpl({
   offers,
@@ -103,7 +121,12 @@ export default function OfferMapLeafletImpl({
   useLeafletCss();
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(OFFER_MAP_INITIAL_ZOOM);
   const groups = useMemo(() => groupOfferMapItems(offers), [offers]);
+  const tiers = useMemo(
+    () => resolveOfferMapMarkerTiers(groups.map(offerMapGroupTierInput), zoom),
+    [groups, zoom],
+  );
   const selectedGroup = selectedGroupKey
     ? groups.find((group) => group.key === selectedGroupKey) ?? null
     : null;
@@ -117,7 +140,7 @@ export default function OfferMapLeafletImpl({
       <View style={styles.mapFrame}>
         <MapContainer
           center={[48.5, 8]}
-          zoom={3}
+          zoom={OFFER_MAP_INITIAL_ZOOM}
           zoomControl
           style={{ width: '100%', height: '100%', backgroundColor: techUi.page }}
         >
@@ -126,21 +149,16 @@ export default function OfferMapLeafletImpl({
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           <OfferMapAutoFit groups={groups} />
+          <OfferMapZoomWatcher onZoom={setZoom} />
           {groups.map((group) => {
-            const representative = group.offers[0];
-            const color = offerMapMarkerColor(representative);
-            const grouped = group.offers.length > 1;
             const accessibilityLabel = offerMapMarkerAccessibilityLabel(group);
+            const marker = offerMapGroupMarkerIcon(group, tiers.get(group.key) ?? 'label');
             const icon = divIcon({
               className: `offer-map-marker-icon${selectedGroupKey === group.key ? ' is-selected' : ''}`,
-              html: buildOfferMapMarkerSvg({
-                shape: grouped ? 'cluster' : offerMapMarkerShape(representative.contractType),
-                color,
-                count: group.offers.length,
-              }),
-              iconSize: [48, 48],
-              iconAnchor: [24, 24],
-              popupAnchor: [0, -18],
+              html: marker.markerSvg,
+              iconSize: marker.iconSize,
+              iconAnchor: marker.iconAnchor,
+              popupAnchor: marker.popupAnchor,
             });
 
             function applyAccessibility(event: LeafletEvent) {
@@ -156,6 +174,7 @@ export default function OfferMapLeafletImpl({
                 icon={icon}
                 keyboard
                 riseOnHover
+                zIndexOffset={selectedGroupKey === group.key ? 10000 : 0}
                 title={accessibilityLabel}
                 eventHandlers={{
                   add: applyAccessibility,

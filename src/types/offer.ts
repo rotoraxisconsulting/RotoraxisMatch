@@ -1,6 +1,7 @@
 import { TechnicianTypeCode, LicenseCode, ContractTypeCode, AircraftTypeRatingCatalog } from './catalog';
 import { OfferStatus } from './enums';
 import { PersistedLocation } from './location';
+import { OfferSalary } from './offerSalary';
 
 /**
  * Aviones o helicópteros — nunca las dos cosas en la misma oferta
@@ -51,6 +52,8 @@ export interface Offer extends PersistedLocation {
   title: string;
   description: string;
   contractType: ContractTypeCode;
+  /** Optional gross remuneration; null explicitly removes it when editing. */
+  salary?: OfferSalary | null;
   /**
    * Declarado por la empresa, primer campo del formulario. Acota QUÉ puede
    * pedir la oferta (licencias compatibles y ratings del catálogo); no entra

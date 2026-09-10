@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import { persistedLocationFromRow } from '../../utils/locationBridge';
+import { salaryFromRow } from '../../utils/offerSalary';
 import { CompanyMember, CompanyProfileView } from '../../types/company';
 import { Document, DocumentType } from '../../types/document';
 import { CompanyMemberRole, DocumentStatus, OfferRequestStatus, OfferStatus, VerificationStatus } from '../../types/enums';
@@ -132,6 +133,7 @@ export function mapOfferRow(row: DbRow): Offer {
     title: row.title,
     description: row.description,
     contractType: row.contract_type as ContractTypeCode,
+    salary: salaryFromRow(row),
     productType: row.product_type as OfferProductType,
     technicianType: row.technician_type as TechnicianTypeCode,
     // `Boolean(...)` y no `?? true`: la columna es NOT NULL DEFAULT true, así

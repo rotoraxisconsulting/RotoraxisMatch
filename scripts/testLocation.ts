@@ -32,7 +32,7 @@ import {
   resolveMapPin,
 } from '../src/utils/locationBridge';
 import { groupTechnicianMapMarkers } from '../src/utils/technicianMapMarkers';
-import { buildOfferMapMarkerSvg, offerMapMarkerShape } from '../src/utils/offerMapMarkerIcon';
+import { buildOfferMapMarkerIcon, buildOfferMapMarkerSvg, offerMapMarkerShape } from '../src/utils/offerMapMarkerIcon';
 import { buildOfferMapMarkerUpdateScript } from '../src/utils/offerMapWebViewBridge';
 import { matchesTechnicianSearchIdentity } from '../src/utils/technicianSearchFilterMatch';
 import { LOCATION_CITY_INDEX, resolveLocationSnapshot } from '../src/constants/locationCities';
@@ -759,14 +759,14 @@ async function main() {
     const diamond = buildOfferMapMarkerSvg({ shape: 'diamond', color: '#F59E0B' });
     const cluster = buildOfferMapMarkerSvg({ shape: 'cluster', color: '#EF4444', count: 104 });
 
-    assert.match(circle, /<circle cx="24" cy="24" r="12"/);
-    assert.match(square, /<rect x="12" y="12" width="24" height="24"/);
-    assert.match(diamond, /<path d="M24 9\.5 38\.5 24 24 38\.5 9\.5 24Z"/);
+    assert.match(circle, /<circle cx="28" cy="28" r="16"/);
+    assert.match(square, /<rect x="12" y="12" width="32" height="32"/);
+    assert.match(diamond, /<path d="M28 9 47 28 28 47 9 28Z"/);
     assert.match(cluster, /fill="#0A1520"/);
     assert.match(cluster, />99\+<\/text>/);
     assert.doesNotMatch(cluster, /#EF4444/);
     for (const svg of [circle, square, diamond, cluster]) {
-      assert.match(svg, /width="48" height="48" viewBox="0 0 48 48"/);
+      assert.match(svg, /width="56" height="56" viewBox="0 0 56 56"/);
       assert.match(svg, /offer-marker-selection/);
     }
   });
@@ -783,7 +783,10 @@ async function main() {
     assert.doesNotMatch(source, /circleMarker|dashArray/);
     assert.doesNotMatch(webSource, /CircleMarker|dashArray/);
     assert.match(source, /L\.divIcon/);
-    assert.match(webSource, /buildOfferMapMarkerSvg/);
+    // Ambos renderers construyen el marcador por el mismo helper, para que la
+    // forma, el color y el nivel no puedan divergir entre web y nativo.
+    assert.match(webSource, /offerMapGroupMarkerIcon/);
+    assert.match(source, /offerMapGroupMarkerIcon/);
     assert.match(source, /OfferMapDetailSheet/);
     assert.match(webSource, /OfferMapDetailSheet/);
     const template = source.match(/const LEAFLET_HTML = `([\s\S]*?)`;\r?\n/);
@@ -798,15 +801,21 @@ async function main() {
     const windowStub: Record<string, any> = {
       ReactNativeWebView: { postMessage: (message: string) => messages.push(message) },
     };
+    let setViewCalls = 0;
+    let fitBoundsCalls = 0;
+    const mapListeners: Record<string, () => void> = {};
     const mapStub = {
-      setView: () => mapStub,
-      fitBounds: () => undefined,
+      setView: () => { setViewCalls += 1; return mapStub; },
+      fitBounds: () => { fitBoundsCalls += 1; },
+      on: (event: string, handler: () => void) => { mapListeners[event] = handler; return mapStub; },
+      getZoom: () => 7,
     };
     const markerLayerStub = {
       addTo: () => markerLayerStub,
       clearLayers: () => undefined,
     };
-    const markerIcons: Array<{ html?: string }> = [];
+    const markerIcons: Array<{ html?: string; iconSize?: number[]; iconAnchor?: number[] }> = [];
+    let selectedOffset = 0;
     const markerAttributes: Record<string, string> = {};
     const markerElement = {
       classList: { add: () => undefined, remove: () => undefined },
@@ -828,6 +837,7 @@ async function main() {
           },
           addTo: () => marker,
           getElement: () => markerElement,
+          setZIndexOffset: (offset: number) => { selectedOffset = offset; return marker; },
         };
         return marker;
       },
@@ -847,13 +857,18 @@ async function main() {
 
     runtime.initMap();
     assert.ok(messages.includes('offer-map-ready'));
-    new Function('window', buildOfferMapMarkerUpdateScript([{
+    // El nivel de marcador se decide en React Native, así que el mapa tiene
+    // que anunciar su zoom: al arrancar y en cada zoomend.
+    assert.ok(messages.includes('offer-map-zoom:7'), 'El mapa no anunció su zoom inicial');
+    assert.ok(mapListeners.zoomend, 'Nadie escucha zoomend');
+
+    const markerGroup = {
       key: '40.00000:-4.00000:country',
       latitude: 40,
       longitude: -4,
       locationPrecision: 'country',
       accessibilityLabel: 'Permanent offer in L Aquila, country-level location',
-      markerSvg: buildOfferMapMarkerSvg({ shape: 'circle', color: '#0891B2' }),
+      ...buildOfferMapMarkerIcon({ shape: 'circle', color: '#0891B2' }),
       offers: [{
         id: "offer-o'brien",
         title: "O'Brien <A320>",
@@ -868,15 +883,73 @@ async function main() {
         productLabel: 'Aircraft',
         approximate: true,
       }],
-    }]))(windowStub);
-    assert.equal(markerIcons.length, 1);
-    assert.match(markerIcons[0].html ?? '', /<circle cx="24" cy="24" r="12"/);
+    };
+
+    // initMap ya hizo su setView de arranque; lo que se mide es lo que añade
+    // cada repintado por encima de eso.
+    const setViewAfterInit = setViewCalls;
+
+    new Function('window', buildOfferMapMarkerUpdateScript({ groups: [markerGroup], fit: true }))(windowStub);
+    assert.equal(setViewCalls, setViewAfterInit + 1, 'Un cambio de ofertas sí encuadra');
+
+    // Un repintado por cambio de nivel de marcador NO puede reencuadrar: el
+    // usuario acaba de elegir su zoom a mano y se lo estaríamos quitando.
+    new Function('window', buildOfferMapMarkerUpdateScript({ groups: [markerGroup], fit: false }))(windowStub);
+    assert.equal(setViewCalls, setViewAfterInit + 1, 'Un repintado sin fit reencuadró igualmente');
+    assert.equal(fitBoundsCalls, 0);
+
+    mapListeners.zoomend();
+    assert.equal(messages.filter((message) => message === 'offer-map-zoom:7').length, 3);
+
+    assert.equal(markerIcons.length, 2);
+    assert.deepEqual(markerIcons[0].iconSize, [56, 56]);
+    assert.deepEqual(markerIcons[0].iconAnchor, [28, 28]);
+    assert.match(markerIcons[0].html ?? '', /<circle cx="28" cy="28" r="16"/);
     assert.equal(markerAttributes.role, 'button');
     assert.match(markerAttributes['aria-label'], /Permanent offer/);
     assert.ok(markerClickHandler, 'El marcador no registró la selección');
     (markerClickHandler as () => void)();
+    assert.equal(selectedOffset, 10000);
     assert.ok(messages.includes('offer-map-select:40.00000:-4.00000:country'));
+    const salaryMarker = buildOfferMapMarkerIcon({ shape: 'square', color: '#2563EB', salary: { amount: 3500, currency: 'MXN', period: 'month' } });
+    new Function('window', buildOfferMapMarkerUpdateScript({
+      groups: [{
+        key: '40.00000:-4.00000:country', latitude: 40, longitude: -4,
+        accessibilityLabel: '3,500 MXN / month gross', ...salaryMarker,
+        offers: [{ id: 'salary-offer' }],
+      }],
+      fit: false,
+    }))(windowStub);
+    assert.deepEqual(markerIcons[2].iconSize, salaryMarker.iconSize);
+    assert.deepEqual(markerIcons[2].iconAnchor, salaryMarker.iconAnchor);
+    assert.match(markerIcons[2].html ?? '', /3,500 MXN/);
+    assert.equal(selectedOffset, 10000, 'Selection survives a marker update');
     assert.doesNotMatch(source, /\.bindPopup\(/);
+  });
+
+  await test('Offer markers — exact salaries, variable bounds, safe SVG and count priority', () => {
+    for (const period of ['hour', 'day', 'week', 'month', 'year'] as const) {
+      const marker = buildOfferMapMarkerIcon({ shape: 'diamond', color: '#2563EB', salary: { amount: 35.25, currency: 'JPY', period } });
+      assert.match(marker.markerSvg, /35.25 JPY/);
+      assert.ok(marker.markerSvg.includes(`/ ${period} · gross`));
+      assert.deepEqual(marker.iconAnchor, [marker.iconSize[0] / 2, 60]);
+      assert.ok(marker.iconSize[0] >= 132);
+      assert.match(marker.markerSvg, /offer-marker-selection/);
+    }
+    const salary = { amount: 999999999.99, currency: 'MXN', period: 'year' as const };
+    const large = buildOfferMapMarkerIcon({ shape: 'circle', color: '#10B981', salary });
+    assert.match(large.markerSvg, /999,999,999.99 MXN/);
+    assert.ok(large.iconSize[0] > 180);
+    const group = buildOfferMapMarkerIcon({ shape: 'circle', color: '#10B981', salary, count: 4 });
+    assert.match(group.markerSvg, />4<\/text>/);
+    assert.doesNotMatch(group.markerSvg, /gross|MXN/);
+    assert.deepEqual(group.iconSize, [56, 56]);
+    const unpriced = buildOfferMapMarkerIcon({ shape: 'square', color: '#10B981', salary: null });
+    assert.doesNotMatch(unpriced.markerSvg, /gross/);
+    const escaped = buildOfferMapMarkerSvg({ shape: 'circle', color: 'red" onload="alert(1)', salary: { ...salary, currency: '<script>&' } });
+    assert.doesNotMatch(escaped, /<script>|onload=/);
+    assert.match(escaped, /&lt;script&gt;&amp;/);
+    assert.match(escaped, /#527088/);
   });
 
   // ── Selector <-> fila ───────────────────────────────────────────────────

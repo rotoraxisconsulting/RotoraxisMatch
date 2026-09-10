@@ -31,6 +31,7 @@ import {
   XCircle,
 } from 'lucide-react-native';
 import { colors, spacing } from '../../../src/theme';
+import { formatOfferSalary } from '../../../src/utils/offerSalary';
 import { LoadingScreen } from '../../../src/components/LoadingScreen';
 import { MatchBadge } from '../../../src/components/MatchBadge';
 import {
@@ -479,6 +480,11 @@ export default function OfferDetailScreen() {
             <MetaTile label="Contract" value={CONTRACT_LABELS[offer.contractType] ?? offer.contractType} />
             <MetaTile label="Experience" value={`${offer.minYearsExperience} yrs min`} />
             <MetaTile label="Published" value={formatPublishedDate(offer.createdAt)} icon={CalendarDays} />
+          </View>
+
+          <View style={styles.metaTile}>
+            <Text style={styles.metaLabel}>Remuneration</Text>
+            <Text style={styles.metaValue}>{formatOfferSalary(offer.salary) ?? 'Not specified'}</Text>
           </View>
 
           <View style={styles.locationLine}>
